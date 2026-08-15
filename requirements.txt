@@ -1,0 +1,11 @@
+carla==0.9.15
+numpy
+opencv-python
+flask
+flask-socketio
+gevent
+pyyaml
+jsonlines
+shapely
+transforms3d
+networkx

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Warp AV Operator Console</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: monospace; background: #111; color: #eee; padding: 16px; }
+        h1 { color: #0f0; margin-bottom: 12px; font-size: 18px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+        .panel { background: #1a1a1a; border: 1px solid #333; padding: 12px; border-radius: 4px; }
+        .panel h2 { color: #888; font-size: 12px; text-transform: uppercase; margin-bottom: 8px; }
+        .value { font-size: 16px; margin: 4px 0; }
+        .label { color: #666; font-size: 11px; }
+        .ok { color: #0f0; }
+        .warn { color: #ff0; }
+        .error { color: #f00; }
+        .estop { color: #f00; font-size: 20px; font-weight: bold; }
+        button { background: #333; color: #eee; border: 1px solid #555; padding: 8px 16px;
+                 cursor: pointer; margin: 4px; border-radius: 3px; font-family: monospace; }
+        button:hover { background: #444; }
+        button.danger { background: #600; border-color: #900; }
+        button.danger:hover { background: #900; }
+        button.go { background: #060; border-color: #090; }
+        button.go:hover { background: #090; }
+        #reason { font-size: 14px; padding: 8px; background: #222; border: 1px solid #444;
+                  margin: 8px 0; min-height: 24px; }
+        select { background: #222; color: #eee; border: 1px solid #555; padding: 6px; font-family: monospace; }
+        .controls { margin: 12px 0; }
+    </style>
+</head>
+<body>
+    <h1>WARP AV — Operator Console</h1>
+
+    <div id="reason" class="ok">Waiting for connection...</div>
+
+    <div class="controls">
+        <select id="destination"></select>
+        <button class="go" onclick="startMission()">▶ Start Mission</button>
+        <button onclick="pauseMission()">⏸ Pause</button>
+        <button onclick="resumeMission()">▶ Resume</button>
+        <button onclick="stopMission()">⏹ Stop</button>
+        <button class="danger" onclick="estop()">🛑 E-STOP</button>
+        <button onclick="clearEstop()">Clear E-Stop</button>
+    </div>
+
+    <div class="controls">
+        <span class="label">Test Controls:</span>
+        <button onclick="api('/api/test/disable_perception')">Kill Perception</button>
+        <button onclick="api('/api/test/enable_perception')">Restore Perception</button>
+        <button onclick="api('/api/test/disable_localization')">Kill Localization</button>
+        <button onclick="api('/api/test/disable_camera')">Kill Camera</button>
+    </div>
+
+    <div class="grid">
+        <div class="panel">
+            <h2>Vehicle</h2>
+            <div class="label">Position</div>
+            <div class="value" id="pos">—</div>
+            <div class="label">Heading</div>
+            <div class="value" id="heading">—</div>
+            <div class="label">Speed</div>
+            <div class="value" id="speed">—</div>
+        </div>
+        <div class="panel">
+            <h2>Mission</h2>
+            <div class="label">ID</div>
+            <div class="value" id="mission_id">—</div>
+            <div class="label">State</div>
+            <div class="value" id="mission_state">—</div>
+            <div class="label">Destination</div>
+            <div class="value" id="dest">—</div>
+        </div>
+        <div class="panel">
+            <h2>Behavior</h2>
+            <div class="label">Current</div>
+            <div class="value" id="behavior">—</div>
+            <div class="label">Reason</div>
+            <div class="value" id="beh_reason">—</div>
+        </div>
+        <div class="panel">
+            <h2>Safety</h2>
+            <div class="label">State</div>
+            <div class="value" id="safety_state">—</div>
+            <div class="label">Reason</div>
+            <div class="value" id="safety_reason">—</div>
+        </div>
+        <div class="panel">
+            <h2>Perception</h2>
+            <div class="label">Objects Detected</div>
+            <div class="value" id="obj_count">—</div>
+            <div class="label">Closest Object</div>
+            <div class="value" id="closest">—</div>
+            <div class="label">Path Blocked</div>
+            <div class="value" id="blocked">—</div>
+        </div>
+        <div class="panel">
+            <h2>Control</h2>
+            <div class="label">Steering</div>
+            <div class="value" id="steer">—</div>
+            <div class="label">Throttle</div>
+            <div class="value" id="throttle">—</div>
+            <div class="label">Brake</div>
+            <div class="value" id="brake">—</div>
+        </div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+        <h2>Warnings / Errors</h2>
+        <div id="alerts">—</div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+        <h2>Mission History</h2>
+        <div id="history">—</div>
+    </div>
+
+<script>
+const API = 'http://localhost:5000';
+
+async function api(path, method='POST') {
+    try { await fetch(API + path, {method}); } catch(e) { console.error(e); }
+}
+
+async function startMission() {
+    const sel = document.getElementById('destination');
+    const opt = JSON.parse(sel.value);
+    await fetch(API + '/api/mission/start', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({x: opt.x, y: opt.y})
+    });
+}
+
+async function stopMission() { await api('/api/mission/stop'); }
+async function pauseMission() { await api('/api/mission/pause'); }
+async function resumeMission() { await api('/api/mission/resume'); }
+async function estop() { await api('/api/estop'); }
+async function clearEstop() { await api('/api/estop/clear'); }
+
+async function loadDestinations() {
+    try {
+        const res = await fetch(API + '/api/spawn_points');
+        const pts = await res.json();
+        const sel = document.getElementById('destination');
+        pts.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = JSON.stringify(p);
+            opt.text = `Point ${p.idx}: (${p.x}, ${p.y})`;
+            sel.add(opt);
+        });
+    } catch(e) {}
+}
+
+function colorClass(safety) {
+    if (safety === 'emergency_stop') return 'estop';
+    if (safety === 'intervention') return 'error';
+    if (safety === 'warning') return 'warn';
+    return 'ok';
+}
+
+async function poll() {
+    try {
+        const res = await fetch(API + '/api/state');
+        const s = await res.json();
+        if (!s.pose) return;
+
+        document.getElementById('pos').textContent = `(${s.pose.x}, ${s.pose.y})`;
+        document.getElementById('heading').textContent = `${s.pose.yaw}°`;
+        document.getElementById('speed').textContent = `${(s.pose.speed * 2.237).toFixed(1)} mph`;
+
+        document.getElementById('mission_id').textContent = s.mission?.mission_id || '—';
+        document.getElementById('mission_state').textContent = s.mission?.state || 'idle';
+        document.getElementById('dest').textContent = s.mission?.destination
+            ? `(${s.mission.destination.x}, ${s.mission.destination.y})` : '—';
+
+        document.getElementById('behavior').textContent = s.behavior;
+        document.getElementById('beh_reason').textContent = s.behavior_reason;
+
+        const sc = colorClass(s.safety.state);
+        document.getElementById('safety_state').className = 'value ' + sc;
+        document.getElementById('safety_state').textContent = s.safety.state;
+        document.getElementById('safety_reason').textContent = s.safety.reason;
+
+        document.getElementById('obj_count').textContent = s.perception.object_count;
+        document.getElementById('closest').textContent =
+            `${s.perception.closest_distance}m (${s.perception.closest_type})`;
+        document.getElementById('blocked').textContent = s.perception.path_blocked ? 'YES' : 'no';
+        document.getElementById('blocked').className = 'value ' + (s.perception.path_blocked ? 'error' : 'ok');
+
+        document.getElementById('steer').textContent = s.command.steer.toFixed(3);
+        document.getElementById('throttle').textContent = s.command.throttle.toFixed(3);
+        document.getElementById('brake').textContent = s.command.brake.toFixed(3);
+
+        const reason = document.getElementById('reason');
+        reason.textContent = s.behavior_reason;
+        reason.className = sc;
+
+        const alerts = [...(s.warnings||[]), ...(s.errors||[])];
+        document.getElementById('alerts').textContent = alerts.length ? alerts.join(' | ') : 'None';
+
+        // History
+        const hRes = await fetch(API + '/api/history');
+        const hist = await hRes.json();
+        document.getElementById('history').textContent = hist.length
+            ? hist.map(h => `${h.mission_id}: ${h.state} (${h.reason_ended})`).join('\n')
+            : 'No completed missions';
+
+    } catch(e) { document.getElementById('reason').textContent = 'Disconnected from API'; }
+}
+
+loadDestinations();
+setInterval(poll, 200);
+</script>
+</body>
+</html>
