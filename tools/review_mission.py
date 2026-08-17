@@ -462,7 +462,7 @@ def main():
     if failure_elapsed is not None:
 
         print(
-            f"Failure time:         "
+            f"Failure time (driving): "
             f"{failure_elapsed:.2f} sec"
         )
 
@@ -522,7 +522,7 @@ def main():
 
     print("")
     print(
-        "---------------- EVENT TIMELINE -------------------"
+        "---------------- EVENT TIMELINE (FROM MISSION START) -------------------"
     )
 
     if events:
