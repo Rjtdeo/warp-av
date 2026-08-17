@@ -94,33 +94,50 @@ class RoutePlanner:
             print(f"[Planner] Route planning failed: {e}")
             return None
 
-    def get_next_waypoint(self, route: Route, current_x, current_y, lookahead=5.0) -> Optional[Waypoint]:
+    def get_next_waypoint(
+        self,
+        route: Route,
+        current_x,
+        current_y,
+        lookahead=5.0
+    ) -> Optional[Waypoint]:
         """
-        Find the next waypoint to steer toward.
-        Skips waypoints we've already passed.
+        Find a waypoint ahead of the vehicle.
+
+        First find the route point closest to the vehicle.
+        Then only search FORWARD from that point.
+        This prevents steering back toward old waypoints.
         """
+
         if not route or not route.waypoints:
             return None
 
-        # Find closest waypoint ahead of us
-        best_wp = None
-        best_dist = float('inf')
+        # Find where we currently are on the route.
+        closest_index = 0
+        closest_distance = float("inf")
 
         for i, wp in enumerate(route.waypoints):
             dx = wp.x - current_x
             dy = wp.y - current_y
-            dist = math.sqrt(dx**2 + dy**2)
+            distance = math.sqrt(dx ** 2 + dy ** 2)
 
-            # Find first waypoint that's at least lookahead distance away
-            if dist > lookahead and dist < best_dist:
-                best_wp = wp
-                best_dist = dist
-                break
-            elif dist < best_dist:
-                best_wp = wp
-                best_dist = dist
+            if distance < closest_distance:
+                closest_distance = distance
+                closest_index = i
 
-        return best_wp
+        # Only search FORWARD from our current route position.
+        for i in range(closest_index, len(route.waypoints)):
+            wp = route.waypoints[i]
+
+            dx = wp.x - current_x
+            dy = wp.y - current_y
+            distance = math.sqrt(dx ** 2 + dy ** 2)
+
+            if distance >= lookahead:
+                return wp
+
+        # Near destination, use final waypoint.
+        return route.waypoints[-1]
 
     def distance_to_destination(self, route: Route, current_x, current_y) -> float:
         """How far to the end of the route."""
