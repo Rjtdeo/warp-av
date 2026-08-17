@@ -68,6 +68,11 @@ class BehaviorSystem:
         self.slow_distance = 15.0        # meters — slow down
         self.destination_threshold = 5.0 # meters — "close enough" to destination
 
+        # If the path stays blocked for this long,
+        # treat it as a blocked route instead of a temporary obstacle.
+        self.blocked_timeout = 3.0
+        self._blocked_since = None
+
     def update(
         self,
         perception: PerceptionOutput,
@@ -127,6 +132,28 @@ class BehaviorSystem:
                 f"Arrived at destination (distance: {destination_distance:.1f}m)",
                 speed=0.0, stop=True
             )
+
+        # --- Persistent blocked route ---
+        if perception.path_blocked:
+            if self._blocked_since is None:
+                self._blocked_since = time.time()
+
+            blocked_duration = time.time() - self._blocked_since
+
+            if blocked_duration >= self.blocked_timeout:
+                return self._decide(
+                    DrivingBehavior.STOPPED_BLOCKED,
+                    (
+                        f"Route blocked for {blocked_duration:.1f}s by "
+                        f"{perception.closest_obstacle_type.value} "
+                        f"at {perception.closest_obstacle_distance:.1f}m "
+                        f"— replan or operator action required"
+                    ),
+                    speed=0.0,
+                    stop=True
+                )
+        else:
+            self._blocked_since = None
 
         # --- Path blocked by pedestrian (ALWAYS stop for pedestrians) ---
         if perception.path_blocked and perception.closest_obstacle_type == ObjectType.PEDESTRIAN:
