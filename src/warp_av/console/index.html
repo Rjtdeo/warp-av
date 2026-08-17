@@ -7,19 +7,19 @@
 
 <style>
 :root {
-    --bg: #0b0c0d;
-    --sidebar: #101113;
-    --panel: #151719;
-    --panel-2: #1b1d20;
-    --border: #292c30;
-    --border-soft: #202326;
+    --bg: #0b1722;
+    --sidebar: #0d1824;
+    --panel: #162333;
+    --panel-2: #1b2a3c;
+    --border: #304157;
+    --border-soft: #24364a;
 
     --text: #f4f5f5;
     --muted: #858b91;
     --muted-2: #5c6268;
 
-    --green: #00ff4c;
-    --green-soft: rgba(0,255,76,.10);
+    --green: #39e77d;
+    --green-soft: rgba(57,231,125,.12);
 
     --yellow: #ffd84a;
     --red: #ff4545;
@@ -350,11 +350,8 @@ body {
     min-height: 320px;
 
     background:
-        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px),
-        #101214;
-
-    background-size: 28px 28px;
+        radial-gradient(circle at center, rgba(32,70,92,.22), transparent 70%),
+        #0c1722;
 }
 
 #mapCanvas {
@@ -645,6 +642,232 @@ button.stop {
         grid-template-columns: 1fr;
     }
 }
+
+
+/* ============================================================
+   WARP HOVER MICRO-ANIMATIONS
+   ============================================================ */
+
+/* All buttons */
+button {
+    position: relative;
+    overflow: hidden;
+
+    transition:
+        transform .18s cubic-bezier(.2,.8,.2,1),
+        border-color .18s ease,
+        background-color .18s ease,
+        box-shadow .18s ease,
+        color .18s ease;
+}
+
+/* Small lift when mouse is over button */
+button:hover {
+    transform: translateY(-2px);
+
+    border-color: rgba(57,231,125,.55);
+
+    box-shadow:
+        0 5px 16px rgba(0,0,0,.28),
+        0 0 0 1px rgba(57,231,125,.08);
+}
+
+/* Physical press feeling */
+button:active {
+    transform:
+        translateY(0)
+        scale(.975);
+
+    transition-duration: .07s;
+}
+
+
+/* ------------------------------------------------------------
+   START / PRIMARY BUTTON
+   ------------------------------------------------------------ */
+
+button.primary {
+    isolation: isolate;
+}
+
+button.primary::before {
+    content: "";
+
+    position: absolute;
+    top: 0;
+    left: -140%;
+
+    width: 90%;
+    height: 100%;
+
+    background:
+        linear-gradient(
+            110deg,
+            transparent 0%,
+            rgba(255,255,255,.07) 25%,
+            rgba(255,255,255,.38) 50%,
+            rgba(255,255,255,.07) 75%,
+            transparent 100%
+        );
+
+    transform: skewX(-18deg);
+
+    transition:
+        left .55s cubic-bezier(.2,.8,.2,1);
+
+    pointer-events: none;
+}
+
+button.primary:hover::before {
+    left: 150%;
+}
+
+button.primary:hover {
+    box-shadow:
+        0 7px 22px rgba(57,231,125,.18),
+        0 0 0 1px rgba(57,231,125,.22);
+}
+
+
+/* ------------------------------------------------------------
+   E-STOP
+   ------------------------------------------------------------ */
+
+.estop-button:hover {
+    transform:
+        translateY(-2px)
+        scale(1.01);
+
+    box-shadow:
+        0 7px 24px rgba(255,69,69,.25),
+        0 0 0 1px rgba(255,69,69,.25);
+}
+
+
+/* ------------------------------------------------------------
+   RESTORE BUTTONS
+   ------------------------------------------------------------ */
+
+button.restore:hover {
+    color: #8dffb7;
+
+    background:
+        rgba(57,231,125,.08);
+
+    border-color:
+        rgba(57,231,125,.55);
+}
+
+
+/* ------------------------------------------------------------
+   SIDEBAR
+   ------------------------------------------------------------ */
+
+.nav-item {
+    transition:
+        transform .18s cubic-bezier(.2,.8,.2,1),
+        background-color .18s ease,
+        color .18s ease;
+}
+
+.nav-item:hover {
+    transform:
+        translateX(3px);
+}
+
+.nav-dot {
+    transition:
+        transform .18s ease,
+        box-shadow .18s ease;
+}
+
+.nav-item:hover .nav-dot {
+    transform:
+        scale(1.35);
+
+    box-shadow:
+        0 0 8px currentColor;
+}
+
+.nav-item.active .nav-dot {
+    box-shadow:
+        0 0 8px rgba(57,231,125,.65);
+}
+
+
+/* ------------------------------------------------------------
+   OPTIONAL: card response
+   Very small movement so dashboard still feels serious.
+   ------------------------------------------------------------ */
+
+.metric-card,
+.panel {
+    transition:
+        border-color .2s ease,
+        box-shadow .2s ease;
+}
+
+.metric-card:hover {
+    border-color:
+        rgba(57,231,125,.28);
+
+    box-shadow:
+        0 5px 18px rgba(0,0,0,.18);
+}
+
+
+/* Respect OS reduced-motion preference */
+@media (prefers-reduced-motion: reduce) {
+
+    button,
+    button::before,
+    .nav-item,
+    .nav-dot,
+    .metric-card,
+    .panel {
+        transition: none !important;
+    }
+
+    button:hover,
+    .nav-item:hover {
+        transform: none !important;
+    }
+}
+
+
+
+
+.route-preview-status {
+    margin: -3px 0 12px;
+    padding: 9px 10px;
+
+    border: 1px solid var(--border);
+    border-radius: 7px;
+
+    background: rgba(255,255,255,.025);
+
+    color: var(--muted);
+    font-size: 10px;
+
+    transition:
+        border-color .2s ease,
+        background-color .2s ease,
+        color .2s ease;
+}
+
+.route-preview-status.ready {
+    color: #8dffb7;
+    border-color: rgba(57,231,125,.35);
+    background: rgba(57,231,125,.07);
+}
+
+.route-preview-status.error {
+    color: #ff8f8f;
+    border-color: rgba(255,80,80,.35);
+    background: rgba(255,80,80,.06);
+}
+
+
 </style>
 </head>
 
@@ -676,7 +899,7 @@ button.stop {
 
     <div class="nav-item" data-target="mission-section" role="button" tabindex="0">
         <div class="nav-dot"></div>
-        <span>Mission</span>
+        <span>Trip</span>
     </div>
 
     <div class="nav-item" data-target="vehicle-section" role="button" tabindex="0">
@@ -686,7 +909,7 @@ button.stop {
 
     <div class="nav-item" data-target="perception-section" role="button" tabindex="0">
         <div class="nav-dot"></div>
-        <span>Perception</span>
+        <span>What the Van Sees</span>
     </div>
 
     <div class="nav-section">OPERATIONS</div>
@@ -698,12 +921,12 @@ button.stop {
 
     <div class="nav-item" data-target="fault-section" role="button" tabindex="0">
         <div class="nav-dot"></div>
-        <span>Fault Tests</span>
+        <span>Test Failures</span>
     </div>
 
     <div class="nav-item" data-target="history-section" role="button" tabindex="0">
         <div class="nav-dot"></div>
-        <span>History</span>
+        <span>Trip History</span>
     </div>
 
     <div class="sidebar-bottom">
@@ -748,7 +971,7 @@ button.stop {
     <section class="metrics scroll-section" id="overview">
 
         <div class="metric-card">
-            <div class="metric-label">Mission</div>
+            <div class="metric-label">Trip</div>
             <div class="metric-value" id="metricMission">IDLE</div>
             <div class="metric-detail" id="metricMissionId">No active mission</div>
         </div>
@@ -760,13 +983,13 @@ button.stop {
         </div>
 
         <div class="metric-card">
-            <div class="metric-label">Safety Supervisor</div>
+            <div class="metric-label">Safety</div>
             <div class="metric-value green" id="metricSafety">OK</div>
             <div class="metric-detail" id="metricSafetyReason">All systems healthy</div>
         </div>
 
         <div class="metric-card">
-            <div class="metric-label">Driving Behavior</div>
+            <div class="metric-label">Current Action</div>
             <div class="metric-value" id="metricBehavior">NO MISSION</div>
             <div class="metric-detail">Autonomy decision state</div>
         </div>
@@ -809,14 +1032,14 @@ button.stop {
                 <section class="panel scroll-section" id="mission-section">
 
                     <div class="panel-header">
-                        <div class="panel-title">Mission</div>
+                        <div class="panel-title">Trip</div>
                         <div class="panel-tag" id="missionStateTag">IDLE</div>
                     </div>
 
                     <div class="panel-body">
 
                         <div class="data-row">
-                            <div class="data-label">Mission ID</div>
+                            <div class="data-label">Trip ID</div>
                             <div class="data-value" id="missionId">—</div>
                         </div>
 
@@ -846,7 +1069,7 @@ button.stop {
                 <section class="panel scroll-section" id="vehicle-section">
 
                     <div class="panel-header">
-                        <div class="panel-title">Vehicle Telemetry</div>
+                        <div class="panel-title">Vehicle Status</div>
                         <div class="panel-tag">LIVE</div>
                     </div>
 
@@ -895,19 +1118,19 @@ button.stop {
                 <section class="panel scroll-section" id="perception-section">
 
                     <div class="panel-header">
-                        <div class="panel-title">Perception</div>
-                        <div class="panel-tag">CARLA GROUND TRUTH</div>
+                        <div class="panel-title">What the Van Sees</div>
+                        <div class="panel-tag">SIMULATION DATA</div>
                     </div>
 
                     <div class="panel-body">
 
                         <div class="data-row">
-                            <div class="data-label">Objects Detected</div>
+                            <div class="data-label">Objects Seen</div>
                             <div class="data-value" id="objectCount">0</div>
                         </div>
 
                         <div class="data-row">
-                            <div class="data-label">Closest Type</div>
+                            <div class="data-label">Closest Object</div>
                             <div class="data-value" id="closestType">unknown</div>
                         </div>
 
@@ -917,7 +1140,7 @@ button.stop {
                         </div>
 
                         <div class="data-row">
-                            <div class="data-label">Path Status</div>
+                            <div class="data-label">Road Ahead</div>
                             <div class="data-value green" id="pathStatus">CLEAR</div>
                         </div>
 
@@ -929,7 +1152,7 @@ button.stop {
                 <section class="panel scroll-section" id="safety-section">
 
                     <div class="panel-header">
-                        <div class="panel-title">Safety Supervisor</div>
+                        <div class="panel-title">Safety</div>
                         <div class="panel-tag" id="safetyTag">OK</div>
                     </div>
 
@@ -948,7 +1171,7 @@ button.stop {
                         </div>
 
                         <div class="data-row">
-                            <div class="data-label">Warnings / Errors</div>
+                            <div class="data-label">Problems</div>
                             <div class="data-value" id="warningCount">0</div>
                         </div>
 
@@ -966,7 +1189,7 @@ button.stop {
             <section class="panel scroll-section" id="history-section">
 
                 <div class="panel-header">
-                    <div class="panel-title">Mission History</div>
+                    <div class="panel-title">Trip History</div>
                     <div class="panel-tag">RECENT MISSIONS</div>
                 </div>
 
@@ -988,7 +1211,7 @@ button.stop {
             <section class="panel">
 
                 <div class="panel-header">
-                    <div class="panel-title">Mission Control</div>
+                    <div class="panel-title">Trip Control</div>
                     <div class="panel-tag">OPERATOR</div>
                 </div>
 
@@ -1001,6 +1224,11 @@ button.stop {
                     <select id="destination" class="destination-select">
                         <option>Loading destinations...</option>
                     </select>
+
+                    <div id="routePreviewStatus"
+                         class="route-preview-status">
+                        Choose a destination to see the route
+                    </div>
 
                     <button class="primary" style="width:100%;" onclick="startMission()">
                         ▶ START MISSION
@@ -1048,7 +1276,7 @@ button.stop {
             <section class="panel scroll-section" id="fault-section">
 
                 <div class="panel-header">
-                    <div class="panel-title">Fault Injection</div>
+                    <div class="panel-title">Test a Failure</div>
                     <div class="panel-tag">TEST MODE</div>
                 </div>
 
@@ -1113,8 +1341,8 @@ button.stop {
             <section class="panel">
 
                 <div class="panel-header">
-                    <div class="panel-title">System Decision</div>
-                    <div class="panel-tag">WHY?</div>
+                    <div class="panel-title">What the Vehicle is Doing</div>
+                    <div class="panel-tag">PLAIN ENGLISH</div>
                 </div>
 
                 <div class="panel-body">
@@ -1147,6 +1375,16 @@ const API = '';
 let spawnPoints = [];
 let latestState = null;
 
+let routePreviewActive = false;
+let previewDistanceM = null;
+
+let mapData = {
+    name: '',
+    roads: [],
+    buildings: [],
+    route: []
+};
+
 
 /* ============================================================
    API HELPERS
@@ -1174,25 +1412,228 @@ async function api(path, method='POST') {
 }
 
 
+
+async function previewSelectedRoute() {
+
+    const select =
+        document.getElementById('destination');
+
+    const status =
+        document.getElementById('routePreviewStatus');
+
+
+    if (!select.value) {
+
+        routePreviewActive = false;
+        previewDistanceM = null;
+
+        status.textContent =
+            'Choose a destination to see the route';
+
+        status.className =
+            'route-preview-status';
+
+        return;
+    }
+
+
+    const point =
+        JSON.parse(select.value);
+
+
+    status.textContent =
+        'Calculating road route...';
+
+    status.className =
+        'route-preview-status';
+
+
+    try {
+
+        const response =
+            await fetch(
+                API + '/api/route/preview',
+                {
+                    method: 'POST',
+
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    },
+
+                    body: JSON.stringify({
+                        x: point.x,
+                        y: point.y
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!result.success) {
+
+            routePreviewActive = false;
+
+            status.textContent =
+                result.reason ||
+                'Unable to find a road route';
+
+            status.className =
+                'route-preview-status error';
+
+            return;
+        }
+
+
+        /*
+         This is the SAME route returned by
+         our CARLA GlobalRoutePlanner.
+
+         We are only drawing it.
+         The van has NOT started moving.
+        */
+
+        mapData.route =
+            result.route || [];
+
+        routePreviewActive =
+            true;
+
+        previewDistanceM =
+            result.distance_m;
+
+
+        status.textContent =
+            `ROUTE READY · ${result.distance_m.toFixed(1)} m · ` +
+            `${result.waypoint_count} road points · Press START`;
+
+        status.className =
+            'route-preview-status ready';
+
+
+        if (latestState)
+            drawMap(latestState);
+
+
+    } catch(error) {
+
+        console.error(
+            "Route preview failed:",
+            error
+        );
+
+        routePreviewActive =
+            false;
+
+        status.textContent =
+            'Unable to calculate route';
+
+        status.className =
+            'route-preview-status error';
+    }
+}
+
+
 async function startMission() {
 
-    const select = document.getElementById('destination');
+    const select =
+        document.getElementById('destination');
 
-    if (!select.value)
+    const status =
+        document.getElementById('routePreviewStatus');
+
+
+    if (!select.value) {
+
+        status.textContent =
+            'Choose a destination first';
+
+        status.className =
+            'route-preview-status error';
+
         return;
+    }
 
-    const point = JSON.parse(select.value);
 
-    await fetch(API + '/api/mission/start', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            x: point.x,
-            y: point.y
-        })
-    });
+    const point =
+        JSON.parse(select.value);
+
+
+    /*
+     If the user somehow presses START before
+     preview finishes, calculate the preview first.
+    */
+
+    if (!routePreviewActive) {
+
+        await previewSelectedRoute();
+
+        if (!routePreviewActive)
+            return;
+    }
+
+
+    const response =
+        await fetch(
+            API + '/api/mission/start',
+            {
+                method: 'POST',
+
+                headers: {
+                    'Content-Type':
+                        'application/json'
+                },
+
+                body: JSON.stringify({
+                    x: point.x,
+                    y: point.y
+                })
+            }
+        );
+
+
+    const result =
+        await response.json();
+
+
+    if (result.success) {
+
+        /*
+         Preview now becomes the ACTIVE route.
+         Same route — now the van is allowed to move.
+        */
+
+        routePreviewActive =
+            false;
+
+        status.textContent =
+            'TRIP STARTED · Following planned road route';
+
+        status.className =
+            'route-preview-status ready';
+
+
+        /*
+         Refresh /api/map so dashboard now receives
+         the active route stored in WarpAV.
+        */
+
+        setTimeout(
+            loadMapData,
+            300
+        );
+
+    } else {
+
+        status.textContent =
+            'Unable to start trip';
+
+        status.className =
+            'route-preview-status error';
+    }
 }
 
 
@@ -1231,7 +1672,8 @@ async function loadDestinations() {
 
         const select = document.getElementById('destination');
 
-        select.innerHTML = '';
+        select.innerHTML =
+            '<option value="">Choose a destination...</option>';
 
         spawnPoints.forEach(point => {
 
@@ -1248,6 +1690,42 @@ async function loadDestinations() {
     } catch(error) {
 
         console.error("Unable to load spawn points", error);
+    }
+}
+
+
+
+/* ============================================================
+   CARLA ROAD + ROUTE DATA
+   ============================================================ */
+
+async function loadMapData() {
+
+    try {
+
+        const response =
+            await fetch(API + '/api/map');
+
+        if (!response.ok)
+            throw new Error("Map API unavailable");
+
+        mapData =
+            await response.json();
+
+        console.log(
+            `Loaded ${mapData.roads.length} road segments, ` +
+            `${mapData.route.length} route points`
+        );
+
+        if (latestState)
+            drawMap(latestState);
+
+    } catch(error) {
+
+        console.error(
+            "Unable to load CARLA map:",
+            error
+        );
     }
 }
 
@@ -1301,6 +1779,95 @@ function safetyColor(state) {
         return 'yellow';
 
     return 'red';
+}
+
+
+
+
+function humanObjectType(value) {
+
+    const names = {
+        vehicle: 'Vehicle',
+        pedestrian: 'Person',
+        obstacle: 'Road obstacle',
+        unknown: 'Unknown'
+    };
+
+    return names[value] || value || 'Unknown';
+}
+
+
+function humanAction(value) {
+
+    const actions = {
+
+        no_mission:
+            'Waiting for a trip',
+
+        idle:
+            'Waiting',
+
+        following_route:
+            'Driving to destination',
+
+        approaching_destination:
+            'Approaching destination',
+
+        mission_complete:
+            'Trip completed',
+
+        stopped_vehicle:
+            'Stopped for a vehicle ahead',
+
+        stopped_pedestrian:
+            'Stopped for a pedestrian',
+
+        stopped_obstacle:
+            'Stopped for an obstacle',
+
+        stopped_blocked:
+            'Road is blocked',
+
+        stopped_safety:
+            'Stopped safely',
+
+        stopped_estop:
+            'Emergency stop active'
+    };
+
+    return actions[value] ||
+        String(value || 'Waiting')
+            .replaceAll('_', ' ');
+}
+
+
+function humanReason(reason) {
+
+    if (!reason)
+        return 'Waiting for vehicle status';
+
+    const exact = {
+
+        'No mission assigned — waiting for destination':
+            'Waiting for a destination',
+
+        'All systems healthy':
+            'Everything is working normally',
+
+        'Localization unhealthy — stopping':
+            'Vehicle position is unavailable — stopped safely',
+
+        'Perception unhealthy — stopping':
+            'Object detection is unavailable — stopped safely',
+
+        'Safety supervisor commanded stop':
+            'Vehicle stopped because a safety check failed'
+    };
+
+    if (exact[reason])
+        return exact[reason];
+
+    return reason;
 }
 
 
@@ -1379,10 +1946,10 @@ function updateDashboard(s) {
         'metric-value ' + safetyColor(safety.state);
 
     document.getElementById('metricSafetyReason').textContent =
-        text(safety.reason);
+        humanReason(safety.reason);
 
     document.getElementById('metricBehavior').textContent =
-        behavior.replaceAll('_',' ').toUpperCase();
+        humanAction(behavior).toUpperCase();
 
 
     /* MAP */
@@ -1420,13 +1987,13 @@ function updateDashboard(s) {
     /* BEHAVIOR */
 
     document.getElementById('behaviorName').textContent =
-        behavior.toUpperCase();
+        humanAction(behavior).toUpperCase();
 
     document.getElementById('behaviorReason').textContent =
-        text(s.behavior_reason);
+        humanReason(s.behavior_reason);
 
     document.getElementById('systemDecision').textContent =
-        text(s.behavior_reason);
+        humanReason(s.behavior_reason);
 
 
     /* VEHICLE */
@@ -1456,7 +2023,9 @@ function updateDashboard(s) {
         text(perception.object_count, 0);
 
     document.getElementById('closestType').textContent =
-        text(perception.closest_type, 'unknown');
+        humanObjectType(
+            text(perception.closest_type, 'unknown')
+        );
 
     document.getElementById('closestDistance').textContent =
         `${text(perception.closest_distance, 999)} m`;
@@ -1491,7 +2060,7 @@ function updateDashboard(s) {
         text(safety.state, 'unknown').toUpperCase();
 
     document.getElementById('safetyReason').textContent =
-        text(safety.reason);
+        humanReason(safety.reason);
 
     const alerts = [
         ...(s.warnings || []),
@@ -1539,10 +2108,10 @@ function drawMap(s) {
         window.devicePixelRatio || 1;
 
     canvas.width =
-        rect.width * dpr;
+        Math.max(1, rect.width * dpr);
 
     canvas.height =
-        rect.height * dpr;
+        Math.max(1, rect.height * dpr);
 
     const ctx =
         canvas.getContext('2d');
@@ -1555,42 +2124,76 @@ function drawMap(s) {
     const height =
         rect.height;
 
+    const roads =
+        mapData.roads || [];
 
-    let points =
-        spawnPoints.map(p => ({
-            x: Number(p.x),
-            y: Number(p.y)
-        }));
+    const buildings =
+        mapData.buildings || [];
+
+    const route =
+        mapData.route || [];
 
 
-    if (s.pose) {
+    /* --------------------------------------------------------
+       CHOOSE VIEW AREA
 
-        points.push({
-            x: Number(s.pose.x),
-            y: Number(s.pose.y)
+       If a trip exists, zoom around the actual route.
+       Otherwise show the whole CARLA road network.
+       -------------------------------------------------------- */
+
+    let viewPoints = [];
+
+    if (route.length > 1) {
+
+        viewPoints =
+            route.map(p => ({
+                x: Number(p.x),
+                y: Number(p.y)
+            }));
+
+        if (s.pose) {
+
+            viewPoints.push({
+                x: Number(s.pose.x),
+                y: Number(s.pose.y)
+            });
+        }
+
+        if (
+            s.mission &&
+            s.mission.destination
+        ) {
+
+            viewPoints.push({
+                x: Number(s.mission.destination.x),
+                y: Number(s.mission.destination.y)
+            });
+        }
+
+    } else {
+
+        roads.forEach(segment => {
+
+            segment.forEach(p => {
+
+                viewPoints.push({
+                    x: Number(p.x),
+                    y: Number(p.y)
+                });
+            });
         });
     }
 
 
-    if (s.mission && s.mission.destination) {
-
-        points.push({
-            x: Number(s.mission.destination.x),
-            y: Number(s.mission.destination.y)
-        });
-    }
-
-
-    if (!points.length)
+    if (!viewPoints.length)
         return;
 
 
     const xs =
-        points.map(p => p.x);
+        viewPoints.map(p => p.x);
 
     const ys =
-        points.map(p => p.y);
-
+        viewPoints.map(p => p.y);
 
     let minX =
         Math.min(...xs);
@@ -1605,140 +2208,558 @@ function drawMap(s) {
         Math.max(...ys);
 
 
-    const padX =
-        Math.max(15, (maxX-minX) * .08);
+    /* add space around route */
 
-    const padY =
-        Math.max(15, (maxY-minY) * .08);
+    const rangeX =
+        Math.max(1, maxX - minX);
+
+    const rangeY =
+        Math.max(1, maxY - minY);
+
+    const padding =
+        route.length > 1 ? 25 : 10;
+
+    minX -= Math.max(padding, rangeX * 0.12);
+    maxX += Math.max(padding, rangeX * 0.12);
+
+    minY -= Math.max(padding, rangeY * 0.12);
+    maxY += Math.max(padding, rangeY * 0.12);
 
 
-    minX -= padX;
-    maxX += padX;
+    /* preserve map aspect ratio */
 
-    minY -= padY;
-    maxY += padY;
+    const mapWidth =
+        maxX - minX;
 
+    const mapHeight =
+        maxY - minY;
 
-    function project(x,y) {
+    const canvasAspect =
+        width / height;
 
-        const px =
-            ((x-minX)/(maxX-minX)) * (width-50) + 25;
+    const mapAspect =
+        mapWidth / mapHeight;
 
-        const py =
-            height -
-            (((y-minY)/(maxY-minY)) * (height-50) + 25);
+    if (mapAspect > canvasAspect) {
 
-        return [px,py];
+        const neededHeight =
+            mapWidth / canvasAspect;
+
+        const extra =
+            (neededHeight - mapHeight) / 2;
+
+        minY -= extra;
+        maxY += extra;
+
+    } else {
+
+        const neededWidth =
+            mapHeight * canvasAspect;
+
+        const extra =
+            (neededWidth - mapWidth) / 2;
+
+        minX -= extra;
+        maxX += extra;
     }
 
 
-    /* spawn points */
+    function project(x, y) {
 
-    ctx.fillStyle =
-        '#3b4146';
+        const px =
+            ((x - minX) /
+            (maxX - minX)) * width;
 
-    spawnPoints.forEach(p => {
+        const py =
+            height -
+            ((y - minY) /
+            (maxY - minY)) * height;
 
-        const [x,y] =
-            project(Number(p.x), Number(p.y));
+        return [px, py];
+    }
 
-        ctx.beginPath();
-        ctx.arc(x,y,2.5,0,Math.PI*2);
-        ctx.fill();
+
+    /* --------------------------------------------------------
+       BACKGROUND
+       -------------------------------------------------------- */
+
+    ctx.clearRect(
+        0,
+        0,
+        width,
+        height
+    );
+
+
+
+    /* --------------------------------------------------------
+       DRAW BUILDINGS AS MAP CONTEXT
+
+       These are CARLA map buildings.
+       They are NOT camera detections.
+       -------------------------------------------------------- */
+
+    const pixelsPerMeterX =
+        width / (maxX - minX);
+
+    const pixelsPerMeterY =
+        height / (maxY - minY);
+
+
+    buildings.forEach(building => {
+
+        const [bx, by] =
+            project(
+                Number(building.x),
+                Number(building.y)
+            );
+
+        const buildingWidth =
+            Math.max(
+                2,
+                Number(building.extent_x) *
+                2 *
+                pixelsPerMeterX
+            );
+
+        const buildingHeight =
+            Math.max(
+                2,
+                Number(building.extent_y) *
+                2 *
+                pixelsPerMeterY
+            );
+
+        ctx.save();
+
+        ctx.translate(bx, by);
+
+        ctx.rotate(
+            -Number(building.yaw || 0) *
+            Math.PI / 180
+        );
+
+        ctx.fillStyle =
+            '#132233';
+
+        ctx.strokeStyle =
+            '#263b50';
+
+        ctx.lineWidth = 1;
+
+        ctx.fillRect(
+            -buildingWidth / 2,
+            -buildingHeight / 2,
+            buildingWidth,
+            buildingHeight
+        );
+
+        ctx.strokeRect(
+            -buildingWidth / 2,
+            -buildingHeight / 2,
+            buildingWidth,
+            buildingHeight
+        );
+
+        ctx.restore();
     });
 
 
-    /* destination */
+    /* --------------------------------------------------------
+       CARLA ROAD NETWORK
 
-    if (s.mission && s.mission.destination) {
+       Draw wide dark road first,
+       then a lighter center line.
+       -------------------------------------------------------- */
 
-        const [dx,dy] =
+    roads.forEach(segment => {
+
+        if (!segment || segment.length < 2)
+            return;
+
+        ctx.beginPath();
+
+        segment.forEach((p, index) => {
+
+            const [x, y] =
+                project(
+                    Number(p.x),
+                    Number(p.y)
+                );
+
+            if (index === 0)
+                ctx.moveTo(x, y);
+            else
+                ctx.lineTo(x, y);
+        });
+
+        ctx.strokeStyle =
+            '#26394c';
+
+        ctx.lineWidth = 6;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        ctx.stroke();
+
+
+        ctx.strokeStyle =
+            '#40556b';
+
+        ctx.lineWidth = 1;
+
+        ctx.stroke();
+    });
+
+
+    /* --------------------------------------------------------
+       ACTUAL PLANNED ROUTE
+       -------------------------------------------------------- */
+
+    if (route.length > 1) {
+
+        ctx.save();
+
+        /*
+         BEFORE START:
+         dashed softer green = route preview
+
+         AFTER START:
+         solid bright green = active trip
+        */
+        ctx.setLineDash(
+            routePreviewActive
+                ? [10, 8]
+                : []
+        );
+
+        ctx.globalAlpha =
+            routePreviewActive
+                ? 0.58
+                : 1.0;
+
+        ctx.beginPath();
+
+        route.forEach((p, index) => {
+
+            const [x, y] =
+                project(
+                    Number(p.x),
+                    Number(p.y)
+                );
+
+            if (index === 0)
+                ctx.moveTo(x, y);
+            else
+                ctx.lineTo(x, y);
+        });
+
+        ctx.strokeStyle =
+            '#39e77d';
+
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        ctx.shadowColor =
+            'rgba(57,231,125,.65)';
+
+        ctx.shadowBlur = 10;
+
+        ctx.stroke();
+
+        ctx.restore();
+
+
+        /* route start */
+
+        const first =
+            route[0];
+
+        const [sx, sy] =
+            project(
+                Number(first.x),
+                Number(first.y)
+            );
+
+        ctx.fillStyle =
+            '#8ba0b4';
+
+        ctx.beginPath();
+        ctx.arc(
+            sx,
+            sy,
+            4,
+            0,
+            Math.PI * 2
+        );
+        ctx.fill();
+    }
+
+
+    /* --------------------------------------------------------
+       DESTINATION
+       -------------------------------------------------------- */
+
+    if (
+        s.mission &&
+        s.mission.destination
+    ) {
+
+        const [dx, dy] =
             project(
                 Number(s.mission.destination.x),
                 Number(s.mission.destination.y)
             );
 
+        ctx.save();
+
         ctx.strokeStyle =
-            '#00ff4c';
-
-        ctx.lineWidth = 1.5;
-
-        ctx.beginPath();
-        ctx.arc(dx,dy,10,0,Math.PI*2);
-        ctx.stroke();
+            '#39e77d';
 
         ctx.fillStyle =
-            '#00ff4c';
+            '#39e77d';
+
+        ctx.lineWidth = 2;
+
+        ctx.shadowColor =
+            'rgba(57,231,125,.7)';
+
+        ctx.shadowBlur = 12;
 
         ctx.beginPath();
-        ctx.arc(dx,dy,4,0,Math.PI*2);
+        ctx.arc(
+            dx,
+            dy,
+            11,
+            0,
+            Math.PI * 2
+        );
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(
+            dx,
+            dy,
+            4,
+            0,
+            Math.PI * 2
+        );
         ctx.fill();
 
-        /* vehicle → destination line */
+        ctx.restore();
 
-        const [vx,vy] =
+
+        ctx.fillStyle =
+            '#c9d4df';
+
+        ctx.font =
+            '10px sans-serif';
+
+        ctx.fillText(
+            'DESTINATION',
+            dx + 15,
+            dy + 4
+        );
+    }
+
+
+
+    /* --------------------------------------------------------
+       DRAW WHAT THE VAN CURRENTLY SEES
+       -------------------------------------------------------- */
+
+    const detectedObjects =
+        (s.perception && s.perception.objects)
+        ? s.perception.objects
+        : [];
+
+
+    detectedObjects.forEach(obj => {
+
+        const [ox, oy] =
+            project(
+                Number(obj.x),
+                Number(obj.y)
+            );
+
+        const objectType =
+            obj.type || 'unknown';
+
+        let markerColor =
+            '#a7b3c0';
+
+        let markerLabel =
+            'OBJECT';
+
+        if (objectType === 'pedestrian') {
+
+            markerColor =
+                '#ffb74d';
+
+            markerLabel =
+                'PERSON';
+
+        } else if (objectType === 'vehicle') {
+
+            markerColor =
+                '#55b8ff';
+
+            markerLabel =
+                'VEHICLE';
+
+        } else if (objectType === 'obstacle') {
+
+            markerColor =
+                '#ff6363';
+
+            markerLabel =
+                'OBSTACLE';
+        }
+
+
+        ctx.save();
+
+        ctx.shadowColor =
+            markerColor;
+
+        ctx.shadowBlur = 8;
+
+        ctx.fillStyle =
+            markerColor;
+
+
+        if (objectType === 'obstacle') {
+
+            ctx.fillRect(
+                ox - 5,
+                oy - 5,
+                10,
+                10
+            );
+
+        } else {
+
+            ctx.beginPath();
+
+            ctx.arc(
+                ox,
+                oy,
+                5,
+                0,
+                Math.PI * 2
+            );
+
+            ctx.fill();
+        }
+
+        ctx.restore();
+
+
+        ctx.font =
+            '10px sans-serif';
+
+        ctx.fillStyle =
+            markerColor;
+
+        ctx.fillText(
+            `${markerLabel} ${Number(obj.distance).toFixed(1)}m`,
+            ox + 9,
+            oy - 8
+        );
+    });
+
+
+    /* --------------------------------------------------------
+       VEHICLE
+
+       Draw a small arrow showing heading.
+       -------------------------------------------------------- */
+
+    if (s.pose) {
+
+        const [vx, vy] =
             project(
                 Number(s.pose.x),
                 Number(s.pose.y)
             );
 
-        ctx.setLineDash([5,5]);
-        ctx.strokeStyle =
-            'rgba(0,255,76,.28)';
+        const yaw =
+            Number(s.pose.yaw || 0) *
+            Math.PI / 180;
+
+        ctx.save();
+
+        ctx.translate(vx, vy);
+
+        /*
+         Canvas Y goes down, therefore
+         CARLA heading needs negative rotation.
+        */
+        ctx.rotate(-yaw);
+
+        ctx.shadowColor =
+            'rgba(255,255,255,.8)';
+
+        ctx.shadowBlur = 10;
+
+        ctx.fillStyle =
+            '#ffffff';
 
         ctx.beginPath();
-        ctx.moveTo(vx,vy);
-        ctx.lineTo(dx,dy);
-        ctx.stroke();
 
-        ctx.setLineDash([]);
+        ctx.moveTo(11, 0);
+        ctx.lineTo(-7, -6);
+        ctx.lineTo(-4, 0);
+        ctx.lineTo(-7, 6);
+
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+
+
+        ctx.fillStyle =
+            '#ffffff';
+
+        ctx.font =
+            '10px sans-serif';
+
+        ctx.fillText(
+            'VAN',
+            vx + 12,
+            vy - 10
+        );
     }
 
 
-    /* vehicle */
+    /* --------------------------------------------------------
+       MAP LEGEND
+       -------------------------------------------------------- */
 
-    const [vx,vy] =
-        project(
-            Number(s.pose.x),
-            Number(s.pose.y)
-        );
+    ctx.font =
+        '10px sans-serif';
 
     ctx.fillStyle =
-        '#ffffff';
+        '#7f94a8';
 
-    ctx.shadowColor =
-        '#00ff4c';
-
-    ctx.shadowBlur =
-        14;
-
-    ctx.beginPath();
-    ctx.arc(vx,vy,6,0,Math.PI*2);
-    ctx.fill();
-
-    ctx.shadowBlur = 0;
-
-
-    /* heading */
-
-    const yaw =
-        Number(s.pose.yaw || 0) * Math.PI / 180;
-
-    ctx.strokeStyle =
-        '#00ff4c';
-
-    ctx.lineWidth = 2;
-
-    ctx.beginPath();
-
-    ctx.moveTo(vx,vy);
-
-    ctx.lineTo(
-        vx + Math.cos(yaw) * 18,
-        vy - Math.sin(yaw) * 18
+    ctx.fillText(
+        'CARLA ROADS',
+        15,
+        height - 15
     );
 
-    ctx.stroke();
+    if (route.length > 1) {
+
+        ctx.fillStyle =
+            '#39e77d';
+
+        ctx.fillText(
+            '● PLANNED ROUTE',
+            100,
+            height - 15
+        );
+    }
 }
 
 
@@ -1812,7 +2833,15 @@ async function loadHistory() {
    START
    ============================================================ */
 
+document
+    .getElementById('destination')
+    .addEventListener(
+        'change',
+        previewSelectedRoute
+    );
+
 loadDestinations();
+loadMapData();
 
 pollState();
 loadHistory();

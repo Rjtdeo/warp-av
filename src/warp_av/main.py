@@ -24,6 +24,7 @@ import signal
 import threading
 import math
 import json
+import carla
 from pathlib import Path
 from flask import Flask, jsonify, request, send_file
 from flask_socketio import SocketIO
@@ -89,6 +90,11 @@ class WarpAV:
         # Current state for the API/console
         self._current_state = {}
         self._route = None
+
+        # Route selected on the dashboard before START is pressed.
+        self._preview_route = None
+        self._preview_destination = None
+
         self._running = False
 
         print("[Init] All systems ready!")
@@ -103,8 +109,55 @@ class WarpAV:
             dest_x, dest_y, pose.x, pose.y
         )
 
-        # Plan route
-        self._route = self.planner.plan_route(pose.x, pose.y, dest_x, dest_y)
+        # ----------------------------------------------------
+        # Use the route already previewed on the dashboard
+        # when it matches this destination.
+        # ----------------------------------------------------
+
+        use_preview = False
+
+        if (
+            self._preview_route
+            and self._preview_destination
+            and abs(self._preview_destination[0] - dest_x) < 0.1
+            and abs(self._preview_destination[1] - dest_y) < 0.1
+            and self._preview_route.waypoints
+        ):
+            first_wp = self._preview_route.waypoints[0]
+
+            distance_from_preview_start = math.sqrt(
+                (first_wp.x - pose.x) ** 2
+                + (first_wp.y - pose.y) ** 2
+            )
+
+            # If the van has not moved significantly,
+            # use EXACTLY the route we already showed.
+            if distance_from_preview_start < 8.0:
+                use_preview = True
+
+        if use_preview:
+
+            self._route = self._preview_route
+
+            print(
+                f"[Planner] Using previewed route: "
+                f"{len(self._route.waypoints)} waypoints, "
+                f"{self._route.total_distance:.0f}m"
+            )
+
+        else:
+
+            self._route = self.planner.plan_route(
+                pose.x,
+                pose.y,
+                dest_x,
+                dest_y
+            )
+
+        # Preview has now become the active route.
+        self._preview_route = None
+        self._preview_destination = None
+
         if not self._route:
             self.mission_manager.fail_mission("Route planning failed")
             return False
@@ -233,6 +286,31 @@ class WarpAV:
                 "closest_distance": round(perception.closest_obstacle_distance, 1),
                 "closest_type": perception.closest_obstacle_type.value,
                 "path_blocked": perception.path_blocked,
+
+                # Objects shown on the operator map.
+                # These come from our current CARLA ground-truth perception.
+                "objects": [] if not pose.healthy else [
+                    {
+                        "id": obj.id,
+                        "type": obj.object_type.value,
+                        "distance": round(obj.distance, 1),
+
+                        "x": round(
+                            pose.x
+                            + math.cos(pose.yaw) * obj.x
+                            - math.sin(pose.yaw) * obj.y,
+                            2
+                        ),
+
+                        "y": round(
+                            pose.y
+                            + math.sin(pose.yaw) * obj.x
+                            + math.cos(pose.yaw) * obj.y,
+                            2
+                        ),
+                    }
+                    for obj in perception.objects
+                ],
             },
             "mission": self.mission_manager.get_status(),
             "warnings": self.safety.warnings,
@@ -267,6 +345,62 @@ class WarpAV:
         print("[WarpAV] Shutdown complete")
 
     # --- API methods (called by Flask console) ---
+
+    def api_preview_route(self, dest_x, dest_y):
+        """
+        Calculate a route WITHOUT moving the vehicle.
+
+        The dashboard can show this route before the operator
+        presses START.
+        """
+
+        pose = self.localization.update()
+
+        if not pose.healthy:
+            return {
+                "success": False,
+                "reason": "Vehicle position is unavailable"
+            }
+
+        route = self.planner.plan_route(
+            pose.x,
+            pose.y,
+            dest_x,
+            dest_y
+        )
+
+        if not route:
+            return {
+                "success": False,
+                "reason": "No road route found"
+            }
+
+        self._preview_route = route
+        self._preview_destination = (
+            float(dest_x),
+            float(dest_y)
+        )
+
+        return {
+            "success": True,
+
+            "distance_m": round(
+                route.total_distance,
+                1
+            ),
+
+            "waypoint_count": len(
+                route.waypoints
+            ),
+
+            "route": [
+                {
+                    "x": round(wp.x, 2),
+                    "y": round(wp.y, 2)
+                }
+                for wp in route.waypoints
+            ]
+        }
 
     def api_start_mission(self, dest_x, dest_y):
         return self.start_mission(dest_x, dest_y)
@@ -320,6 +454,124 @@ class WarpAV:
     def api_get_history(self):
         return self.mission_manager.get_history()
 
+    def api_get_map_data(self):
+        """
+        Return CARLA road geometry plus the current planned route.
+
+        Road geometry is generated once and cached because the
+        Town10HD road network does not change during a mission.
+        """
+
+        # ----------------------------------------------------
+        # Build road geometry once
+        # ----------------------------------------------------
+
+        if not hasattr(self, "_map_geometry_cache"):
+
+            carla_map = self.vehicle_adapter.get_map()
+
+            # Group sampled driving waypoints by lane.
+            lanes = {}
+
+            for wp in carla_map.generate_waypoints(4.0):
+
+                if wp.lane_type != carla.LaneType.Driving:
+                    continue
+
+                key = (
+                    wp.road_id,
+                    wp.section_id,
+                    wp.lane_id,
+                )
+
+                loc = wp.transform.location
+
+                lanes.setdefault(key, []).append(
+                    (
+                        float(wp.s),
+                        round(loc.x, 2),
+                        round(loc.y, 2),
+                    )
+                )
+
+            roads = []
+
+            for points in lanes.values():
+
+                # OpenDRIVE 's' gives us the order along the lane.
+                points.sort(key=lambda item: item[0])
+
+                if len(points) < 2:
+                    continue
+
+                roads.append([
+                    {
+                        "x": x,
+                        "y": y,
+                    }
+                    for _, x, y in points
+                ])
+
+            # Buildings are MAP context for the dashboard.
+            # We are not claiming perception detected these.
+            buildings = []
+
+            env_buildings = self.vehicle_adapter.world.get_environment_objects(
+                carla.CityObjectLabel.Buildings
+            )
+
+            for building in env_buildings:
+
+                bb = building.bounding_box
+
+                buildings.append({
+                    "id": int(building.id),
+                    "x": round(float(bb.location.x), 2),
+                    "y": round(float(bb.location.y), 2),
+                    "extent_x": round(float(bb.extent.x), 2),
+                    "extent_y": round(float(bb.extent.y), 2),
+                    "yaw": round(float(bb.rotation.yaw), 2),
+                })
+
+            self._map_geometry_cache = {
+                "name": carla_map.name,
+                "roads": roads,
+                "buildings": buildings,
+            }
+
+            print(
+                f"[Map] Dashboard buildings ready: "
+                f"{len(buildings)} building objects"
+            )
+
+            print(
+                f"[Map] Dashboard road geometry ready: "
+                f"{len(roads)} lane segments"
+            )
+
+        # ----------------------------------------------------
+        # Current planned route
+        # ----------------------------------------------------
+
+        route_points = []
+
+        if self._route:
+
+            route_points = [
+                {
+                    "x": round(wp.x, 2),
+                    "y": round(wp.y, 2),
+                }
+                for wp in self._route.waypoints
+            ]
+
+        return {
+            "name": self._map_geometry_cache["name"],
+            "roads": self._map_geometry_cache["roads"],
+            "buildings": self._map_geometry_cache["buildings"],
+            "route": route_points,
+        }
+
     def api_get_spawn_points(self):
         """Get available destinations."""
         points = self.vehicle_adapter.get_spawn_points()
@@ -360,6 +612,24 @@ def operator_console():
 def get_state():
     return jsonify(av_system.api_get_state())
 
+@app.route('/api/route/preview', methods=['POST'])
+def preview_route():
+    data = request.get_json(silent=True) or {}
+
+    if "x" not in data or "y" not in data:
+        return jsonify({
+            "success": False,
+            "reason": "Destination x/y required"
+        }), 400
+
+    result = av_system.api_preview_route(
+        float(data["x"]),
+        float(data["y"])
+    )
+
+    return jsonify(result)
+
+
 @app.route('/api/mission/start', methods=['POST'])
 def start_mission():
     data = request.json
@@ -398,6 +668,11 @@ def get_history():
 @app.route('/api/spawn_points')
 def get_spawn_points():
     return jsonify(av_system.api_get_spawn_points())
+
+
+@app.route('/api/map')
+def get_map_data():
+    return jsonify(av_system.api_get_map_data())
 
 # Test/debug controls
 @app.route('/api/test/disable_perception', methods=['POST'])
