@@ -24,7 +24,8 @@ import signal
 import threading
 import math
 import json
-from flask import Flask, jsonify, request
+from pathlib import Path
+from flask import Flask, jsonify, request, send_file
 from flask_socketio import SocketIO
 
 # Our modules
@@ -142,6 +143,25 @@ class WarpAV:
             vehicle_alive=self.vehicle_adapter.is_alive(),
             current_speed=pose.speed,
         )
+
+        # Keep the latest safety result for operator Resume checks.
+        self._last_safety_output = safety_output
+
+        # If safety stops an executing mission, pause the SAME mission.
+        # After the fault is restored, the operator must press Resume.
+        current_mission = self.mission_manager.current_mission
+
+        if (
+            current_mission
+            and current_mission.state == MissionState.EXECUTING
+            and not safety_output.driving_allowed
+        ):
+            self.mission_manager.pause_mission()
+            self.vehicle_adapter.disengage_autonomy()
+            self.logger.log_event(
+                "mission_paused_safety",
+                safety_output.reason
+            )
 
         # 4. Behavior decision
         dest_dist = None
@@ -272,8 +292,27 @@ class WarpAV:
         self.vehicle_adapter.disengage_autonomy()
 
     def api_resume(self):
+        # Never resume while a safety fault is still active.
+        safety_output = getattr(self, "_last_safety_output", None)
+
+        if safety_output is None or not safety_output.driving_allowed:
+            print("[Mission] RESUME BLOCKED — safety is not healthy")
+            return False
+
+        mission = self.mission_manager.current_mission
+
+        if not mission or mission.state != MissionState.PAUSED:
+            print("[Mission] RESUME BLOCKED — no paused mission")
+            return False
+
         self.mission_manager.resume_mission()
         self.vehicle_adapter.engage_autonomy()
+        self.logger.log_event(
+            "mission_resumed",
+            "Operator resumed mission after safety recovery"
+        )
+
+        return True
 
     def api_get_state(self):
         return self._current_state
@@ -311,6 +350,12 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 av_system: WarpAV = None
 
 
+@app.route('/')
+def operator_console():
+    console_file = Path(__file__).resolve().parent / "console" / "index.html"
+    return send_file(console_file)
+
+
 @app.route('/api/state')
 def get_state():
     return jsonify(av_system.api_get_state())
@@ -333,8 +378,8 @@ def pause_mission():
 
 @app.route('/api/mission/resume', methods=['POST'])
 def resume_mission():
-    av_system.api_resume()
-    return jsonify({"success": True})
+    ok = av_system.api_resume()
+    return jsonify({"success": ok})
 
 @app.route('/api/estop', methods=['POST'])
 def estop():
@@ -370,9 +415,19 @@ def disable_localization():
     av_system.api_disable_localization()
     return jsonify({"success": True})
 
+@app.route('/api/test/enable_localization', methods=['POST'])
+def enable_localization():
+    av_system.api_enable_localization()
+    return jsonify({"success": True})
+
 @app.route('/api/test/disable_camera', methods=['POST'])
 def disable_camera():
     av_system.api_disable_camera()
+    return jsonify({"success": True})
+
+@app.route('/api/test/enable_camera', methods=['POST'])
+def enable_camera():
+    av_system.api_enable_camera()
     return jsonify({"success": True})
 
 
