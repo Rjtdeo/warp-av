@@ -868,6 +868,243 @@ button.restore:hover {
 }
 
 
+
+
+/* ============================================================
+   SENSOR + SYSTEM HEALTH
+   ============================================================ */
+
+.health-section-title {
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: 1.6px;
+    margin-bottom: 10px;
+}
+
+.systems-title {
+    margin-top: 22px;
+}
+
+.health-card {
+    padding: 12px;
+    margin-bottom: 9px;
+
+    border: 1px solid var(--border-soft);
+    border-radius: 9px;
+
+    background: rgba(255,255,255,.018);
+
+    transition:
+        border-color .18s ease,
+        background-color .18s ease;
+}
+
+.health-card:hover {
+    border-color: rgba(57,231,125,.22);
+    background: rgba(255,255,255,.027);
+}
+
+.health-card.critical {
+    border-left: 2px solid rgba(57,231,125,.35);
+}
+
+.health-card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+
+    margin-bottom: 10px;
+}
+
+.health-name {
+    font-size: 11px;
+    font-weight: 650;
+    color: var(--text);
+}
+
+.health-description {
+    margin-top: 4px;
+
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 1.45;
+}
+
+.health-pill {
+    white-space: nowrap;
+
+    padding: 5px 7px;
+
+    border-radius: 20px;
+
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: .6px;
+}
+
+.health-pill.online {
+    color: #8dffb7;
+
+    border: 1px solid rgba(57,231,125,.28);
+    background: rgba(57,231,125,.08);
+}
+
+.health-pill.failed {
+    color: #ff9292;
+
+    border: 1px solid rgba(255,80,80,.35);
+    background: rgba(255,80,80,.08);
+}
+
+.fault-explanation {
+    margin-top: 18px;
+
+    padding: 12px;
+
+    border-radius: 8px;
+    border: 1px solid var(--border);
+
+    background: rgba(0,0,0,.18);
+
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.55;
+}
+
+.fault-explanation.warning {
+    color: #ffd38a;
+
+    border-color: rgba(255,185,70,.3);
+    background: rgba(255,185,70,.06);
+}
+
+.fault-explanation.danger {
+    color: #ff9a9a;
+
+    border-color: rgba(255,70,70,.32);
+    background: rgba(255,70,70,.07);
+}
+
+
+
+
+/* ============================================================
+   ROAD SCENARIO TESTS
+   ============================================================ */
+
+.scenario-intro {
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.6;
+    margin-bottom: 14px;
+}
+
+.scenario-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.scenario-button {
+    min-height: 62px;
+
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+
+    gap: 6px;
+
+    padding: 11px;
+
+    border: 1px solid var(--border);
+    border-radius: 8px;
+
+    background: rgba(255,255,255,.025);
+
+    color: var(--text);
+
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: .4px;
+
+    cursor: pointer;
+
+    transition:
+        transform .16s ease,
+        border-color .16s ease,
+        background-color .16s ease,
+        box-shadow .16s ease;
+}
+
+.scenario-button:hover {
+    transform: translateY(-2px);
+
+    border-color: rgba(57,231,125,.45);
+
+    background: rgba(57,231,125,.055);
+
+    box-shadow:
+        0 6px 20px rgba(0,0,0,.18);
+}
+
+.scenario-button:active {
+    transform: scale(.975);
+}
+
+.scenario-icon {
+    font-size: 17px;
+}
+
+.clear-scenario {
+    border-color: rgba(255,255,255,.14);
+}
+
+.scenario-status {
+    margin-top: 13px;
+
+    padding: 10px;
+
+    border: 1px solid var(--border);
+    border-radius: 7px;
+
+    background: rgba(0,0,0,.16);
+
+    color: var(--muted);
+
+    font-size: 10px;
+    line-height: 1.5;
+}
+
+.scenario-status.active {
+    color: #8dffb7;
+
+    border-color: rgba(57,231,125,.3);
+
+    background: rgba(57,231,125,.06);
+}
+
+.scenario-status.error {
+    color: #ff9a9a;
+
+    border-color: rgba(255,80,80,.3);
+
+    background: rgba(255,80,80,.06);
+}
+
+.scenario-note {
+    margin-top: 9px;
+
+    color: var(--muted);
+
+    font-size: 8px;
+    line-height: 1.5;
+
+    opacity: .8;
+}
+
+
 </style>
 </head>
 
@@ -917,6 +1154,11 @@ button.restore:hover {
     <div class="nav-item" data-target="safety-section" role="button" tabindex="0">
         <div class="nav-dot"></div>
         <span>Safety</span>
+    </div>
+
+    <div class="nav-item" data-target="scenario-section" role="button" tabindex="0">
+        <div class="nav-dot"></div>
+        <span>Road Scenarios</span>
     </div>
 
     <div class="nav-item" data-target="fault-section" role="button" tabindex="0">
@@ -1272,64 +1514,256 @@ button.restore:hover {
             </section>
 
 
-            <!-- FAULT TEST -->
+            <!-- ROAD SCENARIO TESTS -->
+            <section class="panel scroll-section"
+                     id="scenario-section">
+
+                <div class="panel-header">
+
+                    <div class="panel-title">
+                        Road Scenario Tests
+                    </div>
+
+                    <div class="panel-tag">
+                        LIVE CARLA
+                    </div>
+
+                </div>
+
+
+                <div class="panel-body">
+
+                    <div class="scenario-intro">
+                        Place a test object ahead of the moving van
+                        and watch how the autonomous system responds.
+                    </div>
+
+
+                    <div class="scenario-grid">
+
+                        <button
+                            class="scenario-button"
+                            onclick="spawnScenario('pedestrian')">
+
+                            <span class="scenario-icon">
+                                🚶
+                            </span>
+
+                            <span>
+                                PEDESTRIAN AHEAD
+                            </span>
+
+                        </button>
+
+
+                        <button
+                            class="scenario-button"
+                            onclick="spawnScenario('vehicle')">
+
+                            <span class="scenario-icon">
+                                🚗
+                            </span>
+
+                            <span>
+                                VEHICLE AHEAD
+                            </span>
+
+                        </button>
+
+
+                        <button
+                            class="scenario-button"
+                            onclick="spawnScenario('barrier')">
+
+                            <span class="scenario-icon">
+                                🚧
+                            </span>
+
+                            <span>
+                                BLOCK ROAD
+                            </span>
+
+                        </button>
+
+
+                        <button
+                            class="scenario-button clear-scenario"
+                            onclick="clearScenario()">
+
+                            <span class="scenario-icon">
+                                ✕
+                            </span>
+
+                            <span>
+                                CLEAR SCENARIO
+                            </span>
+
+                        </button>
+
+                    </div>
+
+
+                    <div
+                        id="scenarioStatus"
+                        class="scenario-status">
+
+                        No road test active.
+
+                    </div>
+
+
+                    <div class="scenario-note">
+
+                        Test objects are placed approximately
+                        20 m ahead on the van's current route.
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- SENSOR + SYSTEM HEALTH -->
             <section class="panel scroll-section" id="fault-section">
 
                 <div class="panel-header">
                     <div class="panel-title">Test a Failure</div>
-                    <div class="panel-tag">TEST MODE</div>
+                    <div class="panel-tag">SAFE TEST MODE</div>
                 </div>
 
                 <div class="panel-body">
 
-                    <div class="small-label" style="margin-bottom:8px;">
-                        PERCEPTION
+
+                    <div class="health-section-title">
+                        SAFETY TESTS
                     </div>
 
-                    <div class="fault-grid">
-                        <button class="fault"
-                            onclick="api('/api/test/disable_perception')">
-                            DISABLE
-                        </button>
-
-                        <button class="restore"
-                            onclick="api('/api/test/enable_perception')">
-                            RESTORE
-                        </button>
+                    <div class="health-description"
+                         style="margin-bottom:14px; line-height:1.6;">
+                        Test how the van responds when an important
+                        driving system fails.
                     </div>
 
-                    <div class="small-label"
-                         style="margin:16px 0 8px;">
-                        LOCALIZATION
+
+
+                    <!-- OBJECT DETECTION -->
+                    <div class="health-card critical">
+
+                        <div class="health-card-top">
+                            <div>
+                                <div class="health-name">Obstacle Detection</div>
+                                <div class="health-description">
+                                    Detects people, vehicles and obstacles ahead
+                                </div>
+                            </div>
+
+                            <div id="health-object_detection"
+                                 class="health-pill online">
+                                ● ONLINE
+                            </div>
+                        </div>
+
+                        <div class="fault-grid">
+                            <button class="fault"
+                                onclick="faultAction(
+                                    '/api/test/disable_perception',
+                                    'Object detection failed. The van cannot safely understand objects ahead, so the safety system stops the vehicle.'
+                                )">
+                                FAIL DETECTION
+                            </button>
+
+                            <button class="restore"
+                                onclick="faultAction(
+                                    '/api/test/enable_perception',
+                                    'Object detection restored. Press RESUME if the trip was paused.'
+                                )">
+                                RESTORE
+                            </button>
+                        </div>
+
                     </div>
 
-                    <div class="fault-grid">
-                        <button class="fault"
-                            onclick="api('/api/test/disable_localization')">
-                            DISABLE
-                        </button>
 
-                        <button class="restore"
-                            onclick="api('/api/test/enable_localization')">
-                            RESTORE
-                        </button>
+                    <!-- VEHICLE POSITION -->
+                    <div class="health-card critical">
+
+                        <div class="health-card-top">
+                            <div>
+                                <div class="health-name">Vehicle Position</div>
+                                <div class="health-description">
+                                    Tells the van where it is
+                                </div>
+                            </div>
+
+                            <div id="health-vehicle_position"
+                                 class="health-pill online">
+                                ● ONLINE
+                            </div>
+                        </div>
+
+                        <div class="fault-grid">
+                            <button class="fault"
+                                onclick="faultAction(
+                                    '/api/test/disable_localization',
+                                    'Vehicle position failed. The van no longer knows its position reliably, so it stops safely.'
+                                )">
+                                FAIL POSITION
+                            </button>
+
+                            <button class="restore"
+                                onclick="faultAction(
+                                    '/api/test/enable_localization',
+                                    'Vehicle position restored. Press RESUME if the trip was paused.'
+                                )">
+                                RESTORE
+                            </button>
+                        </div>
+
                     </div>
 
-                    <div class="small-label"
-                         style="margin:16px 0 8px;">
-                        CAMERA SENSOR
+
+                    <!-- CONTROLLER -->
+                    <div class="health-card critical">
+
+                        <div class="health-card-top">
+                            <div>
+                                <div class="health-name">Driving Control</div>
+                                <div class="health-description">
+                                    Controls steering, acceleration and braking
+                                </div>
+                            </div>
+
+                            <div id="health-controller"
+                                 class="health-pill online">
+                                ● ONLINE
+                            </div>
+                        </div>
+
+                        <div class="fault-grid">
+                            <button class="fault"
+                                onclick="faultAction(
+                                    '/api/test/disable_controller',
+                                    'Vehicle control failed. Steering, throttle and brake commands cannot be trusted, so the van stops safely.'
+                                )">
+                                FAIL CONTROL
+                            </button>
+
+                            <button class="restore"
+                                onclick="faultAction(
+                                    '/api/test/enable_controller',
+                                    'Vehicle controller restored. Press RESUME if the trip was paused.'
+                                )">
+                                RESTORE
+                            </button>
+                        </div>
+
                     </div>
 
-                    <div class="fault-grid">
-                        <button class="fault"
-                            onclick="api('/api/test/disable_camera')">
-                            DISABLE
-                        </button>
 
-                        <button class="restore"
-                            onclick="api('/api/test/enable_camera')">
-                            RESTORE
-                        </button>
+                    <div id="faultExplanation"
+                         class="fault-explanation">
+                        Choose a failure above to see how the van responds.
                     </div>
 
                 </div>
@@ -1533,6 +1967,219 @@ async function previewSelectedRoute() {
 
         status.className =
             'route-preview-status error';
+    }
+}
+
+
+
+async function faultAction(path, message) {
+
+    const explanation =
+        document.getElementById('faultExplanation');
+
+    const result =
+        await api(path);
+
+    if (!result || result.success === false) {
+
+        explanation.textContent =
+            'The test command could not be completed.';
+
+        explanation.className =
+            'fault-explanation danger';
+
+        return;
+    }
+
+
+    explanation.textContent =
+        message;
+
+
+    if (
+        path.includes('disable_perception') ||
+        path.includes('disable_localization') ||
+        path.includes('disable_controller')
+    ) {
+
+        explanation.className =
+            'fault-explanation danger';
+
+    } else if (path.includes('disable_')) {
+
+        explanation.className =
+            'fault-explanation warning';
+
+    } else {
+
+        explanation.className =
+            'fault-explanation';
+    }
+
+
+    /*
+     Give the backend a moment to update,
+     then refresh the live health indicators.
+    */
+
+    setTimeout(
+        pollState,
+        250
+    );
+}
+
+
+
+async function spawnScenario(type) {
+
+    const status =
+        document.getElementById('scenarioStatus');
+
+
+    const names = {
+        pedestrian: 'Pedestrian',
+        vehicle: 'Vehicle',
+        barrier: 'Road barrier'
+    };
+
+
+    status.textContent =
+        `Creating ${names[type] || type} ahead...`;
+
+    status.className =
+        'scenario-status';
+
+
+    try {
+
+        const response =
+            await fetch(
+                API + '/api/scenario/spawn',
+                {
+                    method: 'POST',
+
+                    headers: {
+                        'Content-Type':
+                            'application/json'
+                    },
+
+                    body: JSON.stringify({
+                        type: type
+                    })
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!result.success) {
+
+            status.textContent =
+                result.reason ||
+                'Could not create road scenario.';
+
+            status.className =
+                'scenario-status error';
+
+            return;
+        }
+
+
+        if (type === 'pedestrian') {
+
+            status.textContent =
+                'Pedestrian placed ahead. Watch the van detect the person, slow down and stop safely.';
+
+        } else if (type === 'vehicle') {
+
+            status.textContent =
+                'Vehicle placed ahead. Watch the van detect the stopped vehicle and stop behind it.';
+
+        } else if (type === 'barrier') {
+
+            status.textContent =
+                'Road barrier placed ahead. Watch the van stop and report the route as blocked if the barrier remains.';
+
+        }
+
+
+        status.className =
+            'scenario-status active';
+
+
+        setTimeout(
+            pollState,
+            200
+        );
+
+
+    } catch(error) {
+
+        status.textContent =
+            'Scenario request failed. Check the Warp AV connection.';
+
+        status.className =
+            'scenario-status error';
+    }
+}
+
+
+
+async function clearScenario() {
+
+    const status =
+        document.getElementById('scenarioStatus');
+
+
+    try {
+
+        const response =
+            await fetch(
+                API + '/api/scenario/clear',
+                {
+                    method: 'POST'
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (!result.success) {
+
+            status.textContent =
+                'Could not clear the road scenario.';
+
+            status.className =
+                'scenario-status error';
+
+            return;
+        }
+
+
+        status.textContent =
+            'Road test cleared. The van can continue the same trip when the path is clear.';
+
+        status.className =
+            'scenario-status';
+
+
+        setTimeout(
+            pollState,
+            200
+        );
+
+
+    } catch(error) {
+
+        status.textContent =
+            'Could not clear the scenario.';
+
+        status.className =
+            'scenario-status error';
     }
 }
 
@@ -1909,6 +2556,41 @@ async function pollState() {
 }
 
 
+
+function updateHealthPill(id, info) {
+
+    const element =
+        document.getElementById(id);
+
+    if (!element)
+        return;
+
+
+    const healthy =
+        info &&
+        info.healthy === true &&
+        info.enabled !== false;
+
+
+    if (healthy) {
+
+        element.textContent =
+            '● ONLINE';
+
+        element.className =
+            'health-pill online';
+
+    } else {
+
+        element.textContent =
+            '● FAILED';
+
+        element.className =
+            'health-pill failed';
+    }
+}
+
+
 function updateDashboard(s) {
 
     if (!s || !s.pose)
@@ -1918,6 +2600,7 @@ function updateDashboard(s) {
     const safety = s.safety || {};
     const perception = s.perception || {};
     const command = s.command || {};
+    const health = s.health || {};
 
     const mph =
         Number(s.pose.speed || 0) * 2.237;
@@ -2089,6 +2772,44 @@ function updateDashboard(s) {
         alertBox.className =
             'alert-box';
     }
+
+
+    /* SENSOR + SYSTEM HEALTH */
+
+    updateHealthPill(
+        'health-camera',
+        health.camera
+    );
+
+    updateHealthPill(
+        'health-lidar',
+        health.lidar
+    );
+
+    updateHealthPill(
+        'health-gps',
+        health.gps
+    );
+
+    updateHealthPill(
+        'health-imu',
+        health.imu
+    );
+
+    updateHealthPill(
+        'health-object_detection',
+        health.object_detection
+    );
+
+    updateHealthPill(
+        'health-vehicle_position',
+        health.vehicle_position
+    );
+
+    updateHealthPill(
+        'health-controller',
+        health.controller
+    );
 }
 
 

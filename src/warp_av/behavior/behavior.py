@@ -134,7 +134,19 @@ class BehaviorSystem:
             )
 
         # --- Persistent blocked route ---
-        if perception.path_blocked:
+        #
+        # A pedestrian or stopped vehicle is a temporary road situation,
+        # not automatically a "blocked route".
+        #
+        # Only static/other obstacles can become a persistent blocked road.
+        if (
+            perception.path_blocked
+            and perception.closest_obstacle_type
+            not in (
+                ObjectType.PEDESTRIAN,
+                ObjectType.VEHICLE,
+            )
+        ):
             if self._blocked_since is None:
                 self._blocked_since = time.time()
 

@@ -95,6 +95,10 @@ class WarpAV:
         self._preview_route = None
         self._preview_destination = None
 
+        # Temporary CARLA actors created from dashboard scenario tests.
+        self._scenario_actors = []
+        self._scenario_type = None
+
         self._running = False
 
         print("[Init] All systems ready!")
@@ -313,6 +317,54 @@ class WarpAV:
                 ],
             },
             "mission": self.mission_manager.get_status(),
+
+            # ------------------------------------------------
+            # Sensor + system health for operator dashboard
+            # ------------------------------------------------
+            "health": {
+                "camera": {
+                    "healthy": self.sensor_adapter.is_camera_healthy(),
+                    "enabled": self.sensor_adapter.camera_enabled,
+                    "label": "Front Camera"
+                },
+
+                "lidar": {
+                    "healthy": self.sensor_adapter.is_lidar_healthy(),
+                    "enabled": self.sensor_adapter.lidar_enabled,
+                    "label": "LiDAR"
+                },
+
+                "gps": {
+                    "healthy": self.sensor_adapter.is_gnss_healthy(),
+                    "enabled": self.sensor_adapter.gnss_enabled,
+                    "label": "GPS"
+                },
+
+                "imu": {
+                    "healthy": self.sensor_adapter.is_imu_healthy(),
+                    "enabled": self.sensor_adapter.imu_enabled,
+                    "label": "IMU"
+                },
+
+                "object_detection": {
+                    "healthy": perception.healthy,
+                    "enabled": getattr(self.perception, "_enabled", True),
+                    "label": "Object Detection"
+                },
+
+                "vehicle_position": {
+                    "healthy": pose.healthy,
+                    "enabled": getattr(self.localization, "_enabled", True),
+                    "label": "Vehicle Position"
+                },
+
+                "controller": {
+                    "healthy": self.controller._enabled,
+                    "enabled": self.controller._enabled,
+                    "label": "Vehicle Controller"
+                }
+            },
+
             "warnings": self.safety.warnings,
             "errors": self.safety.errors,
         }
@@ -338,11 +390,343 @@ class WarpAV:
 
     def shutdown(self):
         self._running = False
+
+        # Remove temporary scenario actors before destroying vehicle.
+        self.clear_scenario()
+
         self.vehicle_adapter.disengage_autonomy()
         self.sensor_adapter.destroy()
         self.vehicle_adapter.destroy()
         self.logger.stop_mission_log()
         print("[WarpAV] Shutdown complete")
+
+    # ========================================================
+    # Dashboard road-scenario tests
+    # ========================================================
+
+    def clear_scenario(self):
+        """Remove temporary pedestrian / vehicle / barrier actors."""
+
+        for actor in self._scenario_actors:
+
+            try:
+                if actor and actor.is_alive:
+                    actor.destroy()
+            except Exception as e:
+                print(f"[Scenario] Could not destroy actor: {e}")
+
+        self._scenario_actors.clear()
+        self._scenario_type = None
+
+        print("[Scenario] Test objects cleared")
+
+
+    def _get_scenario_waypoint(self, distance_m=20.0):
+        """
+        Find a driving-lane waypoint roughly distance_m ahead.
+
+        If a mission route exists, prefer that route so the object
+        appears on the road the van is actually following.
+        """
+
+        pose = self.localization.update()
+
+        if not pose.healthy:
+            return None
+
+        carla_map = self.vehicle_adapter.get_map()
+
+        # ----------------------------------------------------
+        # Prefer the ACTIVE planned route.
+        # ----------------------------------------------------
+
+        if self._route:
+
+            route_wp = self.planner.get_next_waypoint(
+                self._route,
+                pose.x,
+                pose.y,
+                lookahead=distance_m
+            )
+
+            if route_wp:
+
+                target = carla_map.get_waypoint(
+                    carla.Location(
+                        x=route_wp.x,
+                        y=route_wp.y,
+                        z=0.0
+                    ),
+                    project_to_road=True,
+                    lane_type=carla.LaneType.Driving
+                )
+
+                if target:
+                    return target
+
+
+        # ----------------------------------------------------
+        # Fallback: use the vehicle's current driving lane.
+        # ----------------------------------------------------
+
+        current_location = (
+            self.vehicle_adapter.vehicle.get_location()
+        )
+
+        current_wp = carla_map.get_waypoint(
+            current_location,
+            project_to_road=True,
+            lane_type=carla.LaneType.Driving
+        )
+
+        if not current_wp:
+            return None
+
+        candidates = current_wp.next(distance_m)
+
+        if not candidates:
+            return None
+
+        return candidates[0]
+
+
+    def api_spawn_scenario(self, scenario_type):
+        """
+        Spawn one controlled test object ahead of the moving van.
+
+        Supported:
+        pedestrian
+        vehicle
+        barrier
+        """
+
+        allowed = {
+            "pedestrian",
+            "vehicle",
+            "barrier",
+        }
+
+        if scenario_type not in allowed:
+            return {
+                "success": False,
+                "reason": "Unknown scenario type"
+            }
+
+
+        # Require an active trip so the demo is unambiguous.
+        mission = self.mission_manager.current_mission
+
+        if (
+            not mission
+            or mission.state != MissionState.EXECUTING
+        ):
+            return {
+                "success": False,
+                "reason": "Start a trip before creating a road scenario"
+            }
+
+
+        # Remove any previous test object first.
+        self.clear_scenario()
+
+
+        target_wp = self._get_scenario_waypoint(
+            distance_m=20.0
+        )
+
+        if not target_wp:
+            return {
+                "success": False,
+                "reason": "Could not find a road position ahead"
+            }
+
+
+        world = self.vehicle_adapter.world
+        blueprints = world.get_blueprint_library()
+
+        location = target_wp.transform.location
+        rotation = target_wp.transform.rotation
+
+        actor = None
+
+
+        # ----------------------------------------------------
+        # PEDESTRIAN
+        # ----------------------------------------------------
+
+        if scenario_type == "pedestrian":
+
+            walker_blueprints = blueprints.filter(
+                "walker.pedestrian.*"
+            )
+
+            if not walker_blueprints:
+                return {
+                    "success": False,
+                    "reason": "No pedestrian blueprint available"
+                }
+
+            bp = walker_blueprints[0]
+
+            transform = carla.Transform(
+                carla.Location(
+                    x=location.x,
+                    y=location.y,
+                    z=location.z + 0.5
+                ),
+                carla.Rotation(
+                    yaw=rotation.yaw + 90.0
+                )
+            )
+
+            actor = world.try_spawn_actor(
+                bp,
+                transform
+            )
+
+
+        # ----------------------------------------------------
+        # VEHICLE
+        # ----------------------------------------------------
+
+        elif scenario_type == "vehicle":
+
+            vehicle_blueprints = blueprints.filter(
+                "vehicle.audi.*"
+            )
+
+            if not vehicle_blueprints:
+                vehicle_blueprints = blueprints.filter(
+                    "vehicle.*"
+                )
+
+            if not vehicle_blueprints:
+                return {
+                    "success": False,
+                    "reason": "No vehicle blueprint available"
+                }
+
+            bp = vehicle_blueprints[0]
+
+            transform = carla.Transform(
+                carla.Location(
+                    x=location.x,
+                    y=location.y,
+                    z=location.z + 0.5
+                ),
+                rotation
+            )
+
+            actor = world.try_spawn_actor(
+                bp,
+                transform
+            )
+
+            if actor:
+                try:
+                    actor.apply_control(
+                        carla.VehicleControl(
+                            throttle=0.0,
+                            brake=1.0,
+                            hand_brake=True
+                        )
+                    )
+                except Exception:
+                    pass
+
+
+        # ----------------------------------------------------
+        # ROAD BARRIER
+        # ----------------------------------------------------
+
+        elif scenario_type == "barrier":
+
+            try:
+                bp = blueprints.find(
+                    "static.prop.streetbarrier"
+                )
+            except Exception:
+                return {
+                    "success": False,
+                    "reason": "Road barrier blueprint unavailable"
+                }
+
+            transform = carla.Transform(
+                carla.Location(
+                    x=location.x,
+                    y=location.y,
+                    z=location.z + 0.2
+                ),
+                carla.Rotation(
+                    yaw=rotation.yaw + 90.0
+                )
+            )
+
+            actor = world.try_spawn_actor(
+                bp,
+                transform
+            )
+
+
+        if not actor:
+
+            return {
+                "success": False,
+                "reason": (
+                    "Spawn location was occupied. "
+                    "Try again after the van moves a little."
+                )
+            }
+
+
+        self._scenario_actors.append(actor)
+        self._scenario_type = scenario_type
+
+
+        try:
+            self.logger.log_event(
+                "scenario_spawned",
+                f"{scenario_type} placed ahead of vehicle"
+            )
+        except Exception:
+            pass
+
+
+        print(
+            f"[Scenario] {scenario_type.upper()} "
+            f"spawned ahead at "
+            f"({location.x:.1f}, {location.y:.1f})"
+        )
+
+
+        return {
+            "success": True,
+            "type": scenario_type,
+            "x": round(location.x, 1),
+            "y": round(location.y, 1),
+            "message": (
+                f"{scenario_type.capitalize()} "
+                f"placed about 20 m ahead"
+            )
+        }
+
+
+    def api_clear_scenario(self):
+
+        self.clear_scenario()
+
+        try:
+            self.logger.log_event(
+                "scenario_cleared",
+                "Operator cleared road test object"
+            )
+        except Exception:
+            pass
+
+        return {
+            "success": True
+        }
+
 
     # --- API methods (called by Flask console) ---
 
@@ -589,8 +973,43 @@ class WarpAV:
         self.localization.enable()
     def api_disable_camera(self):
         self.sensor_adapter.camera_enabled = False
+        print("[Fault Test] CAMERA feed disabled")
+
     def api_enable_camera(self):
         self.sensor_adapter.camera_enabled = True
+        print("[Fault Test] CAMERA feed restored")
+
+    def api_disable_lidar(self):
+        self.sensor_adapter.lidar_enabled = False
+        print("[Fault Test] LIDAR feed disabled")
+
+    def api_enable_lidar(self):
+        self.sensor_adapter.lidar_enabled = True
+        print("[Fault Test] LIDAR feed restored")
+
+    def api_disable_gnss(self):
+        self.sensor_adapter.gnss_enabled = False
+        print("[Fault Test] GPS/GNSS signal disabled")
+
+    def api_enable_gnss(self):
+        self.sensor_adapter.gnss_enabled = True
+        print("[Fault Test] GPS/GNSS signal restored")
+
+    def api_disable_imu(self):
+        self.sensor_adapter.imu_enabled = False
+        print("[Fault Test] IMU signal disabled")
+
+    def api_enable_imu(self):
+        self.sensor_adapter.imu_enabled = True
+        print("[Fault Test] IMU signal restored")
+
+    def api_disable_controller(self):
+        self.controller.disable()
+        print("[Fault Test] VEHICLE CONTROLLER disabled")
+
+    def api_enable_controller(self):
+        self.controller.enable()
+        print("[Fault Test] VEHICLE CONTROLLER restored")
 
 
 # ============================================================
@@ -628,6 +1047,26 @@ def preview_route():
     )
 
     return jsonify(result)
+
+
+@app.route('/api/scenario/spawn', methods=['POST'])
+def spawn_scenario():
+    data = request.get_json(silent=True) or {}
+
+    scenario_type = data.get("type")
+
+    result = av_system.api_spawn_scenario(
+        scenario_type
+    )
+
+    return jsonify(result)
+
+
+@app.route('/api/scenario/clear', methods=['POST'])
+def clear_scenario():
+    return jsonify(
+        av_system.api_clear_scenario()
+    )
 
 
 @app.route('/api/mission/start', methods=['POST'])
@@ -703,6 +1142,54 @@ def disable_camera():
 @app.route('/api/test/enable_camera', methods=['POST'])
 def enable_camera():
     av_system.api_enable_camera()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/disable_lidar', methods=['POST'])
+def disable_lidar():
+    av_system.api_disable_lidar()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/enable_lidar', methods=['POST'])
+def enable_lidar():
+    av_system.api_enable_lidar()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/disable_gnss', methods=['POST'])
+def disable_gnss():
+    av_system.api_disable_gnss()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/enable_gnss', methods=['POST'])
+def enable_gnss():
+    av_system.api_enable_gnss()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/disable_imu', methods=['POST'])
+def disable_imu():
+    av_system.api_disable_imu()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/enable_imu', methods=['POST'])
+def enable_imu():
+    av_system.api_enable_imu()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/disable_controller', methods=['POST'])
+def disable_controller():
+    av_system.api_disable_controller()
+    return jsonify({"success": True})
+
+
+@app.route('/api/test/enable_controller', methods=['POST'])
+def enable_controller():
+    av_system.api_enable_controller()
     return jsonify({"success": True})
 
 
