@@ -1105,6 +1105,1070 @@ button.restore:hover {
 }
 
 
+
+
+/* ============================================================
+   WARP AV DEMO EDITION
+   ============================================================ */
+
+body {
+    background:
+        radial-gradient(
+            circle at 68% 8%,
+            rgba(57,231,125,.045),
+            transparent 28%
+        ),
+        radial-gradient(
+            circle at 20% 80%,
+            rgba(76,166,255,.035),
+            transparent 28%
+        ),
+        var(--bg);
+}
+
+
+/* ------------------------------------------------------------
+   HEADER
+   ------------------------------------------------------------ */
+
+.topbar {
+    min-height: 82px;
+    height: auto;
+
+    padding: 13px 28px;
+
+    background:
+        rgba(8,16,24,.94);
+
+    backdrop-filter: blur(18px);
+
+    border-bottom:
+        1px solid rgba(255,255,255,.07);
+
+    z-index: 100;
+}
+
+.demo-kicker {
+    margin-bottom: 4px;
+
+    color: var(--green);
+
+    font-size: 8px;
+    font-weight: 750;
+
+    letter-spacing: 2.1px;
+}
+
+.page-title {
+    font-size: 20px;
+    font-weight: 700;
+
+    letter-spacing: -.3px;
+}
+
+.page-subtitle {
+    margin-top: 4px;
+
+    font-size: 9px;
+
+    letter-spacing: .7px;
+}
+
+.topbar-actions {
+    display: flex;
+    align-items: center;
+
+    gap: 18px;
+}
+
+.demo-clock {
+    color: var(--muted);
+
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+
+    letter-spacing: .6px;
+}
+
+
+/* ------------------------------------------------------------
+   OPERATOR / DEMO SWITCH
+   ------------------------------------------------------------ */
+
+.view-switch {
+    display: flex;
+
+    padding: 3px;
+
+    background:
+        rgba(255,255,255,.035);
+
+    border:
+        1px solid rgba(255,255,255,.08);
+
+    border-radius: 9px;
+}
+
+.view-button {
+    border: 0;
+
+    padding: 7px 10px;
+
+    border-radius: 6px;
+
+    background: transparent;
+
+    color: #747e88;
+
+    font-size: 8px;
+    font-weight: 700;
+
+    letter-spacing: .8px;
+
+    cursor: pointer;
+
+    transition:
+        background .18s ease,
+        color .18s ease,
+        transform .18s ease,
+        box-shadow .18s ease;
+}
+
+.view-button:hover {
+    color: white;
+}
+
+.view-button.active {
+    color: #08150d;
+
+    background: var(--green);
+
+    box-shadow:
+        0 0 18px rgba(57,231,125,.18);
+}
+
+.view-button:active {
+    transform: scale(.96);
+}
+
+.fullscreen-button {
+    font-size: 12px;
+
+    padding-left: 9px;
+    padding-right: 9px;
+}
+
+
+/* ------------------------------------------------------------
+   CONTENT
+   ------------------------------------------------------------ */
+
+.content {
+    max-width: 1800px;
+
+    margin: 0 auto;
+
+    padding:
+        22px
+        25px
+        38px;
+}
+
+
+/* ------------------------------------------------------------
+   TOP METRICS
+   ------------------------------------------------------------ */
+
+.metrics {
+    display: grid;
+
+    grid-template-columns:
+        1.05fr
+        1fr
+        1fr
+        1.55fr;
+
+    gap: 10px;
+
+    margin-bottom: 14px;
+}
+
+.metric-card {
+    position: relative;
+
+    min-height: 104px;
+
+    overflow: hidden;
+
+    padding: 16px 17px;
+
+    background:
+        linear-gradient(
+            145deg,
+            rgba(28,44,61,.92),
+            rgba(18,31,44,.92)
+        );
+
+    border:
+        1px solid rgba(255,255,255,.07);
+
+    box-shadow:
+        0 10px 30px rgba(0,0,0,.10);
+
+    transition:
+        transform .2s ease,
+        border-color .2s ease,
+        box-shadow .2s ease;
+}
+
+.metric-card::after {
+    content: "";
+
+    position: absolute;
+
+    left: 0;
+    right: 0;
+    bottom: 0;
+
+    height: 2px;
+
+    opacity: .55;
+
+    background:
+        linear-gradient(
+            90deg,
+            transparent,
+            rgba(57,231,125,.5),
+            transparent
+        );
+}
+
+.metric-card:hover {
+    transform: translateY(-2px);
+
+    border-color:
+        rgba(57,231,125,.18);
+
+    box-shadow:
+        0 16px 40px rgba(0,0,0,.17);
+}
+
+.metric-label {
+    font-size: 8px !important;
+
+    letter-spacing: 1.45px !important;
+}
+
+.metric-value {
+    margin-top: 8px;
+
+    font-size:
+        clamp(20px, 1.65vw, 30px) !important;
+
+    font-weight: 650 !important;
+
+    letter-spacing: -.7px;
+}
+
+.metric-detail {
+    margin-top: 7px;
+
+    font-size: 9px !important;
+}
+
+
+/* ------------------------------------------------------------
+   MAIN GRID
+   ------------------------------------------------------------ */
+
+.dashboard-grid {
+    display: grid;
+
+    grid-template-columns:
+        minmax(0, 1.82fr)
+        minmax(320px, .72fr);
+
+    gap: 14px;
+
+    align-items: start;
+}
+
+.column {
+    gap: 14px !important;
+}
+
+
+/* ------------------------------------------------------------
+   PANELS
+   ------------------------------------------------------------ */
+
+.panel {
+    background:
+        linear-gradient(
+            145deg,
+            rgba(23,38,53,.96),
+            rgba(17,29,41,.96)
+        );
+
+    border:
+        1px solid rgba(255,255,255,.07);
+
+    box-shadow:
+        0 14px 40px rgba(0,0,0,.12);
+}
+
+.panel-header {
+    border-bottom:
+        1px solid rgba(255,255,255,.055);
+}
+
+.panel-title {
+    font-weight: 650;
+
+    letter-spacing: -.1px;
+}
+
+
+/* ------------------------------------------------------------
+   HERO MAP
+   ------------------------------------------------------------ */
+
+.vehicle-map {
+    position: relative;
+
+    height:
+        clamp(500px, 57vh, 720px) !important;
+
+    min-height: 500px;
+
+    overflow: hidden;
+
+    background:
+        radial-gradient(
+            circle at 50% 50%,
+            #142638 0%,
+            #0e1b28 58%,
+            #09141e 100%
+        );
+}
+
+.vehicle-map::before {
+    content: "";
+
+    pointer-events: none;
+
+    position: absolute;
+
+    inset: 0;
+
+    z-index: 3;
+
+    background:
+        radial-gradient(
+            circle at center,
+            transparent 46%,
+            rgba(4,11,17,.23) 100%
+        );
+}
+
+.vehicle-map::after {
+    content: "";
+
+    pointer-events: none;
+
+    position: absolute;
+
+    left: 0;
+    right: 0;
+
+    top: -30%;
+
+    height: 25%;
+
+    z-index: 4;
+
+    opacity: .20;
+
+    background:
+        linear-gradient(
+            to bottom,
+            transparent,
+            rgba(57,231,125,.10),
+            transparent
+        );
+
+    animation:
+        warpMapScan 7s linear infinite;
+}
+
+@keyframes warpMapScan {
+
+    from {
+        transform: translateY(-80%);
+    }
+
+    to {
+        transform: translateY(600%);
+    }
+}
+
+#mapCanvas {
+    position: relative;
+
+    z-index: 1;
+}
+
+.map-overlay {
+    z-index: 6 !important;
+
+    background:
+        rgba(8,17,25,.76) !important;
+
+    backdrop-filter:
+        blur(10px);
+}
+
+
+/* ------------------------------------------------------------
+   HERO MAP TOP CHIPS
+   ------------------------------------------------------------ */
+
+.hero-map-top {
+    position: absolute;
+
+    top: 16px;
+    left: 16px;
+    right: 16px;
+
+    z-index: 7;
+
+    display: flex;
+
+    justify-content:
+        space-between;
+
+    pointer-events: none;
+}
+
+.hero-live-chip,
+.hero-town-chip {
+    display: flex;
+
+    align-items: center;
+
+    gap: 7px;
+
+    padding:
+        7px 10px;
+
+    border-radius: 20px;
+
+    background:
+        rgba(7,15,22,.78);
+
+    border:
+        1px solid rgba(255,255,255,.10);
+
+    backdrop-filter:
+        blur(10px);
+
+    color: #d8dee5;
+
+    font-size: 8px;
+    font-weight: 700;
+
+    letter-spacing: 1px;
+}
+
+.hero-live-dot {
+    width: 6px;
+    height: 6px;
+
+    border-radius: 50%;
+
+    background:
+        var(--green);
+
+    box-shadow:
+        0 0 12px rgba(57,231,125,.85);
+
+    animation:
+        livePulse 1.7s ease-in-out infinite;
+}
+
+@keyframes livePulse {
+
+    0%, 100% {
+        opacity: .55;
+        transform: scale(.82);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.15);
+    }
+}
+
+
+/* ------------------------------------------------------------
+   OBJECT ALERT
+   ------------------------------------------------------------ */
+
+.hero-object-alert {
+    position: absolute;
+
+    z-index: 10;
+
+    top: 64px;
+    left: 50%;
+
+    width:
+        min(390px, calc(100% - 40px));
+
+    transform:
+        translate(-50%, -18px)
+        scale(.97);
+
+    display: flex;
+
+    align-items: center;
+
+    gap: 13px;
+
+    padding:
+        14px 17px;
+
+    border-radius: 12px;
+
+    background:
+        rgba(10,18,26,.91);
+
+    border:
+        1px solid rgba(255,204,77,.38);
+
+    box-shadow:
+        0 16px 45px rgba(0,0,0,.34);
+
+    backdrop-filter:
+        blur(15px);
+
+    opacity: 0;
+
+    pointer-events: none;
+
+    transition:
+        opacity .25s ease,
+        transform .25s ease,
+        border-color .25s ease;
+}
+
+.hero-object-alert.visible {
+    opacity: 1;
+
+    transform:
+        translate(-50%, 0)
+        scale(1);
+}
+
+.hero-object-alert.stopped {
+    border-color:
+        rgba(57,231,125,.50);
+
+    box-shadow:
+        0 16px 50px
+        rgba(57,231,125,.10);
+}
+
+.hero-object-icon {
+    width: 39px;
+    height: 39px;
+
+    display: grid;
+
+    place-items: center;
+
+    border-radius: 10px;
+
+    background:
+        rgba(255,202,59,.10);
+
+    font-size: 21px;
+}
+
+.hero-object-title {
+    color: white;
+
+    font-size: 13px;
+    font-weight: 750;
+
+    letter-spacing: .3px;
+}
+
+.hero-object-detail {
+    margin-top: 4px;
+
+    color: #b9c1c8;
+
+    font-size: 10px;
+}
+
+.hero-object-divider {
+    padding: 0 5px;
+
+    color: #586775;
+}
+
+#heroObjectStage {
+    color: #ffd05b;
+}
+
+.hero-object-alert.stopped
+#heroObjectStage {
+    color: var(--green);
+}
+
+
+/* ------------------------------------------------------------
+   HERO ACTION STRIP
+   ------------------------------------------------------------ */
+
+.hero-action-strip {
+    display: grid;
+
+    grid-template-columns:
+        .85fr
+        .9fr
+        1.8fr
+        .9fr;
+
+    margin-top: 10px;
+
+    overflow: hidden;
+
+    border:
+        1px solid rgba(255,255,255,.07);
+
+    border-radius: 11px;
+
+    background:
+        rgba(16,29,41,.82);
+
+    box-shadow:
+        0 10px 30px rgba(0,0,0,.10);
+}
+
+.hero-action-item {
+    min-height: 74px;
+
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+
+    padding:
+        12px 16px;
+
+    border-right:
+        1px solid rgba(255,255,255,.06);
+}
+
+.hero-action-item:last-child {
+    border-right: 0;
+}
+
+.hero-action-main {
+    background:
+        linear-gradient(
+            100deg,
+            rgba(57,231,125,.045),
+            transparent
+        );
+}
+
+.hero-action-label {
+    color: #697887;
+
+    font-size: 7px;
+    font-weight: 700;
+
+    letter-spacing: 1.3px;
+}
+
+.hero-action-value {
+    margin-top: 6px;
+
+    color: #f5f8fa;
+
+    font-size: 14px;
+    font-weight: 650;
+
+    letter-spacing: -.25px;
+}
+
+.hero-speed {
+    font-size: 20px;
+}
+
+.hero-safety {
+    display: flex;
+
+    align-items: center;
+
+    gap: 7px;
+
+    color: var(--green);
+}
+
+.hero-safety.warning {
+    color: var(--yellow);
+}
+
+.hero-safety.danger {
+    color: var(--red);
+}
+
+.hero-safety-dot {
+    width: 7px;
+    height: 7px;
+
+    display: inline-block;
+
+    border-radius: 50%;
+
+    background:
+        currentColor;
+
+    box-shadow:
+        0 0 10px currentColor;
+}
+
+
+/* ------------------------------------------------------------
+   ACTIVITY FEED
+   ------------------------------------------------------------ */
+
+.activity-panel {
+    overflow: hidden;
+}
+
+.activity-feed {
+    max-height: 280px;
+
+    overflow-y: auto;
+
+    padding: 6px 16px 12px;
+}
+
+.activity-empty {
+    padding:
+        17px 0;
+
+    color: var(--muted);
+
+    font-size: 9px;
+}
+
+.activity-row {
+    display: grid;
+
+    grid-template-columns:
+        62px
+        8px
+        minmax(0,1fr);
+
+    gap: 9px;
+
+    align-items: start;
+
+    padding:
+        10px 0;
+
+    border-bottom:
+        1px solid rgba(255,255,255,.045);
+
+    animation:
+        activityEnter .24s ease;
+}
+
+@keyframes activityEnter {
+
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.activity-time {
+    color: #627180;
+
+    font-size: 8px;
+
+    font-variant-numeric:
+        tabular-nums;
+}
+
+.activity-dot {
+    width: 6px;
+    height: 6px;
+
+    margin-top: 3px;
+
+    border-radius: 50%;
+
+    background: #5b6874;
+}
+
+.activity-dot.green {
+    background: var(--green);
+
+    box-shadow:
+        0 0 8px
+        rgba(57,231,125,.50);
+}
+
+.activity-dot.yellow {
+    background: var(--yellow);
+}
+
+.activity-dot.red {
+    background: var(--red);
+}
+
+.activity-message {
+    color: #cbd2d8;
+
+    font-size: 9px;
+
+    line-height: 1.45;
+}
+
+
+/* ------------------------------------------------------------
+   ROAD SCENARIOS — MORE PRODUCT-LIKE
+   ------------------------------------------------------------ */
+
+#scenario-section {
+    border-color:
+        rgba(57,231,125,.12);
+}
+
+#scenario-section .panel-header {
+    background:
+        linear-gradient(
+            90deg,
+            rgba(57,231,125,.045),
+            transparent
+        );
+}
+
+.scenario-grid {
+    gap: 9px !important;
+}
+
+.scenario-button {
+    position: relative;
+
+    overflow: hidden;
+
+    min-height: 78px !important;
+
+    background:
+        linear-gradient(
+            145deg,
+            rgba(31,48,64,.70),
+            rgba(18,31,44,.80)
+        ) !important;
+
+    border:
+        1px solid rgba(255,255,255,.08) !important;
+}
+
+.scenario-button::after {
+    content: "";
+
+    position: absolute;
+
+    width: 70px;
+    height: 160%;
+
+    top: -30%;
+
+    left: -100px;
+
+    transform: rotate(20deg);
+
+    background:
+        linear-gradient(
+            90deg,
+            transparent,
+            rgba(255,255,255,.06),
+            transparent
+        );
+
+    transition:
+        left .45s ease;
+}
+
+.scenario-button:hover::after {
+    left: calc(100% + 40px);
+}
+
+.scenario-button:hover {
+    border-color:
+        rgba(57,231,125,.34) !important;
+
+    box-shadow:
+        0 10px 28px
+        rgba(0,0,0,.16) !important;
+}
+
+
+/* ------------------------------------------------------------
+   DEMO VIEW
+   ------------------------------------------------------------ */
+
+body.demo-mode .app {
+    grid-template-columns: 1fr;
+}
+
+body.demo-mode .sidebar {
+    display: none;
+}
+
+body.demo-mode .content {
+    max-width: 1700px;
+
+    padding-left: 30px;
+    padding-right: 30px;
+}
+
+body.demo-mode .topbar {
+    padding-left: 30px;
+    padding-right: 30px;
+}
+
+body.demo-mode .dashboard-grid {
+    grid-template-columns:
+        minmax(0, 1fr)
+        360px;
+}
+
+body.demo-mode .vehicle-map {
+    height:
+        clamp(600px, 67vh, 820px) !important;
+
+    min-height: 600px;
+}
+
+
+/* hide engineering-detail modules in demo presentation */
+body.demo-mode .module-grid,
+body.demo-mode #fault-section,
+body.demo-mode #history-section {
+    display: none !important;
+}
+
+
+/* bigger headline information */
+body.demo-mode .metrics {
+    grid-template-columns:
+        .85fr
+        .9fr
+        .9fr
+        1.7fr;
+}
+
+body.demo-mode .metric-card {
+    min-height: 116px;
+}
+
+body.demo-mode .metric-value {
+    font-size:
+        clamp(22px, 2vw, 34px) !important;
+}
+
+
+/* ------------------------------------------------------------
+   RESPONSIVE
+   ------------------------------------------------------------ */
+
+@media (max-width: 1150px) {
+
+    .dashboard-grid,
+    body.demo-mode .dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .metrics,
+    body.demo-mode .metrics {
+        grid-template-columns:
+            repeat(2, 1fr);
+    }
+
+    .hero-action-strip {
+        grid-template-columns:
+            repeat(2, 1fr);
+    }
+
+    .hero-action-item:nth-child(2) {
+        border-right: 0;
+    }
+}
+
+@media (max-width: 760px) {
+
+    .topbar-actions {
+        gap: 7px;
+    }
+
+    .demo-clock {
+        display: none;
+    }
+
+    .view-button {
+        padding: 6px 7px;
+    }
+
+    .metrics,
+    body.demo-mode .metrics {
+        grid-template-columns: 1fr;
+    }
+
+    .hero-action-strip {
+        grid-template-columns: 1fr;
+    }
+
+    .hero-action-item {
+        border-right: 0;
+
+        border-bottom:
+            1px solid rgba(255,255,255,.06);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    .hero-live-dot,
+    .vehicle-map::after {
+        animation: none !important;
+    }
+}
+
+
+
+
+/* Make the live CARLA map fill the entire hero map area */
+.vehicle-map #mapCanvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+
 </style>
 </head>
 
@@ -1191,15 +2255,48 @@ button.restore:hover {
 <header class="topbar">
 
     <div>
-        <div class="page-title">Autonomous Vehicle Mission Control</div>
+        <div class="demo-kicker">WARP AV · AUTONOMOUS DELIVERY</div>
+        <div class="page-title">Mission Control</div>
         <div class="page-subtitle">
-            Simulation · Town10HD · Operator Console
+            Town10HD · Autonomous Vehicle Operations
         </div>
     </div>
 
-    <div class="top-status">
-        <span id="topDot" class="status-dot"></span>
-        <span id="connectionText">Connecting to vehicle</span>
+    <div class="topbar-actions">
+
+        <div class="demo-clock" id="demoClock">
+            --:--:--
+        </div>
+
+        <div class="view-switch">
+
+            <button
+                id="operatorViewButton"
+                class="view-button active"
+                onclick="setDashboardMode('operator')">
+                OPERATOR
+            </button>
+
+            <button
+                id="demoViewButton"
+                class="view-button"
+                onclick="setDashboardMode('demo')">
+                DEMO VIEW
+            </button>
+
+            <button
+                class="view-button fullscreen-button"
+                onclick="toggleFullscreen()">
+                ⛶
+            </button>
+
+        </div>
+
+        <div class="top-status">
+            <span id="topDot" class="status-dot"></span>
+            <span id="connectionText">Connecting to vehicle</span>
+        </div>
+
     </div>
 
 </header>
@@ -1259,6 +2356,57 @@ button.restore:hover {
 
                     <canvas id="mapCanvas"></canvas>
 
+                    <div class="hero-map-top">
+
+                        <div class="hero-live-chip">
+                            <span class="hero-live-dot"></span>
+                            LIVE AUTONOMY
+                        </div>
+
+                        <div class="hero-town-chip">
+                            TOWN10HD
+                        </div>
+
+                    </div>
+
+
+                    <div
+                        id="heroObjectAlert"
+                        class="hero-object-alert">
+
+                        <div class="hero-object-icon"
+                             id="heroObjectIcon">
+                            ⚠
+                        </div>
+
+                        <div>
+
+                            <div
+                                class="hero-object-title"
+                                id="heroObjectTitle">
+                                OBJECT AHEAD
+                            </div>
+
+                            <div class="hero-object-detail">
+
+                                <span id="heroObjectDistance">
+                                    —
+                                </span>
+
+                                <span class="hero-object-divider">
+                                    ·
+                                </span>
+
+                                <strong id="heroObjectStage">
+                                    DETECTED
+                                </strong>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
                     <div class="map-overlay">
                         CURRENT POSITION
                         <strong id="mapPosition">—</strong>
@@ -1267,6 +2415,71 @@ button.restore:hover {
                 </div>
 
             </section>
+
+            <div class="hero-action-strip">
+
+                <div class="hero-action-item">
+                    <div class="hero-action-label">
+                        LIVE SPEED
+                    </div>
+
+                    <div
+                        class="hero-action-value hero-speed"
+                        id="heroSpeed">
+                        0.0 MPH
+                    </div>
+                </div>
+
+
+                <div class="hero-action-item">
+
+                    <div class="hero-action-label">
+                        SAFETY
+                    </div>
+
+                    <div
+                        class="hero-action-value hero-safety"
+                        id="heroSafety">
+
+                        <span class="hero-safety-dot"></span>
+                        NORMAL
+
+                    </div>
+
+                </div>
+
+
+                <div class="hero-action-item hero-action-main">
+
+                    <div class="hero-action-label">
+                        CURRENT ACTION
+                    </div>
+
+                    <div
+                        class="hero-action-value"
+                        id="heroAction">
+                        WAITING FOR A TRIP
+                    </div>
+
+                </div>
+
+
+                <div class="hero-action-item">
+
+                    <div class="hero-action-label">
+                        TRIP
+                    </div>
+
+                    <div
+                        class="hero-action-value"
+                        id="heroTrip">
+                        IDLE
+                    </div>
+
+                </div>
+
+            </div>
+
 
             <!-- MISSION + TELEMETRY -->
             <div class="module-grid">
@@ -1508,6 +2721,33 @@ button.restore:hover {
                     <button class="clear-estop" onclick="clearEstop()">
                         CLEAR E-STOP
                     </button>
+
+                </div>
+
+            </section>
+
+
+            <!-- LIVE ACTIVITY -->
+            <section class="panel activity-panel">
+
+                <div class="panel-header">
+
+                    <div class="panel-title">
+                        Live Activity
+                    </div>
+
+                    <div class="panel-tag">
+                        REAL TIME
+                    </div>
+
+                </div>
+
+                <div class="activity-feed"
+                     id="activityFeed">
+
+                    <div class="activity-empty">
+                        Waiting for vehicle activity...
+                    </div>
 
                 </div>
 
@@ -2557,6 +3797,595 @@ async function pollState() {
 
 
 
+
+
+/* ============================================================
+   WARP AV DEMO EXPERIENCE
+   ============================================================ */
+
+let demoPreviousMission = null;
+let demoPreviousBehavior = null;
+let demoPreviousObject = null;
+let demoPreviousSafety = null;
+
+
+function demoTime() {
+
+    return new Date().toLocaleTimeString(
+        [],
+        {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        }
+    );
+}
+
+
+function updateDemoClock() {
+
+    const clock =
+        document.getElementById('demoClock');
+
+    if (clock)
+        clock.textContent = demoTime();
+}
+
+
+function addActivity(message, color='green') {
+
+    const feed =
+        document.getElementById('activityFeed');
+
+    if (!feed)
+        return;
+
+
+    const empty =
+        feed.querySelector('.activity-empty');
+
+    if (empty)
+        empty.remove();
+
+
+    const row =
+        document.createElement('div');
+
+    row.className =
+        'activity-row';
+
+
+    const time =
+        document.createElement('div');
+
+    time.className =
+        'activity-time';
+
+    time.textContent =
+        demoTime();
+
+
+    const dot =
+        document.createElement('div');
+
+    dot.className =
+        `activity-dot ${color}`;
+
+
+    const text =
+        document.createElement('div');
+
+    text.className =
+        'activity-message';
+
+    text.textContent =
+        message;
+
+
+    row.appendChild(time);
+    row.appendChild(dot);
+    row.appendChild(text);
+
+
+    feed.prepend(row);
+
+
+    while (
+        feed.querySelectorAll('.activity-row').length > 9
+    ) {
+        feed.lastElementChild.remove();
+    }
+}
+
+
+function setDashboardMode(mode) {
+
+    const demo =
+        mode === 'demo';
+
+
+    document.body.classList.toggle(
+        'demo-mode',
+        demo
+    );
+
+
+    const operatorButton =
+        document.getElementById(
+            'operatorViewButton'
+        );
+
+    const demoButton =
+        document.getElementById(
+            'demoViewButton'
+        );
+
+
+    if (operatorButton)
+        operatorButton.classList.toggle(
+            'active',
+            !demo
+        );
+
+
+    if (demoButton)
+        demoButton.classList.toggle(
+            'active',
+            demo
+        );
+
+
+    try {
+        localStorage.setItem(
+            'warpAVDashboardMode',
+            mode
+        );
+    } catch (_) {}
+
+
+    /*
+       Canvas size changes when sidebar disappears,
+       so redraw shortly after layout settles.
+    */
+
+    setTimeout(
+        () => {
+            if (latestState)
+                drawMap(latestState);
+        },
+        160
+    );
+}
+
+
+async function toggleFullscreen() {
+
+    try {
+
+        if (!document.fullscreenElement) {
+
+            await document.documentElement
+                .requestFullscreen();
+
+        } else {
+
+            await document.exitFullscreen();
+        }
+
+    } catch(error) {
+
+        console.log(
+            'Fullscreen unavailable:',
+            error
+        );
+    }
+}
+
+
+function updateDemoExperience(s) {
+
+    if (!s || !s.pose)
+        return;
+
+
+    const mission =
+        s.mission || {};
+
+    const safety =
+        s.safety || {};
+
+    const perception =
+        s.perception || {};
+
+
+    const missionState =
+        text(
+            mission.state,
+            'idle'
+        );
+
+
+    const behavior =
+        text(
+            s.behavior,
+            'no_mission'
+        );
+
+
+    const safetyState =
+        text(
+            safety.state,
+            'unknown'
+        );
+
+
+    const mph =
+        Number(
+            s.pose.speed || 0
+        ) * 2.237;
+
+
+    /* --------------------------------------------------------
+       HERO METRICS
+       -------------------------------------------------------- */
+
+    const heroSpeed =
+        document.getElementById(
+            'heroSpeed'
+        );
+
+    if (heroSpeed)
+        heroSpeed.textContent =
+            `${mph.toFixed(1)} MPH`;
+
+
+    const heroTrip =
+        document.getElementById(
+            'heroTrip'
+        );
+
+    if (heroTrip)
+        heroTrip.textContent =
+            missionState.toUpperCase();
+
+
+    const heroAction =
+        document.getElementById(
+            'heroAction'
+        );
+
+    if (heroAction)
+        heroAction.textContent =
+            humanAction(
+                behavior
+            ).toUpperCase();
+
+
+    const heroSafety =
+        document.getElementById(
+            'heroSafety'
+        );
+
+    if (heroSafety) {
+
+        let className =
+            'hero-action-value hero-safety';
+
+        let label =
+            safetyState.toUpperCase();
+
+
+        if (
+            safetyState === 'ok'
+        ) {
+
+            label = 'NORMAL';
+
+        } else if (
+            safetyState.includes('warning')
+        ) {
+
+            className += ' warning';
+
+        } else {
+
+            className += ' danger';
+        }
+
+
+        heroSafety.className =
+            className;
+
+
+        heroSafety.innerHTML =
+            '<span class="hero-safety-dot"></span>'
+            + label;
+    }
+
+
+    /* --------------------------------------------------------
+       OBJECT ALERT
+       -------------------------------------------------------- */
+
+    const objectType =
+        text(
+            perception.closest_type,
+            'unknown'
+        );
+
+
+    const distance =
+        Number(
+            perception.closest_distance ?? 999
+        );
+
+
+    const alert =
+        document.getElementById(
+            'heroObjectAlert'
+        );
+
+
+    const validObject =
+        objectType !== 'unknown'
+        && distance < 60;
+
+
+    if (alert) {
+
+        if (validObject) {
+
+            let title =
+                humanObjectType(
+                    objectType
+                ).toUpperCase()
+                + ' AHEAD';
+
+
+            let icon = '⚠';
+
+            if (objectType === 'pedestrian')
+                icon = '🚶';
+
+            else if (objectType === 'vehicle')
+                icon = '🚗';
+
+            else if (objectType === 'obstacle')
+                icon = '🚧';
+
+
+            let stage =
+                'DETECTED';
+
+
+            const isStopped =
+                behavior.startsWith(
+                    'stopped_'
+                );
+
+
+            if (isStopped) {
+
+                stage =
+                    'STOPPED SAFELY';
+
+            } else if (
+                distance < 15
+            ) {
+
+                stage =
+                    'SLOWING';
+            }
+
+
+            document.getElementById(
+                'heroObjectIcon'
+            ).textContent =
+                icon;
+
+
+            document.getElementById(
+                'heroObjectTitle'
+            ).textContent =
+                title;
+
+
+            document.getElementById(
+                'heroObjectDistance'
+            ).textContent =
+                `${distance.toFixed(1)} m`;
+
+
+            document.getElementById(
+                'heroObjectStage'
+            ).textContent =
+                stage;
+
+
+            alert.className =
+                'hero-object-alert visible'
+                + (
+                    isStopped
+                    ? ' stopped'
+                    : ''
+                );
+
+
+        } else {
+
+            alert.className =
+                'hero-object-alert';
+        }
+    }
+
+
+    /* --------------------------------------------------------
+       HUMAN-READABLE ACTIVITY HISTORY
+       -------------------------------------------------------- */
+
+    if (
+        demoPreviousMission !== null
+        && demoPreviousMission !== missionState
+    ) {
+
+        if (missionState === 'executing') {
+
+            addActivity(
+                'Trip started — following planned road route.',
+                'green'
+            );
+
+        } else if (missionState === 'completed') {
+
+            addActivity(
+                'Destination reached — trip completed.',
+                'green'
+            );
+
+        } else if (missionState === 'paused') {
+
+            addActivity(
+                'Trip paused.',
+                'yellow'
+            );
+
+        } else if (missionState === 'failed') {
+
+            addActivity(
+                'Trip stopped because a system check failed.',
+                'red'
+            );
+        }
+    }
+
+
+    if (
+        demoPreviousBehavior !== null
+        && demoPreviousBehavior !== behavior
+    ) {
+
+        let color =
+            behavior.startsWith('stopped_')
+            ? 'yellow'
+            : 'green';
+
+
+        if (
+            behavior === 'stopped_safety'
+            || behavior === 'stopped_estop'
+        ) {
+            color = 'red';
+        }
+
+
+        addActivity(
+            humanAction(behavior) + '.',
+            color
+        );
+    }
+
+
+    if (
+        demoPreviousObject !== null
+        && demoPreviousObject !== objectType
+    ) {
+
+        if (
+            objectType !== 'unknown'
+            && distance < 60
+        ) {
+
+            addActivity(
+                `${humanObjectType(objectType)} detected · ${distance.toFixed(1)} m ahead.`,
+                'yellow'
+            );
+
+        } else if (
+            demoPreviousObject !== 'unknown'
+        ) {
+
+            addActivity(
+                'Road ahead is clear again.',
+                'green'
+            );
+        }
+    }
+
+
+    if (
+        demoPreviousSafety !== null
+        && demoPreviousSafety !== safetyState
+    ) {
+
+        if (safetyState === 'ok') {
+
+            addActivity(
+                'Safety checks normal.',
+                'green'
+            );
+
+        } else {
+
+            addActivity(
+                `Safety state changed to ${safetyState}.`,
+                'red'
+            );
+        }
+    }
+
+
+    demoPreviousMission =
+        missionState;
+
+    demoPreviousBehavior =
+        behavior;
+
+    demoPreviousObject =
+        objectType;
+
+    demoPreviousSafety =
+        safetyState;
+}
+
+
+document.addEventListener(
+    'DOMContentLoaded',
+    () => {
+
+        updateDemoClock();
+
+        setInterval(
+            updateDemoClock,
+            1000
+        );
+
+
+        let savedMode =
+            'operator';
+
+        try {
+
+            savedMode =
+                localStorage.getItem(
+                    'warpAVDashboardMode'
+                ) || 'operator';
+
+        } catch (_) {}
+
+
+        setDashboardMode(
+            savedMode
+        );
+
+
+        addActivity(
+            'Mission Control ready.',
+            'green'
+        );
+    }
+);
+
+
 function updateHealthPill(id, info) {
 
     const element =
@@ -2810,12 +4639,369 @@ function updateDashboard(s) {
         'health-controller',
         health.controller
     );
+
+
+    /* Update presentation / demo layer */
+    updateDemoExperience(s);
 }
 
 
 /* ============================================================
    SIMPLE LOCAL VEHICLE VIEW
    ============================================================ */
+
+
+/* ============================================================
+   REAL LIVE VAN ANIMATION
+
+   IMPORTANT:
+   This does NOT fake vehicle movement.
+
+   Target position = actual CARLA pose from /api/state.
+   We only interpolate between real updates so the dashboard
+   looks continuous instead of jumping every polling cycle.
+   ============================================================ */
+
+let smoothVanPose = null;
+let smoothVanFrom = null;
+let smoothVanTarget = null;
+
+let smoothVanStartTime = 0;
+
+const SMOOTH_VAN_DURATION_MS = 300;
+
+
+/* short visual trail */
+let smoothVanTrail = [];
+let lastVanTrailTime = 0;
+let lastVanTrailMission = null;
+
+
+/* animation-loop protection */
+let smoothMapAnimationStarted = false;
+
+
+/* ------------------------------------------------------------
+   SMOOTH ANGLE
+
+   Handles:
+   359 degrees -> 1 degree
+
+   correctly instead of rotating almost 360 degrees backward.
+   ------------------------------------------------------------ */
+
+function interpolateHeading(from, to, amount) {
+
+    let difference =
+        ((to - from + 540) % 360) - 180;
+
+    return from + difference * amount;
+}
+
+
+/* ------------------------------------------------------------
+   RECEIVE NEW REAL CARLA POSITION
+   ------------------------------------------------------------ */
+
+function updateSmoothVanTarget(pose) {
+
+    if (!pose)
+        return;
+
+
+    const next = {
+
+        x: Number(pose.x),
+
+        y: Number(pose.y),
+
+        yaw: Number(pose.yaw || 0)
+    };
+
+
+    if (
+        !Number.isFinite(next.x) ||
+        !Number.isFinite(next.y) ||
+        !Number.isFinite(next.yaw)
+    ) {
+        return;
+    }
+
+
+    /*
+       First pose:
+       initialize immediately.
+    */
+
+    if (!smoothVanPose) {
+
+        smoothVanPose = {...next};
+
+        smoothVanFrom = {...next};
+
+        smoothVanTarget = {...next};
+
+        smoothVanStartTime =
+            performance.now();
+
+        return;
+    }
+
+
+    /*
+       Do not reset interpolation every animation frame.
+       Only start a new transition if CARLA actually supplied
+       a different target.
+    */
+
+    if (
+        smoothVanTarget &&
+        Math.abs(next.x - smoothVanTarget.x) < 0.001 &&
+        Math.abs(next.y - smoothVanTarget.y) < 0.001 &&
+        Math.abs(next.yaw - smoothVanTarget.yaw) < 0.01
+    ) {
+        return;
+    }
+
+
+    smoothVanFrom = {
+        ...smoothVanPose
+    };
+
+
+    smoothVanTarget = {
+        ...next
+    };
+
+
+    smoothVanStartTime =
+        performance.now();
+}
+
+
+/* ------------------------------------------------------------
+   CALCULATE CURRENT DISPLAY POSITION
+   ------------------------------------------------------------ */
+
+function getSmoothVanPose(realPose) {
+
+    updateSmoothVanTarget(realPose);
+
+
+    if (
+        !smoothVanPose ||
+        !smoothVanFrom ||
+        !smoothVanTarget
+    ) {
+        return null;
+    }
+
+
+    const now =
+        performance.now();
+
+
+    let amount =
+        (
+            now -
+            smoothVanStartTime
+        ) /
+        SMOOTH_VAN_DURATION_MS;
+
+
+    amount =
+        Math.max(
+            0,
+            Math.min(1, amount)
+        );
+
+
+    /*
+       Smooth cubic easing.
+
+       Real start and end positions remain unchanged.
+       Only the visual transition is smoother.
+    */
+
+    const eased =
+        1 -
+        Math.pow(
+            1 - amount,
+            3
+        );
+
+
+    smoothVanPose = {
+
+        x:
+            smoothVanFrom.x +
+            (
+                smoothVanTarget.x -
+                smoothVanFrom.x
+            ) * eased,
+
+        y:
+            smoothVanFrom.y +
+            (
+                smoothVanTarget.y -
+                smoothVanFrom.y
+            ) * eased,
+
+        yaw:
+            interpolateHeading(
+                smoothVanFrom.yaw,
+                smoothVanTarget.yaw,
+                eased
+            )
+    };
+
+
+    /* --------------------------------------------------------
+       RESET TRAIL WHEN A DIFFERENT TRIP STARTS
+       -------------------------------------------------------- */
+
+    const missionId =
+        latestState &&
+        latestState.mission
+            ? latestState.mission.mission_id
+            : null;
+
+
+    if (
+        missionId !==
+        lastVanTrailMission
+    ) {
+
+        smoothVanTrail = [];
+
+        lastVanTrailMission =
+            missionId;
+    }
+
+
+    /* --------------------------------------------------------
+       ADD TRAIL ONLY WHILE THE REAL VEHICLE IS MOVING
+       -------------------------------------------------------- */
+
+    const speed =
+        latestState &&
+        latestState.pose
+            ? Number(
+                latestState.pose.speed || 0
+            )
+            : 0;
+
+
+    if (
+        speed > 0.20 &&
+        now - lastVanTrailTime > 100
+    ) {
+
+        const last =
+            smoothVanTrail.length
+                ? smoothVanTrail[
+                    smoothVanTrail.length - 1
+                ]
+                : null;
+
+
+        const movedEnough =
+            !last ||
+            Math.hypot(
+                smoothVanPose.x - last.x,
+                smoothVanPose.y - last.y
+            ) > 0.20;
+
+
+        if (movedEnough) {
+
+            smoothVanTrail.push({
+
+                x: smoothVanPose.x,
+
+                y: smoothVanPose.y
+            });
+
+
+            /*
+               Keep only a short recent trail.
+            */
+
+            if (
+                smoothVanTrail.length > 28
+            ) {
+
+                smoothVanTrail.shift();
+            }
+
+
+            lastVanTrailTime =
+                now;
+        }
+    }
+
+
+    return smoothVanPose;
+}
+
+
+/* ------------------------------------------------------------
+   CONTINUOUS MAP DISPLAY
+
+   /api/state still controls REAL DATA at 4 Hz.
+
+   This redraw loop runs the VISUALIZATION around 30 FPS so
+   the marker can move continuously between those real poses.
+   ------------------------------------------------------------ */
+
+function startSmoothMapAnimation() {
+
+    if (smoothMapAnimationStarted)
+        return;
+
+
+    smoothMapAnimationStarted =
+        true;
+
+
+    let lastFrame =
+        0;
+
+
+    function frame(now) {
+
+        /*
+           Limit map redraw to about 30 FPS.
+
+           This keeps the map smooth without unnecessarily
+           redrawing CARLA roads/buildings at 60 FPS.
+        */
+
+        if (
+            latestState &&
+            now - lastFrame >= 33
+        ) {
+
+            drawMap(
+                latestState
+            );
+
+            lastFrame =
+                now;
+        }
+
+
+        requestAnimationFrame(
+            frame
+        );
+    }
+
+
+    requestAnimationFrame(
+        frame
+    );
+}
+
 
 function drawMap(s) {
 
@@ -3397,60 +5583,487 @@ function drawMap(s) {
        Draw a small arrow showing heading.
        -------------------------------------------------------- */
 
+    /* --------------------------------------------------------
+       REAL LIVE VAN
+
+       Position and heading come directly from CARLA.
+
+       Dashboard interpolation only makes movement visually
+       smooth between real /api/state updates.
+       -------------------------------------------------------- */
+
     if (s.pose) {
 
-        const [vx, vy] =
-            project(
-                Number(s.pose.x),
-                Number(s.pose.y)
+        const vanPose =
+            getSmoothVanPose(
+                s.pose
             );
 
-        const yaw =
-            Number(s.pose.yaw || 0) *
-            Math.PI / 180;
 
-        ctx.save();
+        if (vanPose) {
 
-        ctx.translate(vx, vy);
+            /* ------------------------------------------------
+               SHORT FADING MOTION TRAIL
+               ------------------------------------------------ */
 
-        /*
-         Canvas Y goes down, therefore
-         CARLA heading needs negative rotation.
-        */
-        ctx.rotate(-yaw);
+            if (
+                smoothVanTrail.length > 1
+            ) {
 
-        ctx.shadowColor =
-            'rgba(255,255,255,.8)';
+                ctx.save();
 
-        ctx.shadowBlur = 10;
+                ctx.lineCap =
+                    'round';
 
-        ctx.fillStyle =
-            '#ffffff';
-
-        ctx.beginPath();
-
-        ctx.moveTo(11, 0);
-        ctx.lineTo(-7, -6);
-        ctx.lineTo(-4, 0);
-        ctx.lineTo(-7, 6);
-
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.restore();
+                ctx.lineJoin =
+                    'round';
 
 
-        ctx.fillStyle =
-            '#ffffff';
+                for (
+                    let i = 1;
+                    i < smoothVanTrail.length;
+                    i++
+                ) {
 
-        ctx.font =
-            '10px sans-serif';
+                    const previous =
+                        smoothVanTrail[i - 1];
 
-        ctx.fillText(
-            'VAN',
-            vx + 12,
-            vy - 10
-        );
+                    const current =
+                        smoothVanTrail[i];
+
+
+                    const [x1, y1] =
+                        project(
+                            previous.x,
+                            previous.y
+                        );
+
+
+                    const [x2, y2] =
+                        project(
+                            current.x,
+                            current.y
+                        );
+
+
+                    /*
+                       Old trail points are faint.
+                       New trail points are brighter.
+                    */
+
+                    const progress =
+                        i /
+                        (
+                            smoothVanTrail.length -
+                            1
+                        );
+
+
+                    const alpha =
+                        0.025 +
+                        progress * 0.24;
+
+
+                    ctx.beginPath();
+
+                    ctx.moveTo(
+                        x1,
+                        y1
+                    );
+
+                    ctx.lineTo(
+                        x2,
+                        y2
+                    );
+
+
+                    ctx.strokeStyle =
+                        `rgba(57,231,125,${alpha})`;
+
+
+                    ctx.lineWidth =
+                        1.4 +
+                        progress * 1.3;
+
+
+                    ctx.stroke();
+                }
+
+
+                ctx.restore();
+            }
+
+
+            /* ------------------------------------------------
+               REAL VAN SCREEN POSITION
+               ------------------------------------------------ */
+
+            const [vx, vy] =
+                project(
+                    vanPose.x,
+                    vanPose.y
+                );
+
+
+            const yaw =
+                Number(
+                    vanPose.yaw || 0
+                ) *
+                Math.PI / 180;
+
+
+            const missionState =
+                s.mission &&
+                s.mission.state
+                    ? String(
+                        s.mission.state
+                    )
+                    : 'idle';
+
+
+            const realSpeed =
+                Number(
+                    s.pose.speed || 0
+                );
+
+
+            const autonomyMoving =
+                missionState === 'executing'
+                && realSpeed > 0.15;
+
+
+            /* ------------------------------------------------
+               LIVE PULSE AROUND VAN
+               ------------------------------------------------ */
+
+            if (
+                missionState === 'executing'
+            ) {
+
+                const pulse =
+                    (
+                        Math.sin(
+                            performance.now() /
+                            320
+                        ) +
+                        1
+                    ) /
+                    2;
+
+
+                ctx.save();
+
+
+                ctx.beginPath();
+
+                ctx.arc(
+                    vx,
+                    vy,
+                    14 + pulse * 5,
+                    0,
+                    Math.PI * 2
+                );
+
+
+                ctx.strokeStyle =
+                    `rgba(
+                        57,
+                        231,
+                        125,
+                        ${0.14 + pulse * 0.16}
+                    )`;
+
+
+                ctx.lineWidth =
+                    1.5;
+
+
+                ctx.stroke();
+
+                ctx.restore();
+            }
+
+
+            /* ------------------------------------------------
+               TOP-DOWN CARGO VAN
+
+               Front of the van points toward +X before
+               canvas rotation.
+
+               Canvas Y increases downward, so CARLA heading
+               is rotated negatively.
+               ------------------------------------------------ */
+
+            ctx.save();
+
+
+            ctx.translate(
+                vx,
+                vy
+            );
+
+
+            ctx.rotate(
+                -yaw
+            );
+
+
+            /*
+               GREEN LIVE GLOW
+            */
+
+            ctx.shadowColor =
+                autonomyMoving
+                    ? 'rgba(57,231,125,.95)'
+                    : 'rgba(255,255,255,.65)';
+
+
+            ctx.shadowBlur =
+                autonomyMoving
+                    ? 18
+                    : 10;
+
+
+            /*
+               VAN BODY
+            */
+
+            ctx.beginPath();
+
+            ctx.moveTo(
+                -10,
+                -6
+            );
+
+            ctx.lineTo(
+                6,
+                -6
+            );
+
+            ctx.quadraticCurveTo(
+                11,
+                -6,
+                12,
+                -2.5
+            );
+
+            ctx.lineTo(
+                12,
+                2.5
+            );
+
+            ctx.quadraticCurveTo(
+                11,
+                6,
+                6,
+                6
+            );
+
+            ctx.lineTo(
+                -10,
+                6
+            );
+
+            ctx.quadraticCurveTo(
+                -12,
+                6,
+                -12,
+                3
+            );
+
+            ctx.lineTo(
+                -12,
+                -3
+            );
+
+            ctx.quadraticCurveTo(
+                -12,
+                -6,
+                -10,
+                -6
+            );
+
+            ctx.closePath();
+
+
+            ctx.fillStyle =
+                '#f6fbff';
+
+            ctx.fill();
+
+
+            ctx.shadowBlur =
+                0;
+
+
+            ctx.strokeStyle =
+                'rgba(7,20,29,.95)';
+
+            ctx.lineWidth =
+                1.4;
+
+            ctx.stroke();
+
+
+            /*
+               WINDSHIELD
+            */
+
+            ctx.fillStyle =
+                '#28465a';
+
+            ctx.beginPath();
+
+            ctx.moveTo(
+                5,
+                -4.4
+            );
+
+            ctx.lineTo(
+                8.2,
+                -3.4
+            );
+
+            ctx.lineTo(
+                8.2,
+                3.4
+            );
+
+            ctx.lineTo(
+                5,
+                4.4
+            );
+
+            ctx.closePath();
+
+            ctx.fill();
+
+
+            /*
+               WARP-GREEN CENTER STRIPE
+            */
+
+            ctx.fillStyle =
+                '#39e77d';
+
+            ctx.fillRect(
+                -8,
+                -1,
+                11,
+                2
+            );
+
+
+            /*
+               WHEELS
+            */
+
+            ctx.fillStyle =
+                '#071018';
+
+
+            ctx.fillRect(
+                -7,
+                -7,
+                5,
+                2
+            );
+
+            ctx.fillRect(
+                4,
+                -7,
+                4,
+                2
+            );
+
+            ctx.fillRect(
+                -7,
+                5,
+                5,
+                2
+            );
+
+            ctx.fillRect(
+                4,
+                5,
+                4,
+                2
+            );
+
+
+            /*
+               FRONT LIGHT
+            */
+
+            ctx.fillStyle =
+                '#a8ffd0';
+
+            ctx.beginPath();
+
+            ctx.arc(
+                10,
+                0,
+                1.8,
+                0,
+                Math.PI * 2
+            );
+
+            ctx.fill();
+
+
+            ctx.restore();
+
+
+            /* ------------------------------------------------
+               VAN LABEL
+               ------------------------------------------------ */
+
+            ctx.save();
+
+
+            ctx.font =
+                '700 9px sans-serif';
+
+
+            const label =
+                autonomyMoving
+                    ? 'VAN · LIVE'
+                    : 'VAN';
+
+
+            const labelWidth =
+                ctx.measureText(
+                    label
+                ).width;
+
+
+            ctx.fillStyle =
+                'rgba(5,15,22,.82)';
+
+
+            ctx.fillRect(
+                vx + 14,
+                vy - 18,
+                labelWidth + 12,
+                17
+            );
+
+
+            ctx.fillStyle =
+                autonomyMoving
+                    ? '#7dffae'
+                    : '#ffffff';
+
+
+            ctx.fillText(
+                label,
+                vx + 20,
+                vy - 6
+            );
+
+
+            ctx.restore();
+        }
     }
 
 
@@ -3568,6 +6181,8 @@ pollState();
 loadHistory();
 
 setInterval(pollState, 250);
+
+startSmoothMapAnimation();
 setInterval(loadHistory, 2000);
 
 window.addEventListener(
