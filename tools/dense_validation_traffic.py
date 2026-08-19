@@ -4,17 +4,165 @@ import time
 import math
 
 
+# ============================================================
+# CONFIG
+# ============================================================
+
 random.seed(123)
 
-client = carla.Client("localhost", 2000)
+CARLA_HOST = "localhost"
+CARLA_PORT = 2000
+TM_PORT = 8000
+
+MAX_TOTAL_CARS = 6
+
+# Moving cars deliberately placed ahead of Warp
+LEAD_CAR_DISTANCES = [24.0, 42.0]
+
+# Pedestrians positioned beside the route
+PEDESTRIAN_DISTANCES = [
+    14.0,
+    20.0,
+    28.0,
+    36.0,
+    46.0,
+]
+
+# ============================================================
+# CONNECT
+# ============================================================
+
+client = carla.Client(
+    CARLA_HOST,
+    CARLA_PORT
+)
+
 client.set_timeout(10.0)
 
 world = client.get_world()
 carla_map = world.get_map()
 bp_lib = world.get_blueprint_library()
 
-tm = client.get_trafficmanager(8000)
+tm = client.get_trafficmanager(
+    TM_PORT
+)
+
 tm_port = tm.get_port()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def actor_speed(actor):
+    """Return actor speed in m/s."""
+
+    velocity = actor.get_velocity()
+
+    return math.sqrt(
+        velocity.x ** 2
+        + velocity.y ** 2
+        + velocity.z ** 2
+    )
+
+
+def angle_difference(a, b):
+    """Smallest yaw difference in degrees."""
+
+    diff = (a - b + 180.0) % 360.0 - 180.0
+
+    return abs(diff)
+
+
+def choose_forward_candidate(current_wp, candidates):
+    """
+    CARLA can return multiple branches at intersections.
+
+    Prefer:
+    1. same road
+    2. same lane
+    3. smallest heading change
+
+    This makes traffic placement much more deterministic
+    than simply using next(...)[0].
+    """
+
+    if not candidates:
+        return None
+
+    current_yaw = (
+        current_wp.transform.rotation.yaw
+    )
+
+    def score(candidate):
+
+        value = 0.0
+
+        if candidate.road_id != current_wp.road_id:
+            value += 20.0
+
+        if candidate.lane_id != current_wp.lane_id:
+            value += 10.0
+
+        candidate_yaw = (
+            candidate.transform.rotation.yaw
+        )
+
+        value += angle_difference(
+            current_yaw,
+            candidate_yaw
+        )
+
+        return value
+
+    return min(
+        candidates,
+        key=score
+    )
+
+
+def waypoint_ahead(start_wp, target_distance):
+    """
+    Walk forward through the CARLA road network.
+
+    We use small steps instead of:
+        ego_wp.next(30)[0]
+
+    so junction selection stays more consistent.
+    """
+
+    current_wp = start_wp
+    travelled = 0.0
+
+    while travelled < target_distance:
+
+        step = min(
+            2.0,
+            target_distance - travelled
+        )
+
+        candidates = current_wp.next(
+            step
+        )
+
+        next_wp = choose_forward_candidate(
+            current_wp,
+            candidates
+        )
+
+        if next_wp is None:
+            return None
+
+        travelled += (
+            current_wp.transform.location
+            .distance(
+                next_wp.transform.location
+            )
+        )
+
+        current_wp = next_wp
+
+    return current_wp
 
 
 # ============================================================
@@ -22,55 +170,87 @@ tm_port = tm.get_port()
 # ============================================================
 
 sprinters = [
-    a
-    for a in world.get_actors().filter("vehicle.*")
-    if "mercedes.sprinter" in a.type_id
+    actor
+    for actor
+    in world.get_actors().filter("vehicle.*")
+    if "mercedes.sprinter" in actor.type_id
 ]
 
 if not sprinters:
+
     raise RuntimeError(
-        "Warp Sprinter not found. Start Warp AV first."
+        "Warp Sprinter not found. "
+        "Start Warp AV first."
     )
+
 
 ego = sprinters[0]
 
-velocity = ego.get_velocity()
+ego_location = ego.get_location()
 
-speed = math.sqrt(
-    velocity.x ** 2
-    + velocity.y ** 2
-    + velocity.z ** 2
+ego_speed = actor_speed(
+    ego
 )
 
+
 print()
-print("======================================")
-print(" WARP DENSE VALIDATION TRAFFIC")
-print("======================================")
-print("Warp vehicle ID:", ego.id)
-print(f"Warp speed: {speed:.2f} m/s")
+print("==========================================")
+print(" WARP CONTROLLED DENSE TRAFFIC VALIDATION")
+print("==========================================")
 
-if speed < 0.3:
+print(
+    "Warp vehicle ID:",
+    ego.id
+)
+
+print(
+    f"Warp speed: {ego_speed:.2f} m/s"
+)
+
+print(
+    f"Warp position: "
+    f"x={ego_location.x:.1f}, "
+    f"y={ego_location.y:.1f}"
+)
+
+
+if ego_speed < 0.3:
+
     print()
-    print("WARNING: Warp van is almost stopped.")
-    print("Start the mission first for the best test.")
+    print(
+        "WARNING: Warp is currently almost stopped."
+    )
 
+    print(
+        "Best test: start the mission first, "
+        "then run this script."
+    )
 
-ego_loc = ego.get_location()
 
 ego_wp = carla_map.get_waypoint(
-    ego_loc,
+    ego_location,
     project_to_road=True,
     lane_type=carla.LaneType.Driving
 )
 
 if ego_wp is None:
+
     raise RuntimeError(
-        "Could not find road waypoint under Warp."
+        "Could not find driving lane under Warp."
     )
 
 
-cars = []
-walkers = []
+print(
+    "Warp road:",
+    ego_wp.road_id,
+    "| lane:",
+    ego_wp.lane_id
+)
+
+
+spawned_cars = []
+spawned_walkers = []
+
 walker_controls = []
 
 
@@ -82,206 +262,339 @@ vehicle_bps = []
 
 for bp in bp_lib.filter("vehicle.*"):
 
+    # Do not create another Warp Sprinter.
     if "mercedes.sprinter" in bp.id:
         continue
 
-    if bp.has_attribute("number_of_wheels"):
+    if bp.has_attribute(
+        "number_of_wheels"
+    ):
 
         try:
-            if int(
-                bp.get_attribute("number_of_wheels")
-            ) != 4:
+
+            wheels = int(
+                bp.get_attribute(
+                    "number_of_wheels"
+                )
+            )
+
+            if wheels != 4:
                 continue
 
         except Exception:
             pass
 
-    vehicle_bps.append(bp)
+    vehicle_bps.append(
+        bp
+    )
 
 
-random.shuffle(vehicle_bps)
+random.shuffle(
+    vehicle_bps
+)
 
 
 # ============================================================
-# CONTROLLED MOVING LEAD VEHICLE
+# SPAWN VEHICLE FUNCTION
 # ============================================================
 
-print()
-print("--- CONTROLLED LEAD VEHICLE ---")
+def spawn_vehicle_at_waypoint(
+    waypoint,
+    speed_difference
+):
 
-lead = None
+    if waypoint is None:
+        return None
 
-for distance in [
-    28.0,
-    32.0,
-    36.0
-]:
+    transform = waypoint.transform
 
-    points = ego_wp.next(distance)
+    transform.location.z += 0.35
 
-    if not points:
-        continue
-
-    transform = points[0].transform
-    transform.location.z += 0.4
-
+    # Try several vehicle blueprints.
     for bp in vehicle_bps:
 
-        lead = world.try_spawn_actor(
+        vehicle = world.try_spawn_actor(
             bp,
             transform
         )
 
-        if lead:
-            break
+        if vehicle is None:
+            continue
 
-    if lead:
-        break
-
-
-if lead:
-
-    lead.set_autopilot(
-        True,
-        tm_port
-    )
-
-    try:
-        # Positive number means slower than normal traffic.
-        tm.vehicle_percentage_speed_difference(
-            lead,
-            35.0
+        vehicle.set_autopilot(
+            True,
+            tm_port
         )
 
-    except Exception:
-        pass
+        try:
 
-    cars.append(lead)
+            # Positive percentage = slower.
+            tm.vehicle_percentage_speed_difference(
+                vehicle,
+                speed_difference
+            )
 
-    distance = (
-        lead.get_location()
-        .distance(
-            ego.get_location()
-        )
-    )
+            # Keep lead vehicle behavior predictable.
+            tm.auto_lane_change(
+                vehicle,
+                False
+            )
 
-    print(
-        "Lead vehicle spawned:",
-        f"{distance:.1f} m away"
-    )
+        except Exception:
+            pass
 
-else:
+        return vehicle
 
-    print(
-        "Could not spawn controlled lead vehicle"
-    )
+    return None
 
 
 # ============================================================
-# MORE MOVING VEHICLES NEAR WARP
+# 1. CONTROLLED LEAD TRAFFIC
 # ============================================================
 
 print()
-print("--- SURROUNDING MOVING TRAFFIC ---")
+print("--- MOVING VEHICLES AHEAD OF WARP ---")
 
-spawn_points = carla_map.get_spawn_points()
 
-nearby = []
+lead_speed_settings = [
+    70.0,   # slow lead vehicle
+    55.0,   # second vehicle
+]
+
+
+for index, distance in enumerate(
+    LEAD_CAR_DISTANCES
+):
+
+    waypoint = waypoint_ahead(
+        ego_wp,
+        distance
+    )
+
+    if waypoint is None:
+
+        print(
+            f"Could not find road "
+            f"{distance:.0f} m ahead"
+        )
+
+        continue
+
+
+    vehicle = spawn_vehicle_at_waypoint(
+        waypoint,
+        lead_speed_settings[index]
+    )
+
+
+    if vehicle is None:
+
+        print(
+            f"Could not spawn vehicle "
+            f"near {distance:.0f} m"
+        )
+
+        continue
+
+
+    spawned_cars.append(
+        vehicle
+    )
+
+
+    actual_distance = (
+        vehicle.get_location()
+        .distance(
+            ego.get_location()
+        )
+    )
+
+
+    print(
+        f"CAR {len(spawned_cars)} "
+        f"(controlled lead): "
+        f"{actual_distance:.1f} m ahead"
+    )
+
+
+# ============================================================
+# 2. AMBIENT CARS NEAR WARP
+# ============================================================
+
+print()
+print("--- NEARBY AMBIENT CARS ---")
+
+
+spawn_points = (
+    carla_map.get_spawn_points()
+)
+
+ego_transform = ego.get_transform()
+
+forward = (
+    ego_transform.get_forward_vector()
+)
+
+
+candidate_points = []
+
 
 for spawn_point in spawn_points:
 
-    distance = (
-        spawn_point.location
-        .distance(
-            ego.get_location()
-        )
+    dx = (
+        spawn_point.location.x
+        - ego_location.x
     )
 
-    if 15.0 <= distance <= 75.0:
+    dy = (
+        spawn_point.location.y
+        - ego_location.y
+    )
 
-        nearby.append(
-            (
-                distance,
-                spawn_point
-            )
-        )
-
-
-# Randomize nearby traffic locations.
-random.shuffle(nearby)
+    distance = math.sqrt(
+        dx ** 2
+        + dy ** 2
+    )
 
 
-for distance, transform in nearby:
-
-    if len(cars) >= 6:
-        break
-
-    if (
-        transform.location
-        .distance(
-            ego.get_location()
-        )
-        < 15.0
+    # Keep traffic genuinely close.
+    if not (
+        18.0
+        <= distance
+        <= 65.0
     ):
         continue
 
-    bp = random.choice(
-        vehicle_bps
+
+    # Positive dot product means generally
+    # in front of Warp.
+    dot = (
+        dx * forward.x
+        + dy * forward.y
     )
 
-    npc = world.try_spawn_actor(
-        bp,
-        transform
-    )
 
-    if npc is None:
+    if dot < -5.0:
         continue
 
-    npc.set_autopilot(
+
+    wp = carla_map.get_waypoint(
+        spawn_point.location,
+        project_to_road=True,
+        lane_type=carla.LaneType.Driving
+    )
+
+
+    if wp is None:
+        continue
+
+
+    # Avoid adding another car extremely close
+    # on Warp's exact same lane.
+    if (
+        wp.road_id == ego_wp.road_id
+        and
+        wp.lane_id == ego_wp.lane_id
+        and
+        distance < 50.0
+    ):
+        continue
+
+
+    candidate_points.append(
+        (
+            distance,
+            spawn_point
+        )
+    )
+
+
+# IMPORTANT:
+# Sort nearest-first.
+#
+# Do NOT random.shuffle() this list.
+candidate_points.sort(
+    key=lambda item: item[0]
+)
+
+
+for distance, transform in candidate_points:
+
+    if len(spawned_cars) >= MAX_TOTAL_CARS:
+        break
+
+
+    vehicle = None
+
+
+    for bp in vehicle_bps:
+
+        vehicle = world.try_spawn_actor(
+            bp,
+            transform
+        )
+
+        if vehicle:
+            break
+
+
+    if vehicle is None:
+        continue
+
+
+    vehicle.set_autopilot(
         True,
         tm_port
     )
+
 
     try:
 
         speed_difference = random.choice(
             [
-                -15.0,
-                -5.0,
-                0.0,
-                10.0
+                20.0,
+                30.0,
+                40.0,
             ]
         )
 
+
         tm.vehicle_percentage_speed_difference(
-            npc,
+            vehicle,
             speed_difference
         )
 
     except Exception:
         pass
 
-    cars.append(npc)
+
+    spawned_cars.append(
+        vehicle
+    )
+
 
     actual_distance = (
-        npc.get_location()
+        vehicle.get_location()
         .distance(
             ego.get_location()
         )
     )
 
+
     print(
-        f"Car {len(cars)}:",
-        f"{actual_distance:.1f} m"
+        f"CAR {len(spawned_cars)} "
+        f"(ambient): "
+        f"{actual_distance:.1f} m away"
     )
 
 
 # ============================================================
-# PEDESTRIANS NEAR ROUTE
+# 3. PEDESTRIANS BESIDE ROUTE
 # ============================================================
 
 print()
-print("--- PEDESTRIANS ---")
+print("--- PEDESTRIANS NEAR WARP ROUTE ---")
+
 
 walker_bps = list(
     bp_lib.filter(
@@ -289,43 +602,69 @@ walker_bps = list(
     )
 )
 
-walker_distances = [
-    12.0,
-    18.0,
-    24.0,
-    32.0,
-    42.0,
-    52.0
-]
 
+for index, distance in enumerate(
+    PEDESTRIAN_DISTANCES
+):
 
-for distance in walker_distances:
-
-    points = ego_wp.next(
+    waypoint = waypoint_ahead(
+        ego_wp,
         distance
     )
 
-    if not points:
+    if waypoint is None:
         continue
 
-    waypoint = points[0]
 
     transform = waypoint.transform
 
-    right = transform.get_right_vector()
-    forward = transform.get_forward_vector()
+    right = (
+        transform.get_right_vector()
+    )
+
+    forward_direction = (
+        transform.get_forward_vector()
+    )
+
+
+    lane_width = max(
+        float(waypoint.lane_width),
+        3.0
+    )
+
+
+    # Put pedestrian about 1 meter outside
+    # the driving lane.
+    base_offset = (
+        lane_width / 2.0
+        + 1.0
+    )
+
+
+    # Alternate left / right side.
+    preferred_side = (
+        1.0
+        if index % 2 == 0
+        else -1.0
+    )
+
+
+    offsets = [
+        preferred_side * base_offset,
+        preferred_side * (
+            base_offset + 0.5
+        ),
+        -preferred_side * base_offset,
+        -preferred_side * (
+            base_offset + 0.5
+        ),
+    ]
+
 
     walker = None
 
-    # Put people beside the lane.
-    for offset in [
-        4.5,
-        -4.5,
-        5.0,
-        -5.0,
-        5.5,
-        -5.5
-    ]:
+
+    for offset in offsets:
 
         location = carla.Location(
             x=(
@@ -338,21 +677,25 @@ for distance in walker_distances:
             ),
             z=(
                 transform.location.z
-                + 0.8
+                + 0.75
             )
         )
+
 
         bp = random.choice(
             walker_bps
         )
 
+
         if bp.has_attribute(
             "is_invincible"
         ):
+
             bp.set_attribute(
                 "is_invincible",
                 "false"
             )
+
 
         walker = world.try_spawn_actor(
             bp,
@@ -362,41 +705,55 @@ for distance in walker_distances:
             )
         )
 
+
         if walker:
             break
 
 
-    if not walker:
+    if walker is None:
+
+        print(
+            f"Could not spawn pedestrian "
+            f"near {distance:.0f} m"
+        )
+
         continue
 
 
-    walkers.append(
+    spawned_walkers.append(
         walker
     )
 
-    # Alternate walking direction.
+
+    # Pedestrians walk along the road,
+    # not intentionally across Warp's lane.
     direction_sign = (
         1.0
-        if len(walkers) % 2
+        if index % 2 == 0
         else -1.0
     )
+
+
+    direction = carla.Vector3D(
+        x=(
+            forward_direction.x
+            * direction_sign
+        ),
+        y=(
+            forward_direction.y
+            * direction_sign
+        ),
+        z=0.0
+    )
+
 
     walker_controls.append(
         (
             walker,
-            carla.Vector3D(
-                x=(
-                    forward.x
-                    * direction_sign
-                ),
-                y=(
-                    forward.y
-                    * direction_sign
-                ),
-                z=0.0
-            )
+            direction
         )
     )
+
 
     actual_distance = (
         walker.get_location()
@@ -405,29 +762,30 @@ for distance in walker_distances:
         )
     )
 
+
     print(
-        f"Person {len(walkers)}:",
-        f"{actual_distance:.1f} m"
+        f"PERSON {len(spawned_walkers)}: "
+        f"{actual_distance:.1f} m away"
     )
 
 
 # ============================================================
-# READY
+# SUMMARY
 # ============================================================
 
 print()
-print("======================================")
-print(" DENSE TRAFFIC ACTIVE")
-print("======================================")
+print("==========================================")
+print(" CONTROLLED DENSE TRAFFIC ACTIVE")
+print("==========================================")
 
 print(
     "Cars:",
-    len(cars)
+    len(spawned_cars)
 )
 
 print(
     "Pedestrians:",
-    len(walkers)
+    len(spawned_walkers)
 )
 
 print()
@@ -440,7 +798,7 @@ print(
 
 print()
 print(
-    "Front camera:"
+    "Front RGB Camera:"
 )
 print(
     "http://localhost:5000/camera"
@@ -448,16 +806,21 @@ print(
 
 print()
 print(
-    "Press Ctrl+C to remove test traffic."
+    "Watch Camera + LiDAR perception."
 )
+
 print(
-    "======================================"
+    "Press Ctrl+C here to remove traffic."
+)
+
+print(
+    "=========================================="
 )
 print()
 
 
 # ============================================================
-# RUN
+# LIVE TEST LOOP
 # ============================================================
 
 last_print = 0.0
@@ -467,24 +830,29 @@ try:
 
     while True:
 
-        # Keep pedestrians moving.
+        # Keep pedestrians walking.
         for walker, direction in walker_controls:
 
-            if walker.is_alive:
+            if not walker.is_alive:
+                continue
 
-                walker.apply_control(
-                    carla.WalkerControl(
-                        direction=direction,
-                        speed=1.0,
-                        jump=False
-                    )
+
+            walker.apply_control(
+                carla.WalkerControl(
+                    direction=direction,
+                    speed=1.0,
+                    jump=False
                 )
+            )
 
 
         now = time.time()
 
 
-        if now - last_print >= 2.0:
+        if (
+            now - last_print
+            >= 2.0
+        ):
 
             last_print = now
 
@@ -493,42 +861,78 @@ try:
             )
 
 
-            car_distances = sorted(
-                [
-                    round(
-                        car.get_location()
-                        .distance(
-                            ego_now
-                        ),
-                        1
+            car_info = []
+
+            for car in spawned_cars:
+
+                if not car.is_alive:
+                    continue
+
+
+                distance = (
+                    car.get_location()
+                    .distance(
+                        ego_now
                     )
-                    for car in cars
-                    if car.is_alive
-                ]
+                )
+
+
+                speed_now = (
+                    actor_speed(
+                        car
+                    )
+                )
+
+
+                car_info.append(
+                    (
+                        distance,
+                        speed_now
+                    )
+                )
+
+
+            car_info.sort(
+                key=lambda item: item[0]
             )
 
 
-            walker_distances_now = sorted(
-                [
-                    round(
-                        walker.get_location()
-                        .distance(
-                            ego_now
-                        ),
-                        1
+            people = []
+
+            for walker in spawned_walkers:
+
+                if not walker.is_alive:
+                    continue
+
+
+                people.append(
+                    walker.get_location()
+                    .distance(
+                        ego_now
                     )
-                    for walker in walkers
-                    if walker.is_alive
-                ]
-            )
+                )
+
+
+            people.sort()
 
 
             print(
-                "Nearest cars:",
-                car_distances[:4],
-                "m | people:",
-                walker_distances_now[:4],
-                "m"
+                f"Warp={actor_speed(ego):.1f}m/s",
+                "| Cars:",
+                [
+                    (
+                        round(d, 1),
+                        round(s, 1)
+                    )
+                    for d, s
+                    in car_info[:4]
+                ],
+                "| People:",
+                [
+                    round(d, 1)
+                    for d
+                    in people[:4]
+                ]
             )
 
 
@@ -541,14 +945,18 @@ except KeyboardInterrupt:
 
     print()
     print(
-        "Stopping validation traffic..."
+        "Removing validation traffic..."
     )
 
 
 finally:
 
-    # Destroy ONLY actors created by this test.
-    for actor in walkers + cars:
+    # Destroy ONLY actors created
+    # by this script.
+    for actor in (
+        spawned_walkers
+        + spawned_cars
+    ):
 
         try:
 
@@ -560,6 +968,6 @@ finally:
 
 
     print(
-        "All validation traffic removed"
+        "All validation traffic removed."
     )
 

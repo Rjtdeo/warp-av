@@ -2169,6 +2169,121 @@ body.demo-mode .metric-value {
 }
 
 
+
+/* ==========================================================
+   INLINE FRONT RGB CAMERA
+   Lives inside "What the Van Sees"
+   ========================================================== */
+
+.warp-inline-camera {
+    width: 100%;
+    max-width: 680px;
+
+    margin: 14px 0 16px 0;
+
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+
+    background: #070b10;
+
+    overflow: hidden;
+}
+
+.warp-inline-camera-header {
+    height: 38px;
+
+    padding: 0 12px;
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    background: rgba(255,255,255,0.025);
+
+    border-bottom:
+        1px solid rgba(255,255,255,0.06);
+}
+
+.warp-inline-camera-name {
+    font-size: 10px;
+    font-weight: 700;
+
+    letter-spacing: .07em;
+
+    color: #ffffff;
+}
+
+.warp-inline-camera-status {
+    font-size: 9px;
+    color: #8d99a7;
+}
+
+.warp-inline-camera-dot {
+    display: inline-block;
+
+    width: 6px;
+    height: 6px;
+
+    margin-right: 5px;
+
+    border-radius: 50%;
+
+    background: #36e78b;
+}
+
+.warp-inline-camera-image {
+    width: 100%;
+
+    aspect-ratio: 16 / 9;
+
+    background: #030507;
+
+    overflow: hidden;
+}
+
+.warp-inline-camera-image img {
+    width: 100%;
+    height: 100%;
+
+    display: block;
+
+    object-fit: cover;
+}
+
+.warp-inline-camera-footer {
+    padding: 7px 11px;
+
+    font-size: 9px;
+
+    color: #748191;
+
+    border-top:
+        1px solid rgba(255,255,255,0.05);
+}
+
+.warp-inline-camera-hide {
+    border: 0;
+
+    padding: 3px 7px;
+
+    border-radius: 4px;
+
+    background: rgba(255,255,255,0.06);
+
+    color: #aab4c0;
+
+    font-size: 9px;
+
+    cursor: pointer;
+}
+
+@media (max-width: 800px) {
+
+    .warp-inline-camera {
+        max-width: 100%;
+    }
+}
+
 </style>
 </head>
 
@@ -6254,6 +6369,271 @@ navItems.forEach(item => {
     );
 });
 
+</script>
+
+
+<script>
+(function () {
+
+    const FPS_DELAY = 250;
+
+    function mountWarpCamera() {
+
+        if (
+            document.getElementById(
+                "warp-camera-inline"
+            )
+        ) {
+            return;
+        }
+
+        /*
+         * Find the existing dashboard section:
+         *
+         *     WHAT THE VAN SEES
+         *
+         * We insert the camera THERE instead of creating
+         * another dashboard column/card.
+         */
+
+        const elements =
+            Array.from(
+                document.querySelectorAll(
+                    "h1,h2,h3,h4,h5,h6,div,span"
+                )
+            );
+
+        const matches =
+            elements.filter(function (el) {
+
+                const text =
+                    (el.textContent || "")
+                    .trim()
+                    .toLowerCase();
+
+                return (
+                    text === "what the van sees"
+                );
+            });
+
+
+        if (!matches.length) {
+
+            console.warn(
+                "[CameraUI] Could not find 'What the Van Sees'"
+            );
+
+            return;
+        }
+
+
+        /*
+         * There can be a navigation label and a section label.
+         * The actual content heading is normally the last match.
+         */
+
+        const title =
+            matches[matches.length - 1];
+
+
+        const camera =
+            document.createElement("div");
+
+        camera.id =
+            "warp-camera-inline";
+
+        camera.className =
+            "warp-inline-camera";
+
+
+        camera.innerHTML = `
+
+            <div class="warp-inline-camera-header">
+
+                <div>
+
+                    <span class="warp-inline-camera-name">
+                        FRONT RGB CAMERA
+                    </span>
+
+                </div>
+
+                <div>
+
+                    <span
+                        class="warp-inline-camera-status"
+                        id="warp-inline-camera-status">
+
+                        <span
+                            class="warp-inline-camera-dot">
+                        </span>
+
+                        CONNECTING
+
+                    </span>
+
+                    <button
+                        class="warp-inline-camera-hide"
+                        id="warp-inline-camera-hide">
+
+                        HIDE
+
+                    </button>
+
+                </div>
+
+            </div>
+
+
+            <div
+                class="warp-inline-camera-image"
+                id="warp-inline-camera-body">
+
+                <img
+                    id="warp-inline-camera-img"
+                    alt="Warp AV Front RGB">
+
+            </div>
+
+
+            <div class="warp-inline-camera-footer">
+
+                RGB CAMERA
+                → YOLOX
+                → CAMERA + LIDAR PERCEPTION
+
+            </div>
+        `;
+
+
+        /*
+         * Usually title.parentElement is the existing
+         * section header.
+         *
+         * Put camera immediately BELOW that header.
+         */
+
+        const header =
+            title.parentElement;
+
+        header.insertAdjacentElement(
+            "afterend",
+            camera
+        );
+
+
+        const img =
+            document.getElementById(
+                "warp-inline-camera-img"
+            );
+
+        const status =
+            document.getElementById(
+                "warp-inline-camera-status"
+            );
+
+        const body =
+            document.getElementById(
+                "warp-inline-camera-body"
+            );
+
+        const button =
+            document.getElementById(
+                "warp-inline-camera-hide"
+            );
+
+
+        let running = true;
+
+
+        function requestFrame() {
+
+            if (!running) {
+                return;
+            }
+
+            img.src =
+                "/api/camera/frame?t="
+                + Date.now();
+        }
+
+
+        img.onload = function () {
+
+            status.innerHTML =
+                '<span class="warp-inline-camera-dot"></span>'
+                + ' LIVE • ~4 FPS';
+
+            setTimeout(
+                requestFrame,
+                FPS_DELAY
+            );
+        };
+
+
+        img.onerror = function () {
+
+            status.textContent =
+                "WAITING FOR CAMERA";
+
+            setTimeout(
+                requestFrame,
+                1000
+            );
+        };
+
+
+        button.onclick = function () {
+
+            if (running) {
+
+                running = false;
+
+                body.style.display =
+                    "none";
+
+                button.textContent =
+                    "SHOW";
+
+            } else {
+
+                running = true;
+
+                body.style.display =
+                    "block";
+
+                button.textContent =
+                    "HIDE";
+
+                requestFrame();
+            }
+        };
+
+
+        requestFrame();
+
+
+        console.log(
+            "[CameraUI] Front camera mounted inside What the Van Sees"
+        );
+    }
+
+
+    if (
+        document.readyState === "loading"
+    ) {
+
+        document.addEventListener(
+            "DOMContentLoaded",
+            mountWarpCamera
+        );
+
+    } else {
+
+        mountWarpCamera();
+    }
+
+})();
 </script>
 
 </body>
