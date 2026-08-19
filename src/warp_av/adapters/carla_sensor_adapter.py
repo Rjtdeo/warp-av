@@ -111,7 +111,7 @@ class CarlaSensorAdapter:
         # --- LiDAR ---
         lidar_bp = bp_lib.find('sensor.lidar.ray_cast')
         lidar_bp.set_attribute('channels', '32')
-        lidar_bp.set_attribute('points_per_second', '100000')
+        lidar_bp.set_attribute('points_per_second', '150000')
         lidar_bp.set_attribute('range', '50.0')
         lidar_bp.set_attribute('rotation_frequency', '10')
         lidar_bp.set_attribute('sensor_tick', '0.1')
@@ -190,12 +190,12 @@ class CarlaSensorAdapter:
         self._lidar_callbacks.append(callback)
 
     # --- Health checks (used by Safety Supervisor) ---
-    def is_camera_healthy(self, max_age_sec=1.0) -> bool:
+    def is_camera_healthy(self, max_age_sec=2.0) -> bool:
         if not self.camera_enabled:
             return False
         return (time.time() - self._last_camera_time) < max_age_sec
 
-    def is_lidar_healthy(self, max_age_sec=1.0) -> bool:
+    def is_lidar_healthy(self, max_age_sec=2.0) -> bool:
         if not self.lidar_enabled:
             return False
         return (time.time() - self._last_lidar_time) < max_age_sec
@@ -205,7 +205,7 @@ class CarlaSensorAdapter:
             return False
         return (time.time() - self._last_gnss_time) < max_age_sec
 
-    def is_imu_healthy(self, max_age_sec=1.0) -> bool:
+    def is_imu_healthy(self, max_age_sec=2.0) -> bool:
         if not self.imu_enabled:
             return False
         return (time.time() - self._last_imu_time) < max_age_sec

@@ -33,6 +33,7 @@ from flask_socketio import SocketIO
 from .adapters.carla_vehicle_adapter import CarlaVehicleAdapter
 from .adapters.carla_sensor_adapter import CarlaSensorAdapter
 from .perception.perception import PerceptionSystem
+from .perception.camera_lidar_perception import CameraLidarPerception
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import RoutePlanner
@@ -62,9 +63,21 @@ class WarpAV:
         self.sensor_adapter.setup_sensors()
 
         print("[Init] Starting perception...")
-        self.perception = PerceptionSystem(
-            self.vehicle_adapter.world, self.vehicle_adapter.vehicle
+
+        # Stable original perception.
+        self.ground_truth_perception = PerceptionSystem(
+            self.vehicle_adapter.world,
+            self.vehicle_adapter.vehicle
         )
+
+        # Camera + LiDAR is loaded only when selected.
+        self.camera_lidar_perception = None
+
+        # Always start safely with the proven baseline.
+        self.perception_mode = "ground_truth"
+        self.perception = self.ground_truth_perception
+
+        print("[Perception] Default mode: GROUND TRUTH")
 
         print("[Init] Starting localization...")
         self.localization = LocalizationSystem(self.vehicle_adapter.vehicle)
@@ -204,21 +217,61 @@ class WarpAV:
         # Keep the latest safety result for operator Resume checks.
         self._last_safety_output = safety_output
 
-        # If safety stops an executing mission, pause the SAME mission.
-        # After the fault is restored, the operator must press Resume.
+        # ----------------------------------------------------
+        # SAFETY RESPONSE POLICY
+        #
+        # Short Camera/LiDAR stale events in CARLA are treated
+        # as recoverable:
+        #
+        #     brake -> wait -> automatically continue
+        #
+        # Real component failures still:
+        #
+        #     pause mission -> disengage -> manual Resume
+        # ----------------------------------------------------
+
         current_mission = self.mission_manager.current_mission
+
+        perception_reason = getattr(
+            perception,
+            "reason",
+            ""
+        )
+
+        transient_sensor_stale = (
+            perception_reason.startswith("CAMERA_STALE_")
+            or perception_reason.startswith("LIDAR_STALE_")
+        )
 
         if (
             current_mission
             and current_mission.state == MissionState.EXECUTING
             and not safety_output.driving_allowed
         ):
-            self.mission_manager.pause_mission()
-            self.vehicle_adapter.disengage_autonomy()
-            self.logger.log_event(
-                "mission_paused_safety",
-                safety_output.reason
-            )
+
+            if transient_sensor_stale:
+
+                # Do NOT pause or disengage.
+                #
+                # behavior.update(... safety_ok=False)
+                # commands a safe stop.
+                #
+                # Once perception becomes healthy again,
+                # safety_ok becomes True and the same mission
+                # automatically continues.
+                pass
+
+            else:
+
+                # Real failure.
+                # Require explicit operator recovery.
+                self.mission_manager.pause_mission()
+                self.vehicle_adapter.disengage_autonomy()
+
+                self.logger.log_event(
+                    "mission_paused_safety",
+                    safety_output.reason
+                )
 
         # 4. Behavior decision
         dest_dist = None
@@ -316,6 +369,24 @@ class WarpAV:
                     for obj in perception.objects
                 ],
             },
+            "perception_mode": self.perception_mode,
+
+            "perception_runtime": {
+                "source": (
+                    "Camera + LiDAR"
+                    if self.perception_mode == "camera_lidar"
+                    else "CARLA Ground Truth"
+                ),
+                "yolox_inference_ms": round(
+                    getattr(
+                        self.camera_lidar_perception,
+                        "last_inference_ms",
+                        0.0
+                    ),
+                    1
+                )
+            },
+
             "mission": self.mission_manager.get_status(),
 
             # ------------------------------------------------
@@ -963,6 +1034,110 @@ class WarpAV:
                 for i, p in enumerate(points[:20])]  # first 20
 
     # --- Test controls (for Scenario 6) ---
+    def api_set_perception_mode(self, mode):
+        """
+        Switch between:
+
+        ground_truth:
+            CARLA actor information.
+            Stable fallback.
+
+        camera_lidar:
+            Actual CARLA camera pixels -> YOLOX
+            Actual CARLA LiDAR -> forward distance.
+        """
+
+        mode = str(mode).strip().lower()
+
+        if mode not in ("ground_truth", "camera_lidar"):
+            return {
+                "success": False,
+                "reason": "Mode must be ground_truth or camera_lidar",
+                "mode": self.perception_mode
+            }
+
+        # Do not change perception while the van is actively driving.
+        mission = self.mission_manager.current_mission
+
+        if (
+            mission
+            and mission.state in (
+                MissionState.EXECUTING,
+                MissionState.PAUSED
+            )
+        ):
+            return {
+                "success": False,
+                "reason": "Stop the current trip before changing perception mode",
+                "mode": self.perception_mode
+            }
+
+        if mode == "ground_truth":
+
+            self.perception = self.ground_truth_perception
+            self.perception_mode = "ground_truth"
+
+            # Restore normal simulation speeds.
+            self.behavior.cruise_speed = 8.0
+            self.behavior.slow_speed = 3.0
+
+            print(
+                "[Perception] Mode switched -> "
+                "CARLA GROUND TRUTH"
+            )
+
+        else:
+
+            # Load YOLOX only the first time this mode is selected.
+            if self.camera_lidar_perception is None:
+
+                print(
+                    "[Perception] Loading "
+                    "Camera + LiDAR perception..."
+                )
+
+                self.camera_lidar_perception = (
+                    CameraLidarPerception(
+                        self.sensor_adapter
+                    )
+                )
+
+            self.perception = self.camera_lidar_perception
+            self.perception_mode = "camera_lidar"
+
+            # Lower speed for the first sensor-based driving demo.
+            self.behavior.cruise_speed = 4.0
+            self.behavior.slow_speed = 2.0
+
+            print(
+                "[Perception] Mode switched -> "
+                "CAMERA + LIDAR"
+            )
+
+        return {
+            "success": True,
+            "mode": self.perception_mode,
+            "source": (
+                "Camera + LiDAR"
+                if self.perception_mode == "camera_lidar"
+                else "CARLA Ground Truth"
+            ),
+            "cruise_speed_mps": self.behavior.cruise_speed
+        }
+
+
+    def api_get_perception_mode(self):
+
+        return {
+            "mode": self.perception_mode,
+            "source": (
+                "Camera + LiDAR"
+                if self.perception_mode == "camera_lidar"
+                else "CARLA Ground Truth"
+            )
+        }
+
+
     def api_disable_perception(self):
         self.perception.disable()
     def api_enable_perception(self):
@@ -1112,6 +1287,24 @@ def get_spawn_points():
 @app.route('/api/map')
 def get_map_data():
     return jsonify(av_system.api_get_map_data())
+
+# Perception source
+@app.route('/api/perception/mode', methods=['GET', 'POST'])
+def perception_mode():
+
+    if request.method == 'GET':
+        return jsonify(
+            av_system.api_get_perception_mode()
+        )
+
+    data = request.get_json(silent=True) or {}
+
+    result = av_system.api_set_perception_mode(
+        data.get("mode", "")
+    )
+
+    return jsonify(result)
+
 
 # Test/debug controls
 @app.route('/api/test/disable_perception', methods=['POST'])
