@@ -1,0 +1,83 @@
+id: WAV-0938
+name: 'Compound: obstacle plus localization degrade (Town10HD_Opt)'
+category: compound
+family: compound
+capability_status: partial
+catalog_version: 1.0.0
+description: Barrier ahead while localization confidence decays. Two independent reasons to stop; reason string
+  should name the first that fires. Compound scenarios exist to catch priority-ordering bugs between independent
+  subsystems.
+tags:
+- compound
+- day
+- obstacle_plus_localization_degrade
+- priority_ordering
+required_capabilities:
+- priority_ordering
+- multi_hazard
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: obs
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 35
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: localization
+    action: low_confidence
+    value: 0.2
+    ramp_s: 3.0
+expected:
+  behaviors_any:
+  - stopped_obstacle
+  - stopped_safety
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact with anything.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

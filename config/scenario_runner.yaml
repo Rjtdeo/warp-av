@@ -1,0 +1,22 @@
+# Scenario runner defaults. CLI flags / env vars override (WARP_API, CARLA_HOST, CARLA_PORT).
+api_url: http://localhost:5000
+carla_host: localhost
+carla_port: 2000
+poll_hz: 10            # rate at which /api/state is sampled and actor behaviours stepped
+results_dir: scenarios/results
+catalog_dir: scenarios/catalog
+
+# Budgets used when generating pass criteria (mirrors gen_common.stop_budget_s)
+assumed_control_latency_s: 0.5
+assumed_decel_mps2: 4.0
+stop_margin_s: 1.5
+
+# Stack thresholds the catalog brackets (keep in sync with the code they mirror)
+perception_path_width_m: 3.5        # perception.py
+perception_danger_distance_m: 5.0   # perception.py
+perception_detection_range_m: 50.0  # perception.py
+safety_max_perception_age_s: 1.0    # safety_supervisor.py
+safety_max_localization_age_s: 1.0  # safety_supervisor.py
+safety_min_localization_confidence: 0.3
+vehicle_max_command_age_s: 0.5      # carla_vehicle_adapter.py
+behavior_destination_threshold_m: 5.0

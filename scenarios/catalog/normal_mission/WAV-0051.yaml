@@ -1,0 +1,72 @@
+id: WAV-0051
+name: Speed sweep cruise 3.0 m/s (Town04)
+category: normal_mission
+family: nm_speed_sweep
+capability_status: implemented
+catalog_version: 1.0.0
+description: 300 m straight-ish mission at cruise 3.0 m/s. Checks speed tracking error, overshoot and steering stability
+  as speed rises (pure-pursuit oscillation is a known issue).
+tags:
+- control_tuning
+- cruise_3.0
+- day
+- speed_sweep
+required_capabilities:
+- speed_control
+- lateral_stability
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 4.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 3.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  final_mission_state: completed
+  max_speed_mps: 4.0
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: max_speed_mps
+  op: <=
+  value: 4.0
+- metric: steer_oscillation_index
+  op: <=
+  value: 2.0
+- metric: route_deviation_max_m
+  op: <=
+  value: 1.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Speed overshoot <1 m/s; no oscillatory steering growth.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

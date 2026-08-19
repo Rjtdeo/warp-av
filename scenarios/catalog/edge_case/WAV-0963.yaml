@@ -1,0 +1,142 @@
+id: WAV-0963
+name: 'Edge: all props at once (Town03)'
+category: edge_case
+family: edge
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Eight props in 16 m: perception object list is large; closest-selection must still pick the nearest
+  in-path one.'
+tags:
+- all_props_at_once
+- boundary_condition
+- day
+- edge
+required_capabilities:
+- robustness
+- boundary_conditions
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: p0
+  type: prop
+  blueprint: static.prop.trafficcone01
+  spawn:
+    mode: route_ahead
+    distance_m: 30
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p1
+  type: prop
+  blueprint: static.prop.barrel
+  spawn:
+    mode: route_ahead
+    distance_m: 32
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p2
+  type: prop
+  blueprint: static.prop.box03
+  spawn:
+    mode: route_ahead
+    distance_m: 34
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p3
+  type: prop
+  blueprint: static.prop.trashcan02
+  spawn:
+    mode: route_ahead
+    distance_m: 36
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p4
+  type: prop
+  blueprint: static.prop.bin
+  spawn:
+    mode: route_ahead
+    distance_m: 38
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p5
+  type: prop
+  blueprint: static.prop.bench01
+  spawn:
+    mode: route_ahead
+    distance_m: 40
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p6
+  type: prop
+  blueprint: static.prop.shoppingcart
+  spawn:
+    mode: route_ahead
+    distance_m: 42
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: p7
+  type: prop
+  blueprint: static.prop.dirtdebris01
+  spawn:
+    mode: route_ahead
+    distance_m: 44
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_obstacle
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No exception escapes the loop; no contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

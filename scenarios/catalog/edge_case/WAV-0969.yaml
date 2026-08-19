@@ -1,0 +1,62 @@
+id: WAV-0969
+name: 'Edge: very long route (Town05)'
+category: edge_case
+family: edge
+capability_status: partial
+catalog_version: 1.0.0
+description: Destination ~2 km away (spawn point far side of town). Route has 1000+ waypoints; get_next_waypoint
+  is O(n) per tick — watch tick time.
+tags:
+- boundary_condition
+- day
+- edge
+- very_long_route
+required_capabilities:
+- robustness
+- boundary_conditions
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 19
+  cruise_speed_mps: 10.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: tick_gap_max_s
+  op: <=
+  value: 0.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No exception escapes the loop; no contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 600

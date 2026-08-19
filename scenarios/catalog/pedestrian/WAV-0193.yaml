@@ -1,0 +1,92 @@
+id: WAV-0193
+name: Child darts from behind parked truck at 15 m
+category: pedestrian
+family: ped_occluded_dart
+capability_status: partial
+catalog_version: 1.0.0
+description: A truck is parked on the right shoulder 15 m ahead. A child hidden behind it runs into the lane at
+  3 m/s when ego is within 20 m. Minimum reaction distance case. Ground truth sees through the occluder; real sensors
+  will not — this is the scenario that motivates occlusion-aware speed caps.
+tags:
+- child
+- dart_out
+- day
+- high_severity
+- occlusion
+- truck
+required_capabilities:
+- pedestrian_detection
+- occlusion_reasoning
+- emergency_braking
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_parked_cars
+  speed_limit_mps: 6.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 115
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: parked
+  type: vehicle
+  blueprint: vehicle.carlamotors.carlacola
+  spawn:
+    mode: route_ahead
+    distance_m: 15
+    lateral_m: 3.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0011
+  spawn:
+    mode: route_ahead
+    distance_m: 16.5
+    lateral_m: 5.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: dart_out
+    speed_mps: 3.0
+  trigger:
+    ego_within_m: 20
+events: []
+expected:
+  behavior: stopped_pedestrian
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact with pedestrian.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

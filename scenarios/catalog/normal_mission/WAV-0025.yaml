@@ -1,0 +1,66 @@
+id: WAV-0025
+name: Normal mission to spawn point 4 (Town02)
+category: normal_mission
+family: nm_spawn_pairs
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'Mission from ego spawn to map spawn point #4 in Town02. Exercises longer, multi-turn routes.'
+tags:
+- baseline
+- day
+- multi_turn
+- overcast
+required_capabilities:
+- route_planning
+- path_following
+- turning
+- mission_completion
+odd:
+  town: Town02
+  weather: CloudyNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 4
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: route_deviation_max_m
+  op: <=
+  value: 2.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Stay on road; complete without safety intervention.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 240

@@ -42,6 +42,7 @@ from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
 from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
+from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
 
 
@@ -101,9 +102,14 @@ class WarpAV:
         print("[Init] Starting logger...")
         self.logger = TelemetryLogger(log_dir="logs")
 
+        print("[Init] Starting fault injector (test hooks)...")
+        self.fault_injector = FaultInjector(self)
+
         # Current state for the API/console
         self._current_state = {}
         self._route = None
+        self._tick_count = 0
+        self._last_tick_error = ""
 
         # Route selected on the dashboard before START is pressed.
         self._preview_route = None
@@ -196,6 +202,11 @@ class WarpAV:
         ONE CYCLE of the autonomy loop.
         This is called ~10 times per second.
         """
+
+        self._tick_count += 1
+        extra_delay = self.fault_injector.extra_tick_delay()
+        if extra_delay > 0:
+            time.sleep(extra_delay)
 
         # 1. Localize
         pose = self.localization.update()
@@ -438,7 +449,16 @@ class WarpAV:
             },
 
             "warnings": self.safety.warnings,
-            "errors": self.safety.errors,
+            "errors": self.safety.errors + ([self.vehicle_adapter.last_command_rejected] if getattr(self.vehicle_adapter, "last_command_rejected", "") else []),
+            "timestamp": time.time(),
+            "tick": self._tick_count,
+            "autonomy_state": self.vehicle_adapter._autonomy_state.value,
+            "active_faults": dict(self.fault_injector.active),
+            "last_tick_error": self._last_tick_error,
+            "cruise_speed_mps": self.behavior.cruise_speed,
+            "localization": {"confidence": round(pose.confidence, 2), "quality": pose.quality.value, "healthy": pose.healthy},
+            "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
+                            if self.mission_manager.current_mission else None),
         }
 
     def run(self, tick_rate=10):
@@ -455,7 +475,14 @@ class WarpAV:
                 print("\n[WarpAV] Shutting down...")
                 break
             except Exception as e:
-                print(f"[WarpAV] TICK ERROR: {e}")
+                # A software fault must never leave the last throttle command applied.
+                self._last_tick_error = f"{type(e).__name__}: {e}"
+                print(f"[WarpAV] TICK ERROR: {e} -> commanding brake")
+                try:
+                    self.vehicle_adapter.send_command(self.controller.emergency_brake())
+                    self.logger.log_event("tick_error", self._last_tick_error)
+                except Exception:
+                    pass
                 time.sleep(dt)
 
         self.shutdown()
@@ -903,6 +930,19 @@ class WarpAV:
         )
 
         return True
+
+    def api_get_route(self):
+        if not self._route:
+            return []
+        return [{"x": round(w.x, 2), "y": round(w.y, 2)} for w in self._route.waypoints]
+
+    def api_set_speed_limit(self, speed_mps):
+        self.behavior.set_cruise_speed(speed_mps)
+        self.logger.log_event("speed_limit_changed", f"cruise={self.behavior.cruise_speed}")
+        return self.behavior.cruise_speed
+
+    def api_inject(self, component, action, **params):
+        return self.fault_injector.inject(component, action, **params)
 
     def api_get_state(self):
         return self._current_state
@@ -1459,8 +1499,14 @@ def clear_scenario():
 
 @app.route('/api/mission/start', methods=['POST'])
 def start_mission():
-    data = request.json
-    ok = av_system.api_start_mission(data['x'], data['y'])
+    data = request.json or {}
+    try:
+        x, y = float(data['x']), float(data['y'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"success": False, "reason": "x and y (numbers) required"}), 400
+    if not (abs(x) < 1e5 and abs(y) < 1e5):
+        return jsonify({"success": False, "reason": "destination out of range"}), 400
+    ok = av_system.api_start_mission(x, y)
     return jsonify({"success": ok})
 
 @app.route('/api/mission/stop', methods=['POST'])
@@ -1491,6 +1537,28 @@ def clear_estop():
 @app.route('/api/history')
 def get_history():
     return jsonify(av_system.api_get_history())
+
+@app.route('/api/route')
+def get_route():
+    return jsonify(av_system.api_get_route())
+
+@app.route('/api/config/speed_limit', methods=['POST'])
+def set_speed_limit():
+    data = request.json or {}
+    if 'cruise_speed_mps' not in data:
+        return jsonify({"success": False, "reason": "cruise_speed_mps required"}), 400
+    return jsonify({"success": True, "cruise_speed_mps": av_system.api_set_speed_limit(data['cruise_speed_mps'])})
+
+@app.route('/api/test/inject', methods=['POST'])
+def inject_fault():
+    """Generic fault injection. Body: {"component": "...", "action": "...", ...params}"""
+    data = dict(request.json or {})
+    component = data.pop('component', None)
+    action = data.pop('action', None)
+    if not component or not action:
+        return jsonify({"success": False, "reason": "component and action required"}), 400
+    result = av_system.api_inject(component, action, **data)
+    return jsonify(result), (200 if result.get("success") else 422)
 
 @app.route('/api/spawn_points')
 def get_spawn_points():

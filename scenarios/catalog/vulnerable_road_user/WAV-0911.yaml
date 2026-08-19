@@ -1,0 +1,76 @@
+id: WAV-0911
+name: 'VRU special: wheelchair slow cross (18 m)'
+category: vulnerable_road_user
+family: vru_special
+capability_status: implemented
+catalog_version: 1.0.0
+description: A very slow (0.5 m/s) crossing — wheelchair user proxy. Long dwell in the lane; ego must wait 14+ s
+  without creeping.
+tags:
+- day
+- vru
+- wheelchair_slow_cross
+required_capabilities:
+- pedestrian_detection
+- small_object_detection
+- resume_when_clear
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 118
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: vru
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 18
+    lateral_m: 5.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_road
+    speed_mps: 0.5
+    direction: toward_lane
+  trigger:
+    ego_within_m: 26
+events: []
+expected:
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

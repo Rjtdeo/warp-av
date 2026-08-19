@@ -1,0 +1,74 @@
+id: WAV-0535
+name: Tick latency 1.5 s (spike)
+category: component_failure
+family: cf_tick_latency
+capability_status: partial
+catalog_version: 1.0.0
+description: Main loop tick is delayed by 1.5 s (single spike). Nominal period 0.1 s; staleness threshold 1.0 s.
+  Should trip staleness.
+tags:
+- day
+- fault_injection
+- lat_1.5
+- spike
+- tick_latency
+required_capabilities:
+- watchdog
+- latency_tolerance
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: tick_latency
+    action: latency
+    latency_s: 1.5
+    mode: spike
+expected:
+  safety_state: intervention
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: route_deviation_max_m
+  op: <=
+  value: 3.0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Loop stalls ≥1 s must stop the vehicle.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

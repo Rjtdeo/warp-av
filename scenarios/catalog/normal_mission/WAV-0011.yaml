@@ -1,0 +1,79 @@
+id: WAV-0011
+name: Normal mission 250 m, Town01, HardRainNoon, cruise 8.0 m/s
+category: normal_mission
+family: nm_basic
+capability_status: implemented
+catalog_version: 1.0.0
+description: Ego receives a destination 250 m along the road network in Town01 under HardRainNoon. No actors. Must
+  follow the route, hold ~8.0 m/s, slow near the destination and complete the mission.
+tags:
+- baseline
+- day
+- dist_250
+- heavy_rain
+- reduced_visibility
+- wet_road
+required_capabilities:
+- route_planning
+- path_following
+- speed_control
+- mission_completion
+odd:
+  town: Town01
+  weather: HardRainNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  final_mission_state: completed
+  behaviors:
+  - following_route
+  - approaching_destination
+  - mission_complete
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: max_speed_mps
+  op: <=
+  value: 9.5
+- metric: route_deviation_max_m
+  op: <=
+  value: 2.0
+- metric: steer_oscillation_index
+  op: <=
+  value: 3.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never leave the drivable lane; never exceed speed limit by >1.5 m/s.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 185.0

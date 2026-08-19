@@ -1,0 +1,75 @@
+id: WAV-0221
+name: Pedestrian walking away ego along lane edge (1.0 m) [v2]
+category: pedestrian
+family: ped_walk_along
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Pedestrian walks away ego at 1.2 m/s, 1.0 m right of lane centre, starting 25 m ahead. Sits on the
+  path-box boundary: ego should slow and stop only if the walker drifts inside.'
+tags:
+- away
+- day
+- path_box_boundary
+- walk_along
+required_capabilities:
+- pedestrian_detection
+- in_path_check
+- pedestrian_motion_prediction
+odd:
+  town: Town01
+  weather: ClearNoon
+  light: day
+  road_type: rural_no_sidewalk
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 145
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 1.0
+    yaw_offset_deg: 0
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: away
+events: []
+expected:
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: ≥1 m clearance.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 80

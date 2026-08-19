@@ -1,0 +1,116 @@
+id: WAV-0709
+name: camera+gnss flap [v2]
+category: sensor_degradation
+family: sd_multi_and_flap
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: camera drops 0.4 s every second (flaky connector). Each gap is under threshold; target is a rate-based
+  health metric, not just age.
+tags:
+- camera
+- day
+- flap
+- gnss
+- sensor
+required_capabilities:
+- sensor_health_to_supervisor
+- rate_based_health
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    at_s: 6
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 7
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 8
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 9
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 10
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 11
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 12
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+- trigger:
+    at_s: 13
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 0.4
+expected:
+  target_safety_state: intervention
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Documented gap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

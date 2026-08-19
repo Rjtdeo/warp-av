@@ -1,0 +1,82 @@
+id: WAV-0509
+name: localization fails while vehicle is ahead (20 m)
+category: component_failure
+family: cf_failure_with_hazard
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'localization is disabled exactly when ego is 15 m from a vehicle in its lane. The stop must still
+  happen — either the hazard logic (if perception still works) or the supervisor (if it does not). Worst-case: perception
+  dies with a pedestrian 15 m ahead at 8 m/s.'
+tags:
+- day
+- fault_injection
+- high_severity
+- localization
+- vehicle
+required_capabilities:
+- component_health_monitoring
+- safe_stop
+- fail_safe_braking
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 120
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: lead
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 20
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events:
+- trigger:
+    ego_within_m: 15
+  action: inject
+  params:
+    component: localization
+    action: disable
+expected:
+  safety_state: intervention
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact regardless of which layer stops the vehicle.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

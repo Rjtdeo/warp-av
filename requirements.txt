@@ -9,3 +9,5 @@ jsonlines
 shapely
 transforms3d
 networkx
+requests
+pytest

@@ -1,0 +1,80 @@
+id: WAV-0096
+name: Lead suv hard-brakes, gap 25 m, ego 10.0 m/s
+category: vehicle_ahead
+family: va_lead_brake_hard
+capability_status: partial
+catalog_version: 1.0.0
+description: Lead suv drives at 10.0 m/s 25 m ahead, then brakes fully once ego reaches speed. Tests reaction latency
+  of the perceive→decide→brake chain at closing speed.
+tags:
+- day
+- gap_25
+- hard_brake
+- moving_lead
+- suv
+required_capabilities:
+- vehicle_detection
+- ttc_estimation
+- emergency_braking
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 12.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 350
+  cruise_speed_mps: 10.0
+  start_at_s: 0.0
+actors:
+- name: lead
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: brake_hard
+    speed_mps: 10.0
+  trigger:
+    ego_speed_gt: 9.0
+events: []
+expected:
+  behavior: stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_vehicle
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No rear-end contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

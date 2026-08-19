@@ -1,0 +1,95 @@
+id: WAV-0389
+name: Junction blocked by barrier (Town03)
+category: blocked_route
+family: br_block_at_intersection
+capability_status: partial
+catalog_version: 1.0.0
+description: 'The next junction on the route is blocked by a barrier. Ego must stop before the junction box (not
+  inside it). Target: re-route via another arm.'
+tags:
+- barrier
+- day
+- full_block
+- intersection
+required_capabilities:
+- obstacle_detection
+- junction_awareness
+- replanning
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: intersection
+  speed_limit_mps: 9.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 6
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: blk0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: -2.5
+    at_next_junction: true
+  behavior:
+    kind: stopped
+- name: blk1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: 0
+    at_next_junction: true
+  behavior:
+    kind: stopped
+- name: blk2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: 2.5
+    at_next_junction: true
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior_any:
+  - stopped_obstacle
+  - stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Do not stop inside the junction box.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

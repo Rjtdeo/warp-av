@@ -1,0 +1,61 @@
+id: WAV-0776
+name: 'ODD boundary: storm (Town03)'
+category: odd_boundary
+family: ob_speed_and_weather
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: Full storm from the start. Baseline record for the most adverse CARLA preset.
+tags:
+- heavy_rain
+- night
+- odd
+- reduced_visibility
+- storm
+- wet_road
+required_capabilities:
+- odd_enforcement
+- speed_cap
+- weather_awareness
+odd:
+  town: Town03
+  weather: HardRainNight
+  light: night
+  road_type: urban_2lane
+  speed_limit_mps: 12.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  target: ODD enforcement
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never exceed ODD speed cap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

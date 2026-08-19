@@ -1,0 +1,70 @@
+id: WAV-0448
+name: Disable gnss at speed
+category: component_failure
+family: cf_disable
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'gnss is disabled at speed (mission starts at t=2 s). Expected: safety supervisor → warning with ''gnss
+  stale'', vehicle brought to a stop and held; behaviour reports stopped_safety. NOTE: sensor-adapter health (camera/lidar/gnss/imu)
+  is tracked in CarlaSensorAdapter but is NOT yet fed into SafetySupervisor — this scenario documents the gap; with
+  ground-truth perception the vehicle will keep driving.'
+tags:
+- at_speed
+- day
+- fault_injection
+- gnss
+required_capabilities:
+- component_health_monitoring
+- safe_stop
+- gnss_health
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 2.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: gnss
+    action: disable
+expected:
+  safety_state: warning
+  error_contains: gnss stale
+  behavior: stopped_safety
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Vehicle must reach and hold zero speed after detection; no autonomous motion while unhealthy.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

@@ -1,0 +1,75 @@
+id: WAV-0273
+name: bench at 40 m, lateral 2.4 m (shoulder)
+category: static_obstacle
+family: so_single_prop
+capability_status: implemented
+catalog_version: 1.0.0
+description: A bench is placed 40 m ahead offset 2.4 m right of the lane centre. It is on the shoulder/outside the
+  path box → ego should slow but pass and complete the mission.
+tags:
+- bench
+- day
+- lat_2.4
+- overcast
+- prop
+- shoulder
+required_capabilities:
+- obstacle_detection
+- in_path_check
+- stop_for_obstacle
+odd:
+  town: Town03
+  weather: CloudyNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 140
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: obs
+  type: prop
+  blueprint: static.prop.bench01
+  spawn:
+    mode: route_ahead
+    distance_m: 40
+    lateral_m: 2.4
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior: following_route
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact; no unnecessary stop for shoulder objects.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

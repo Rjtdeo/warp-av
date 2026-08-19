@@ -1,0 +1,105 @@
+id: WAV-0430
+name: Blocked 8 m from start by barrier [v2]
+category: blocked_route
+family: br_block_immediately
+capability_status: implemented
+catalog_version: 1.0.0
+description: Route is blocked 8 m from the start position before the mission begins. Ego must not move off (or creep
+  <0.5 m/s) and must report why.
+tags:
+- at_start
+- barrier
+- day
+- full_block
+required_capabilities:
+- obstacle_detection
+- stop_for_obstacle
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: blk0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 8
+    lateral_m: -3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: blk1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 8
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: blk2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 8
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: blk3
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 8
+    lateral_m: 3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior_any:
+  - stopped_obstacle
+  - stopped_vehicle
+  max_speed_mps: 0.5
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: max_speed_mps
+  op: <=
+  value: 0.8
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact with an obstacle already inside the danger distance.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 40

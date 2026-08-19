@@ -1,0 +1,76 @@
+id: WAV-0888
+name: Cyclist ahead slow (25 m)
+category: vulnerable_road_user
+family: vru
+capability_status: partial
+catalog_version: 1.0.0
+description: 'A cyclist rides ahead in lane at 4 m/s. Classified as VEHICLE by the ground-truth adapter (blueprint
+  vehicle.*) — so it gets vehicle treatment, not the always-stop pedestrian rule. Target: VRU class with larger
+  clearance (1.5 m) and no overtaking in-lane.'
+tags:
+- ahead_slow
+- bicycle
+- day
+- vru
+required_capabilities:
+- vru_classification
+- lateral_clearance
+- adaptive_following
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 175
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: vru
+  type: vehicle
+  blueprint: vehicle.bh.crossbike
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 4.0
+events: []
+expected:
+  no_collision: true
+  min_clearance: 1.5
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: ≥1.5 m from any VRU.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

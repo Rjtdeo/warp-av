@@ -1,0 +1,124 @@
+id: WAV-0372
+name: Full block clears after 20 s (25 m)
+category: blocked_route
+family: br_block_clears
+capability_status: implemented
+catalog_version: 1.0.0
+description: Both lanes blocked at 25 m; barriers are removed 20 s after ego stops. Ego must resume automatically
+  and complete the mission.
+tags:
+- clear_20
+- clears
+- day
+- full_block
+- overcast
+- resume_after_clear
+required_capabilities:
+- obstacle_detection
+- stop_for_obstacle
+- resume_when_clear
+odd:
+  town: Town03
+  weather: CloudyNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 145
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: blk0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: -3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: remove_after
+    delay_s: 20
+  trigger:
+    on_behavior: stopped_obstacle
+- name: blk1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: remove_after
+    delay_s: 20
+  trigger:
+    on_behavior: stopped_obstacle
+- name: blk2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: remove_after
+    delay_s: 20
+  trigger:
+    on_behavior: stopped_obstacle
+- name: blk3
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: remove_after
+    delay_s: 20
+  trigger:
+    on_behavior: stopped_obstacle
+events: []
+expected:
+  behavior: stopped_obstacle
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_obstacle
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: stop_duration_s
+  op: '>='
+  value: 16.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact; no premature resume.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 110

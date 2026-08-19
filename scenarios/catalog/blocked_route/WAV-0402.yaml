@@ -1,0 +1,116 @@
+id: WAV-0402
+name: Construction zone (full lane) at 50 m, WetNoon
+category: blocked_route
+family: br_construction_zone
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Taper of construction cones closes the lane at 50 m with a warning sign before it. Full closure: stop
+  & hold; target is lane change / re-route.'
+tags:
+- cones
+- construction
+- day
+- full
+- wet_road
+required_capabilities:
+- obstacle_detection
+- drivable_width_estimation
+- lane_change
+odd:
+  town: Town05
+  weather: WetNoon
+  light: day
+  road_type: construction
+  speed_limit_mps: 6.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 170
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: cone0
+  type: prop
+  blueprint: static.prop.constructioncone
+  spawn:
+    mode: route_ahead
+    distance_m: 50
+    lateral_m: -1.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: cone1
+  type: prop
+  blueprint: static.prop.constructioncone
+  spawn:
+    mode: route_ahead
+    distance_m: 53
+    lateral_m: -0.3
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: cone2
+  type: prop
+  blueprint: static.prop.constructioncone
+  spawn:
+    mode: route_ahead
+    distance_m: 56
+    lateral_m: 0.4
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: cone3
+  type: prop
+  blueprint: static.prop.constructioncone
+  spawn:
+    mode: route_ahead
+    distance_m: 59
+    lateral_m: 1.1
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: sign
+  type: prop
+  blueprint: static.prop.warningconstruction
+  spawn:
+    mode: route_ahead
+    distance_m: 40
+    lateral_m: 3.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior_any:
+  - stopped_obstacle
+  - following_route
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 0.8
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No cone contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

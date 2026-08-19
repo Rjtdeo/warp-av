@@ -1,0 +1,770 @@
+id: WAV-0993
+name: Endurance 20 min, 40 traffic vehicles (Town03)
+category: endurance
+family: endurance
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'Chain missions for ~20 minutes among 40 autopilot vehicles and 20 wandering pedestrians. Looks for:
+  memory growth, log file size, tick-time creep, mission-history growth, any unhandled exception, disengagement
+  count.'
+tags:
+- day
+- endurance
+- min_20
+- soak
+- traffic_40
+required_capabilities:
+- stability
+- logging_rollover
+- multi_object_tracking
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 2
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: tm_0
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 3
+  behavior:
+    kind: autopilot
+- name: tm_1
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 4
+  behavior:
+    kind: autopilot
+- name: tm_2
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 5
+  behavior:
+    kind: autopilot
+- name: tm_3
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 6
+  behavior:
+    kind: autopilot
+- name: tm_4
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 7
+  behavior:
+    kind: autopilot
+- name: tm_5
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 8
+  behavior:
+    kind: autopilot
+- name: tm_6
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 9
+  behavior:
+    kind: autopilot
+- name: tm_7
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 10
+  behavior:
+    kind: autopilot
+- name: tm_8
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 11
+  behavior:
+    kind: autopilot
+- name: tm_9
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 12
+  behavior:
+    kind: autopilot
+- name: tm_10
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 13
+  behavior:
+    kind: autopilot
+- name: tm_11
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 14
+  behavior:
+    kind: autopilot
+- name: tm_12
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 15
+  behavior:
+    kind: autopilot
+- name: tm_13
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 16
+  behavior:
+    kind: autopilot
+- name: tm_14
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 17
+  behavior:
+    kind: autopilot
+- name: tm_15
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 18
+  behavior:
+    kind: autopilot
+- name: tm_16
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 19
+  behavior:
+    kind: autopilot
+- name: tm_17
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 20
+  behavior:
+    kind: autopilot
+- name: tm_18
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 21
+  behavior:
+    kind: autopilot
+- name: tm_19
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 22
+  behavior:
+    kind: autopilot
+- name: tm_20
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 23
+  behavior:
+    kind: autopilot
+- name: tm_21
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 24
+  behavior:
+    kind: autopilot
+- name: tm_22
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 25
+  behavior:
+    kind: autopilot
+- name: tm_23
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 26
+  behavior:
+    kind: autopilot
+- name: tm_24
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 27
+  behavior:
+    kind: autopilot
+- name: tm_25
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 28
+  behavior:
+    kind: autopilot
+- name: tm_26
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 29
+  behavior:
+    kind: autopilot
+- name: tm_27
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 30
+  behavior:
+    kind: autopilot
+- name: tm_28
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 31
+  behavior:
+    kind: autopilot
+- name: tm_29
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 32
+  behavior:
+    kind: autopilot
+- name: tm_30
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 33
+  behavior:
+    kind: autopilot
+- name: tm_31
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 34
+  behavior:
+    kind: autopilot
+- name: tm_32
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 35
+  behavior:
+    kind: autopilot
+- name: tm_33
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 36
+  behavior:
+    kind: autopilot
+- name: tm_34
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 37
+  behavior:
+    kind: autopilot
+- name: tm_35
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 38
+  behavior:
+    kind: autopilot
+- name: tm_36
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 39
+  behavior:
+    kind: autopilot
+- name: tm_37
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 40
+  behavior:
+    kind: autopilot
+- name: tm_38
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 41
+  behavior:
+    kind: autopilot
+- name: tm_39
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 42
+  behavior:
+    kind: autopilot
+- name: w_0
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 30
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_1
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 31
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_2
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 32
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_3
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 33
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_4
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 34
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_5
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 35
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_6
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 36
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_7
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 37
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_8
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 38
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_9
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 39
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_10
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 40
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_11
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 41
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_12
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 42
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_13
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 43
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_14
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 44
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_15
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 45
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_16
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 46
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_17
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 47
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_18
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: absolute
+    spawn_point_index: 48
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+- name: w_19
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: absolute
+    spawn_point_index: 49
+    sidewalk: true
+  behavior:
+    kind: walk_along
+    speed_mps: 1.2
+    direction: random
+events:
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 3
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 4
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 5
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 6
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 7
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 8
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 9
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 10
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 11
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 12
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 13
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 14
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 15
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 16
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 17
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 3
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 4
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 5
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 6
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 7
+expected:
+  no_crash: true
+  disengagements: 0
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: tick_gap_max_s
+  op: <=
+  value: 1.0
+- metric: safety_states_seen
+  op: not_in
+  value:
+  - intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No collision, no unhandled exception over the soak.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 1320

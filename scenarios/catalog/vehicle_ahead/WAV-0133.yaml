@@ -1,0 +1,80 @@
+id: WAV-0133
+name: Oncoming truck at 10.0 m/s, ClearNoon
+category: vehicle_ahead
+family: va_oncoming
+capability_status: implemented
+catalog_version: 1.0.0
+description: A truck approaches in the opposite lane at 10.0 m/s from 70 m. It is NOT in ego's path. Ego must not
+  stop for it (false positive check); lane width heuristic = 3.5 m.
+tags:
+- day
+- false_positive_check
+- oncoming
+- truck
+required_capabilities:
+- vehicle_detection
+- lane_assignment
+- in_path_check
+odd:
+  town: Town01
+  weather: ClearNoon
+  light: day
+  road_type: rural_2lane
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: oncoming
+  type: vehicle
+  blueprint: vehicle.carlamotors.carlacola
+  spawn:
+    mode: route_ahead
+    distance_m: 70
+    lateral_m: -3.5
+    yaw_offset_deg: 180
+  behavior:
+    kind: oncoming
+    speed_mps: 10.0
+events: []
+expected:
+  behaviors_not:
+  - stopped_vehicle
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: behaviors_seen
+  op: not_in
+  value:
+  - stopped_vehicle
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No unnecessary stop for oncoming traffic; no lane departure.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

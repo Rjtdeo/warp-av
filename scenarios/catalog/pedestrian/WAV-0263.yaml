@@ -1,0 +1,75 @@
+id: WAV-0263
+name: Pedestrian at mission start (4.0 m)
+category: pedestrian
+family: ped_at_start_and_destination
+capability_status: implemented
+catalog_version: 1.0.0
+description: A pedestrian is standing 4.0 m directly ahead when the mission is started. Ego must not move off at
+  all.
+tags:
+- day
+- edge
+- start
+required_capabilities:
+- pedestrian_detection
+- stop_for_pedestrian
+- priority_ordering
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 120
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 4.0
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stand
+events: []
+expected:
+  behavior: stopped_pedestrian
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: max_speed_mps
+  op: <=
+  value: 0.5
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact; no motion if pedestrian already ahead at start.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 45

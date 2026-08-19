@@ -1,0 +1,68 @@
+id: WAV-0618
+name: Stop mission at 3.0 m/s → idle after
+category: operator_action
+family: oa_stop_mission
+capability_status: implemented
+catalog_version: 1.0.0
+description: Operator stops (cancels) the mission at 3.0 m/s. Vehicle brakes to zero, mission → cancelled, logged.
+  Vehicle stays idle.
+tags:
+- day
+- idle_after
+- mission_state_machine
+- stop_mission
+required_capabilities:
+- mission_cancel
+- engage_disengage
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 2.5
+  action: stop_mission
+expected:
+  final_mission_state: cancelled
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: final_mission_state
+  op: ==
+  value: cancelled
+- metric: final_speed_mps
+  op: <=
+  value: 0.1
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Cancel brings vehicle to rest.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 80

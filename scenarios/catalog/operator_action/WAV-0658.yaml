@@ -1,0 +1,64 @@
+id: WAV-0658
+name: 'Degenerate operator input: resume without pause [v2]'
+category: operator_action
+family: oa_degenerate
+capability_status: partial
+catalog_version: 1.0.0
+description: Resume pressed while executing (never paused). Must be a no-op.
+tags:
+- api_robustness
+- day
+- degenerate_input
+- resume_without_pause
+required_capabilities:
+- api_input_validation
+- mission_state_machine
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: resume
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: API never crashes; vehicle never moves without a valid mission.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 80

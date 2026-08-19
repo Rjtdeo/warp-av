@@ -1,0 +1,70 @@
+id: WAV-0744
+name: Confidence ramps to 0.0 over 2.0 s
+category: localization_degradation
+family: ld_confidence_ramp
+capability_status: implemented
+catalog_version: 1.0.0
+description: Confidence decays linearly from 1.0 to 0.0 over 2.0 s (e.g. GNSS HDOP growing). Supervisor must intervene
+  exactly when it crosses 0.3, and the slowdown before that is a target behaviour (degrade speed with confidence).
+tags:
+- confidence
+- day
+- localization
+- ramp
+required_capabilities:
+- localization_confidence
+- graceful_degradation
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: localization
+    action: low_confidence
+    value: 0.0
+    ramp_s: 2.0
+expected:
+  safety_state: intervention
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Intervention at confidence < 0.3.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 62.0

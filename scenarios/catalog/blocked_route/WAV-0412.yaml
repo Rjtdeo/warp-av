@@ -1,0 +1,169 @@
+id: WAV-0412
+name: Traffic jam of 8 cars, creeping
+category: blocked_route
+family: br_traffic_jam
+capability_status: partial
+catalog_version: 1.0.0
+description: 8 cars queue from 35 m. After 25 s they creep at 1 m/s; ego should creep behind the last one (stop-and-go).
+tags:
+- creeping
+- day
+- jam
+- multi_actor
+required_capabilities:
+- vehicle_detection
+- adaptive_following
+- stop_and_go
+odd:
+  town: Town05
+  weather: CloudyNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 235
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: jam0
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: route_ahead
+    distance_m: 35
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam1
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 42
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam2
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: route_ahead
+    distance_m: 49
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam3
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 56
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam4
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: route_ahead
+    distance_m: 63
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam5
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 70
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam6
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: route_ahead
+    distance_m: 77
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+- name: jam7
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 84
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 1.0
+  trigger:
+    at_s: 25
+events: []
+expected:
+  behavior: stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_vehicle
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No rear-end in stop-and-go.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

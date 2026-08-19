@@ -1,0 +1,82 @@
+id: WAV-0249
+name: Pedestrian crossing in ClearNight from left (35 m)
+category: pedestrian
+family: ped_low_visibility
+capability_status: partial
+catalog_version: 1.0.0
+description: Standard crossing pedestrian under ClearNight. Identical to ped_cross for ground-truth perception;
+  kept as a regression pair so the delta vs clear weather is measurable once camera perception lands.
+tags:
+- crossing
+- left
+- low_visibility
+- night
+required_capabilities:
+- pedestrian_detection
+- low_light_perception
+odd:
+  town: Town10HD_Opt
+  weather: ClearNight
+  light: night
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 135
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 35
+    lateral_m: -5.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_road
+    speed_mps: 1.3
+    direction: toward_lane
+  trigger:
+    ego_within_m: 45
+events: []
+expected:
+  behavior: stopped_pedestrian
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+- metric: behavior_reasons_seen
+  op: contains
+  value: PEDESTRIAN
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

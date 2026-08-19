@@ -1,0 +1,77 @@
+id: WAV-0336
+name: Large obstacle warning at 40 m
+category: static_obstacle
+family: so_low_and_large
+capability_status: implemented
+catalog_version: 1.0.0
+description: A large warning in the lane at 40 m. Large object; trivial for any sensor — sanity case.
+tags:
+- day
+- large
+- prop
+- warning
+required_capabilities:
+- obstacle_detection
+- obstacle_detection
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 9.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 140
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: obs
+  type: prop
+  blueprint: static.prop.warningconstruction
+  spawn:
+    mode: route_ahead
+    distance_m: 40
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior: stopped_obstacle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_obstacle
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+- metric: stopped_within_s_of_trigger
+  op: <=
+  value: 6.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

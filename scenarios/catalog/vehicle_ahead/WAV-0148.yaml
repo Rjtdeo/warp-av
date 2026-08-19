@@ -1,0 +1,223 @@
+id: WAV-0148
+name: 'Ambient traffic: 20 autopilot vehicles, Town10HD_Opt, ClearNoon'
+category: vehicle_ahead
+family: va_traffic_autopilot
+capability_status: implemented
+catalog_version: 1.0.0
+description: 20 CARLA traffic-manager vehicles roam Town10HD_Opt. Ego runs a 300 m mission amid them. Tests in-path
+  filtering with many detections and behaviour when traffic crosses the route.
+tags:
+- ambient_traffic
+- day
+- density_20
+- multi_actor
+required_capabilities:
+- vehicle_detection
+- in_path_check
+- multi_object_tracking
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: tm_0
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 2
+  behavior:
+    kind: autopilot
+- name: tm_1
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 3
+  behavior:
+    kind: autopilot
+- name: tm_2
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 4
+  behavior:
+    kind: autopilot
+- name: tm_3
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 5
+  behavior:
+    kind: autopilot
+- name: tm_4
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 6
+  behavior:
+    kind: autopilot
+- name: tm_5
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 7
+  behavior:
+    kind: autopilot
+- name: tm_6
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 8
+  behavior:
+    kind: autopilot
+- name: tm_7
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 9
+  behavior:
+    kind: autopilot
+- name: tm_8
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 10
+  behavior:
+    kind: autopilot
+- name: tm_9
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 11
+  behavior:
+    kind: autopilot
+- name: tm_10
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 12
+  behavior:
+    kind: autopilot
+- name: tm_11
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 13
+  behavior:
+    kind: autopilot
+- name: tm_12
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 14
+  behavior:
+    kind: autopilot
+- name: tm_13
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 15
+  behavior:
+    kind: autopilot
+- name: tm_14
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 16
+  behavior:
+    kind: autopilot
+- name: tm_15
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 17
+  behavior:
+    kind: autopilot
+- name: tm_16
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 18
+  behavior:
+    kind: autopilot
+- name: tm_17
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 19
+  behavior:
+    kind: autopilot
+- name: tm_18
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 20
+  behavior:
+    kind: autopilot
+- name: tm_19
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 21
+  behavior:
+    kind: autopilot
+events: []
+expected:
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No collision with any traffic participant.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 180

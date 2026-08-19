@@ -1,0 +1,59 @@
+id: WAV-0966
+name: 'Edge: negative destination distance (Town05)'
+category: edge_case
+family: edge
+capability_status: partial
+catalog_version: 1.0.0
+description: Destination parameter negative / malformed JSON to /api/mission/start. API must 400, not 500, and no
+  mission record.
+tags:
+- boundary_condition
+- day
+- edge
+- negative_destination_distance
+required_capabilities:
+- robustness
+- boundary_conditions
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: -1000000000.0
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No exception escapes the loop; no contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

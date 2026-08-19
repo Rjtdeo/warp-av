@@ -1,0 +1,69 @@
+id: WAV-0758
+name: 'Geofence radius 150 m: ego pushed outside (Town03)'
+category: odd_boundary
+family: ob_geofence
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: Allowed operating area = 150 m radius around start. Ego is teleported just outside the fence mid-mission
+  → supervisor intervention 'outside operating area'. Geofencing is listed in KNOWN_ISSUES as not implemented —
+  these scenarios define the contract.
+tags:
+- day
+- ego_pushed_outside
+- geofence
+- radius_150
+required_capabilities:
+- geofence
+- odd_enforcement
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+  geofence_radius_m: 150
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 130
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: localization
+    action: noise
+    offset_m: 150
+    mode: jump
+expected:
+  target: mission rejected / intervention with reason 'outside allowed operating area'
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never operate outside the fence.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

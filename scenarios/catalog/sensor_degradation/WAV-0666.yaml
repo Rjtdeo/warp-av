@@ -1,0 +1,70 @@
+id: WAV-0666
+name: gnss dropout 1.0 s
+category: sensor_degradation
+family: sd_dropout
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'gnss stream stops for 1.0 s at speed then returns. Sensor-adapter health thresholds: camera/lidar/imu
+  1 s, gnss 2 s. TODAY: sensor health is not consumed by the supervisor (perception/localization read ground truth)
+  so the vehicle keeps driving. TARGET: dropout longer than threshold → warning (gnss/imu, if odometry still OK)
+  or intervention (camera/lidar).'
+tags:
+- day
+- dropout
+- dur_1.0
+- gnss
+- sensor
+required_capabilities:
+- gnss_health
+- sensor_health_to_supervisor
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: gnss
+    action: drop
+    duration_s: 1.0
+expected:
+  target_safety_state: warning
+  current: ok
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Documented gap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

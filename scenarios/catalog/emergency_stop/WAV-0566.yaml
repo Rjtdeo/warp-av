@@ -1,0 +1,68 @@
+id: WAV-0566
+name: E-stop at destination (Town10HD_Opt)
+category: emergency_stop
+family: es_in_turn_and_hazard
+capability_status: implemented
+catalog_version: 1.0.0
+description: E-stop within 20 m of the goal. Mission must not be marked completed by the arrival logic while e-stopped.
+tags:
+- at_destination
+- day
+- estop
+- priority_ordering
+required_capabilities:
+- estop
+- priority_ordering
+- estop_latching
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 120
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    on_behavior: approaching_destination
+  action: estop
+expected:
+  safety_state: emergency_stop
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: emergency_stop
+- metric: final_speed_mps
+  op: <=
+  value: 0.1
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: E-stop overrides all other logic.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

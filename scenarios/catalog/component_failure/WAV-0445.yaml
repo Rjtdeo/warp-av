@@ -1,0 +1,80 @@
+id: WAV-0445
+name: Disable perception before start
+category: component_failure
+family: cf_disable
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'perception is disabled before start (mission starts at t=2 s). Expected: safety supervisor → intervention
+  with ''Perception system unhealthy'', vehicle brought to a stop and held; behaviour reports stopped_safety. '
+tags:
+- before_start
+- day
+- fault_injection
+- perception
+required_capabilities:
+- component_health_monitoring
+- safe_stop
+- perception_health
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 2.0
+actors: []
+events:
+- trigger:
+    at_s: 0.5
+  action: inject
+  params:
+    component: perception
+    action: disable
+expected:
+  safety_state: intervention
+  error_contains: Perception system unhealthy
+  behavior: stopped_safety
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+- metric: errors_seen
+  op: contains
+  value: Perception system unhealthy
+- metric: safety_reaction_time_s
+  op: <=
+  value: 0.5
+- metric: max_speed_mps
+  op: <=
+  value: 0.3
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Vehicle must reach and hold zero speed after detection; no autonomous motion while unhealthy.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

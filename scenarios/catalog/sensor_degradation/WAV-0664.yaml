@@ -1,0 +1,70 @@
+id: WAV-0664
+name: camera dropout 6.0 s
+category: sensor_degradation
+family: sd_dropout
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'camera stream stops for 6.0 s at speed then returns. Sensor-adapter health thresholds: camera/lidar/imu
+  1 s, gnss 2 s. TODAY: sensor health is not consumed by the supervisor (perception/localization read ground truth)
+  so the vehicle keeps driving. TARGET: dropout longer than threshold → warning (gnss/imu, if odometry still OK)
+  or intervention (camera/lidar).'
+tags:
+- camera
+- day
+- dropout
+- dur_6.0
+- sensor
+required_capabilities:
+- camera_health
+- sensor_health_to_supervisor
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: camera
+    action: drop
+    duration_s: 6.0
+expected:
+  target_safety_state: intervention
+  current: ok
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Documented gap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

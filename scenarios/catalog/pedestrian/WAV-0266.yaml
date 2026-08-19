@@ -1,0 +1,78 @@
+id: WAV-0266
+name: Pedestrian crossing at marked crosswalk (left)
+category: pedestrian
+family: ped_crosswalk
+capability_status: implemented
+catalog_version: 1.0.0
+description: At a marked crosswalk in Town10 a pedestrian is crossing on the left. Ego must stop for the crossing
+  pedestrian.
+tags:
+- crossing
+- crosswalk
+- day
+- left
+required_capabilities:
+- pedestrian_detection
+- crosswalk_map_awareness
+- yield_at_crosswalk
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: crosswalk
+  speed_limit_mps: 6.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 35
+    lateral_m: -4.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_road
+    speed_mps: 1.5
+    direction: toward_lane
+  trigger:
+    ego_within_m: 45
+events: []
+expected:
+  target_capability: yield at crosswalk
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

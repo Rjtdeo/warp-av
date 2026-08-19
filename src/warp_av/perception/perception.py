@@ -67,6 +67,9 @@ class PerceptionSystem:
         self.world = world
         self.vehicle = vehicle
         self._enabled = True
+        # Fault-injection hooks (see testing/fault_injector.py). All default off.
+        self._fault = {"freeze": False, "stale_age_s": 0.0, "latency_s": 0.0, "crash": False}
+        self._last_output: Optional["PerceptionOutput"] = None
 
         # Detection parameters
         self.detection_range = 50.0          # meters
@@ -82,6 +85,13 @@ class PerceptionSystem:
         """
         if not self._enabled:
             return PerceptionOutput(healthy=False, reason="PERCEPTION_DISABLED")
+        if self._fault["crash"]:
+            self._fault["crash"] = False
+            raise RuntimeError("INJECTED_PERCEPTION_CRASH")
+        if self._fault["latency_s"] > 0:
+            time.sleep(self._fault["latency_s"])
+        if self._fault["freeze"] and self._last_output is not None:
+            return self._last_output          # plausible but old data, timestamp not advancing
 
         try:
             vehicle_transform = self.vehicle.get_transform()
@@ -127,15 +137,17 @@ class PerceptionSystem:
                     if obj.distance < self.danger_distance:
                         path_blocked = True
 
-            return PerceptionOutput(
+            out = PerceptionOutput(
                 objects=objects,
                 closest_obstacle_distance=closest_dist,
                 closest_obstacle_type=closest_type,
                 path_blocked=path_blocked,
-                timestamp=time.time(),
+                timestamp=time.time() - self._fault["stale_age_s"],
                 healthy=True,
                 reason="OK"
             )
+            self._last_output = out
+            return out
 
         except Exception as e:
             return PerceptionOutput(
@@ -185,4 +197,20 @@ class PerceptionSystem:
 
     def enable(self):
         self._enabled = True
+        self._fault = {"freeze": False, "stale_age_s": 0.0, "latency_s": 0.0, "crash": False}
         print("[Perception] Re-enabled")
+
+    def inject_fault(self, action: str, **params):
+        """freeze | stale(age_s) | latency(latency_s) | crash. Cleared by enable()."""
+        if action == "freeze":
+            self._fault["freeze"] = True
+        elif action == "stale":
+            self._fault["stale_age_s"] = float(params.get("age_s", 2.0))
+        elif action == "latency":
+            self._fault["latency_s"] = float(params.get("latency_s", 0.3))
+        elif action == "crash":
+            self._fault["crash"] = True
+        else:
+            return False
+        print(f"[Perception] FAULT INJECTED: {action} {params}")
+        return True

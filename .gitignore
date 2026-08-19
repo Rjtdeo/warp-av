@@ -8,3 +8,9 @@ __pycache__/
 logs/
 models/
 *.html.tmp
+.pytest_cache/
+.vercel/
+.claude/
+scenarios/results/*.json
+scenarios/results/*.jsonl
+!scenarios/results/REPORT.md

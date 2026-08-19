@@ -1,0 +1,84 @@
+id: WAV-0923
+name: 'Compound: ped plus change destination (Town03)'
+category: compound
+family: compound
+capability_status: partial
+catalog_version: 1.0.0
+description: Stopped for a pedestrian; operator changes destination. New plan must not cause motion while the pedestrian
+  is still in the lane. Compound scenarios exist to catch priority-ordering bugs between independent subsystems.
+tags:
+- compound
+- day
+- ped_plus_change_destination
+- priority_ordering
+required_capabilities:
+- priority_ordering
+- multi_hazard
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 5.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_and_stop
+    speed_mps: 1.2
+    dwell_s: 10
+  trigger:
+    ego_within_m: 35
+events:
+- trigger:
+    on_behavior: stopped_pedestrian
+  action: change_destination
+  params:
+    destination:
+      mode: route_ahead
+      distance_m: 60
+expected:
+  behaviors_any:
+  - stopped_pedestrian
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact with anything.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

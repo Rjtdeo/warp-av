@@ -1,0 +1,114 @@
+id: WAV-0368
+name: Full road block at 25 m, persists (Town05)
+category: blocked_route
+family: br_full_block_persistent
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Barriers span both lanes 25 m ahead and never clear. Ego must stop and hold. Expected current behaviour:
+  stopped_obstacle indefinitely (no re-plan). Target: after 30 s declare route blocked, attempt re-route, else fail
+  the mission with reason and notify operator.'
+tags:
+- day
+- full_block
+- no_replan
+- persistent
+required_capabilities:
+- obstacle_detection
+- blocked_route_detection
+- replanning
+- mission_failure_reporting
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 175
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: blk0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: -3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: blk1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: blk2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: blk3
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior_any:
+  - stopped_obstacle
+  - stopped_blocked
+  final_mission_state_any:
+  - executing
+  - failed
+  target_capability: stopped_blocked + mission failed with reason
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_obstacle
+- metric: stop_duration_s
+  op: '>='
+  value: 27.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never attempt to drive around onto sidewalk/oncoming lane.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 70

@@ -1,0 +1,77 @@
+id: WAV-0211
+name: Pedestrian standing 3.5 m right of lane centre at 20 m
+category: pedestrian
+family: ped_standing_edge
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'A stationary pedestrian stands 3.5 m to the right of the lane centre line, 20 m ahead. Outside the
+  path box: ego should slow (<15 m rule) and pass, not stop. Boundary test of the in-path heuristic.'
+tags:
+- day
+- path_box_boundary
+- right
+- standing
+required_capabilities:
+- pedestrian_detection
+- in_path_check
+- lateral_clearance
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 120
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 20
+    lateral_m: 3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stand
+events: []
+expected:
+  behavior: following_route
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+- metric: mission_completed
+  op: ==
+  value: true
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: ≥1.0 m lateral clearance when passing; stop if inside lane.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

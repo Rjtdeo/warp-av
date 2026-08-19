@@ -1,0 +1,67 @@
+id: WAV-0685
+name: camera noise high
+category: sensor_degradation
+family: sd_noise_latency
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: camera data corrupted by noise (high). With ground-truth perception/localization this is inert; once
+  real perception/fusion exists this family measures detection range/accuracy degradation and localization drift.
+tags:
+- camera
+- day
+- future_perception
+- high
+- noise
+- sensor
+required_capabilities:
+- camera_noise_tolerance
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: camera
+    action: noise
+    sigma_scale: 3
+expected:
+  target: graceful degradation, metrics recorded
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Documented gap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

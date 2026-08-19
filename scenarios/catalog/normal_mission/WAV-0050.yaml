@@ -1,0 +1,65 @@
+id: WAV-0050
+name: Normal mission in WetNoon (Town10HD_Opt)
+category: normal_mission
+family: nm_adverse_weather
+capability_status: partial
+catalog_version: 1.0.0
+description: 200 m mission in WetNoon. Ground-truth perception is weather-invariant today; this family becomes meaningful
+  once camera/lidar perception is real. Records baseline control behaviour on wet/low-visibility surfaces.
+tags:
+- day
+- weather_sweep
+- wet_road
+required_capabilities:
+- route_planning
+- path_following
+- weather_robustness
+odd:
+  town: Town10HD_Opt
+  weather: WetNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: route_deviation_max_m
+  op: <=
+  value: 2.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No lane departure even on wet road.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 150

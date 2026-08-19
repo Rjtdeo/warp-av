@@ -1,0 +1,86 @@
+id: WAV-0192
+name: Pedestrian walks across from right, 15 m, 1.0 m/s, CloudyNoon [v2]
+category: pedestrian
+family: ped_cross
+capability_status: implemented
+catalog_version: 1.0.0
+description: An adult pedestrian waits on the right kerb 15 m ahead and walks across the lane at 1.0 m/s when ego
+  is within 25 m. Ego must stop with reason naming PEDESTRIAN and never resume until the lane is clear.
+tags:
+- crossing
+- day
+- dist_15
+- overcast
+- right
+- walk_1.0
+required_capabilities:
+- pedestrian_detection
+- in_path_check
+- stop_for_pedestrian
+odd:
+  town: Town10HD_Opt
+  weather: CloudyNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 135
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: route_ahead
+    distance_m: 15
+    lateral_m: 5.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_road
+    speed_mps: 1.0
+    direction: toward_lane
+  trigger:
+    ego_within_m: 25
+events: []
+expected:
+  behavior: stopped_pedestrian
+  reason_contains: PEDESTRIAN
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+- metric: behavior_reasons_seen
+  op: contains
+  value: PEDESTRIAN
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Absolutely no contact; stop ≥1.5 m.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

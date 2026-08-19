@@ -1,0 +1,72 @@
+id: WAV-0957
+name: 'Edge: actor spawned overlapping ego (Town05)'
+category: edge_case
+family: edge
+capability_status: partial
+catalog_version: 1.0.0
+description: A prop is spawned 0.5 m ahead (inside ego's bumper zone) — distance < danger distance from tick 1.
+  No motion at all.
+tags:
+- actor_spawned_overlapping_ego
+- boundary_condition
+- day
+- edge
+required_capabilities:
+- robustness
+- boundary_conditions
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: obs
+  type: prop
+  blueprint: static.prop.box03
+  spawn:
+    mode: route_ahead
+    distance_m: 0.5
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: max_speed_mps
+  op: <=
+  value: 0.2
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No exception escapes the loop; no contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

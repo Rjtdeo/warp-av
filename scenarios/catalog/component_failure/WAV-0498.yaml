@@ -1,0 +1,77 @@
+id: WAV-0498
+name: 'Double failure: perception + localization (simultaneous)'
+category: component_failure
+family: cf_double_failure
+capability_status: partial
+catalog_version: 1.0.0
+description: perception then localization fail 0.0 s apart at speed. Supervisor must report BOTH errors (not just
+  the first it hits) and stop once.
+tags:
+- day
+- double
+- fault_injection
+- localization
+- perception
+required_capabilities:
+- component_health_monitoring
+- multi_fault_reporting
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: perception
+    action: disable
+- trigger:
+    after_event: 0
+    at_s: 0.0
+  action: inject
+  params:
+    component: localization
+    action: disable
+expected:
+  safety_state: intervention
+  errors_count: 2
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Stop and hold.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

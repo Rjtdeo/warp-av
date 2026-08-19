@@ -1,0 +1,74 @@
+id: WAV-0350
+name: cone 4.0 m before destination
+category: static_obstacle
+family: so_at_destination
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'A cone sits 4.0 m before the destination. Within the 5 m arrival threshold: the stack may declare
+  MISSION_COMPLETE before/while stopping — ordering bug check.'
+tags:
+- cone
+- day
+- destination
+- priority_ordering
+- prop
+required_capabilities:
+- obstacle_detection
+- priority_ordering
+- mission_completion
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 120
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: obs
+  type: prop
+  blueprint: static.prop.trafficcone01
+  spawn:
+    mode: at_destination
+    offset_m: -4.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior_any:
+  - stopped_obstacle
+  - mission_complete
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact even in the arrival zone.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

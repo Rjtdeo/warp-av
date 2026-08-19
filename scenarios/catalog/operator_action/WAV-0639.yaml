@@ -1,0 +1,85 @@
+id: WAV-0639
+name: Pause; pedestrian arrives while paused; resume after 10 s
+category: operator_action
+family: oa_pause_with_hazard
+capability_status: implemented
+catalog_version: 1.0.0
+description: Vehicle paused; a hazard appears 4–6 m ahead during the pause; operator resumes after 10 s. First tick
+  after resume must already see the hazard and refuse to move.
+tags:
+- day
+- hazard_during_pause
+- pause
+- priority_ordering
+- resume
+required_capabilities:
+- pause_resume
+- in_path_check
+- stop_for_obstacle
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 6
+    lateral_m: 4.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_and_stop
+    speed_mps: 1.2
+    dwell_s: 60
+  trigger:
+    on_mission_state: paused
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: pause
+- trigger:
+    after_event: 0
+    at_s: 10
+  action: resume
+expected:
+  behavior_after_resume: stopped_*
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No motion into a hazard after resume.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

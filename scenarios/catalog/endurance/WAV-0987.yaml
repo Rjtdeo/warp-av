@@ -1,0 +1,230 @@
+id: WAV-0987
+name: Endurance 20 min, 0 traffic vehicles (Town10HD_Opt)
+category: endurance
+family: endurance
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'Chain missions for ~20 minutes among 0 autopilot vehicles and 0 wandering pedestrians. Looks for:
+  memory growth, log file size, tick-time creep, mission-history growth, any unhandled exception, disengagement
+  count.'
+tags:
+- day
+- endurance
+- min_20
+- soak
+- traffic_0
+required_capabilities:
+- stability
+- logging_rollover
+- multi_object_tracking
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 2
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 3
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 4
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 5
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 6
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 7
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 8
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 9
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 10
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 11
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 12
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 13
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 14
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 15
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 16
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 17
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 3
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 4
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 5
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 6
+- trigger:
+    on_mission_state: completed
+    at_s: 1.0
+  action: start_mission
+  params:
+    destination:
+      mode: spawn_point
+      index: 7
+expected:
+  no_crash: true
+  disengagements: 0
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: tick_gap_max_s
+  op: <=
+  value: 1.0
+- metric: safety_states_seen
+  op: not_in
+  value:
+  - intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No collision, no unhandled exception over the soak.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 1320

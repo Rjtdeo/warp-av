@@ -1,0 +1,78 @@
+id: WAV-0553
+name: E-stop at 8.0 m/s, WetNoon
+category: emergency_stop
+family: es_at_speed
+capability_status: implemented
+catalog_version: 1.0.0
+description: Operator e-stop while ego travels at 8.0 m/s on WetNoon. Vehicle adapter must apply full brake + handbrake
+  on the same tick, safety state → emergency_stop (latched), behaviour → stopped_safety, reason names the operator.
+  Stopping distance recorded; wet-road friction only matters once CARLA friction is varied.
+tags:
+- day
+- estop
+- latching
+- speed_8.0
+- wet_road
+required_capabilities:
+- estop
+- estop_latching
+- immediate_brake
+odd:
+  town: Town04
+  weather: WetNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 12.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 7.5
+  action: estop
+expected:
+  safety_state: emergency_stop
+  reason_contains: EMERGENCY STOP
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: emergency_stop
+- metric: stopped_within_s_of_trigger
+  op: <=
+  value: 3.3
+- metric: safety_reaction_time_s
+  op: <=
+  value: 0.3
+- metric: final_speed_mps
+  op: <=
+  value: 0.1
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Brake applied within one tick; remains stopped until cleared.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 40

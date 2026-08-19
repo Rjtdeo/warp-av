@@ -1,0 +1,71 @@
+id: WAV-0515
+name: perception fails at arrival
+category: component_failure
+family: cf_failure_during_estop_and_arrival
+capability_status: implemented
+catalog_version: 1.0.0
+description: perception fails within 20 m of the goal. Mission must NOT be marked completed by coasting in; expect
+  stopped_safety before arrival.
+tags:
+- at_arrival
+- day
+- fault_injection
+- perception
+- priority_ordering
+required_capabilities:
+- component_health_monitoring
+- estop_latching
+- priority_ordering
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    on_behavior: approaching_destination
+  action: inject
+  params:
+    component: perception
+    action: disable
+expected:
+  safety_state_sequence:
+  - intervention
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No motion while any fault is active.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

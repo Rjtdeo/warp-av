@@ -1,0 +1,132 @@
+id: WAV-0539
+name: vehicle_connection flaps every 0.5 s
+category: component_failure
+family: cf_flapping
+capability_status: partial
+catalog_version: 1.0.0
+description: 'vehicle_connection toggles healthy/unhealthy 6 times with period 0.5 s. Without hysteresis the vehicle
+  lurches stop/go. Target: debounce + require N s healthy before resuming.'
+tags:
+- day
+- fault_injection
+- flapping
+- hysteresis
+- vehicle_connection
+required_capabilities:
+- component_health_monitoring
+- hysteresis
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    at_s: 8.0
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+- trigger:
+    at_s: 8.5
+  action: inject
+  params:
+    component: vehicle_connection
+    action: enable
+- trigger:
+    at_s: 9.0
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+- trigger:
+    at_s: 9.5
+  action: inject
+  params:
+    component: vehicle_connection
+    action: enable
+- trigger:
+    at_s: 10.0
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+- trigger:
+    at_s: 10.5
+  action: inject
+  params:
+    component: vehicle_connection
+    action: enable
+- trigger:
+    at_s: 11.0
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+- trigger:
+    at_s: 11.5
+  action: inject
+  params:
+    component: vehicle_connection
+    action: enable
+- trigger:
+    at_s: 12.0
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+- trigger:
+    at_s: 12.5
+  action: inject
+  params:
+    component: vehicle_connection
+    action: enable
+- trigger:
+    at_s: 13.0
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+- trigger:
+    at_s: 13.5
+  action: inject
+  params:
+    component: vehicle_connection
+    action: enable
+expected:
+  no_lurching: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No stop/go oscillation faster than 1 Hz.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

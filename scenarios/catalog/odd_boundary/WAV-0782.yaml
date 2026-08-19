@@ -1,0 +1,65 @@
+id: WAV-0782
+name: 'ODD boundary: fog beyond odd (Town10HD_Opt) [v2]'
+category: odd_boundary
+family: ob_speed_and_weather
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'Dense fog (visibility ~10 m) set before start. ODD says min visibility 50 m. Target: refuse to start
+  or cap speed to what the visibility allows. Ground truth is unaffected today.'
+tags:
+- day
+- fog_beyond_odd
+- odd
+required_capabilities:
+- odd_enforcement
+- speed_cap
+- weather_awareness
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 12.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    at_s: 0.5
+  action: set_weather
+  params:
+    fog_density: 90
+    fog_distance: 5
+expected:
+  target: ODD enforcement
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never exceed ODD speed cap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

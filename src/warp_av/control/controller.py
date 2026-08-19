@@ -59,6 +59,8 @@ class VehicleController:
     def __init__(self):
         self.speed_pid = PIDController(kp=0.5, ki=0.05, kd=0.1)
         self._enabled = True
+        self._fault_nan = False      # inject NaN steering (command-validation test)
+        self._fault_stale_s = 0.0    # back-date command timestamps
 
     def compute_command(
         self,
@@ -121,12 +123,27 @@ class VehicleController:
             throttle = 0.0
             brake = min(1.0, abs(pid_output))
 
-        return VehicleCommand(
+        cmd = VehicleCommand(
             steering=steering,
             throttle=throttle,
             brake=brake,
             gear=GearState.DRIVE
         )
+        if self._fault_nan:
+            cmd.steering = float("nan")
+        if self._fault_stale_s:
+            cmd.timestamp -= self._fault_stale_s
+        return cmd
+
+    def inject_fault(self, action: str, **params):
+        if action == "nan_command":
+            self._fault_nan = True
+        elif action == "stale":
+            self._fault_stale_s = float(params.get("age_s", 1.0))
+        else:
+            return False
+        print(f"[Controller] FAULT INJECTED: {action}")
+        return True
 
     def emergency_brake(self) -> VehicleCommand:
         """Immediate full brake."""
@@ -139,4 +156,6 @@ class VehicleController:
 
     def enable(self):
         self._enabled = True
+        self._fault_nan = False
+        self._fault_stale_s = 0.0
         print("[Controller] Re-enabled")

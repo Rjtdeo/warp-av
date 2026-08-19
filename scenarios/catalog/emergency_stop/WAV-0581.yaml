@@ -1,0 +1,79 @@
+id: WAV-0581
+name: E-stop clear → start while latched (hold 10 s) [v2]
+category: emergency_stop
+family: es_clear_and_resume
+capability_status: implemented
+catalog_version: 1.0.0
+description: While e-stop is LATCHED an operator tries to start a new mission. engage_autonomy must be refused;
+  vehicle stays stopped.
+tags:
+- clear
+- day
+- estop
+- start_while_latched
+- state_machine
+required_capabilities:
+- estop
+- estop_clear_policy
+- engage_disengage
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: estop
+- trigger:
+    after_event: 0
+    at_s: 2.0
+  action: start_mission
+  params:
+    destination:
+      mode: route_ahead
+      distance_m: 100
+expected:
+  after_clear: manual, no motion
+  after_resume: autonomous
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: final_speed_mps
+  op: <=
+  value: 0.1
+- metric: safety_states_seen
+  op: contains
+  value: emergency_stop
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Clearing e-stop never produces motion by itself.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

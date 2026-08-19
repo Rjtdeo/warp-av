@@ -1,0 +1,71 @@
+id: WAV-0523
+name: clock_jump in perception
+category: component_failure
+family: cf_crash_and_invalid
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'System clock jumps +30 s (NTP step). All staleness checks use time.time() → everything looks stale
+  → spurious intervention. Target: monotonic clocks.'
+tags:
+- clock_jump
+- day
+- fault_injection
+- perception
+- software_fault
+required_capabilities:
+- exception_containment
+- command_validation
+- monotonic_time
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: perception
+    action: clock_jump
+expected:
+  safety_state: intervention
+  target_capability: fail-safe brake on software fault
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: A software fault must never leave the last throttle command applied.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

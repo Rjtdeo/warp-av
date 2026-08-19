@@ -1,0 +1,83 @@
+id: WAV-0973
+name: 'Edge: two objects same distance (Town05)'
+category: edge_case
+family: edge
+capability_status: partial
+catalog_version: 1.0.0
+description: 'A cone and a pedestrian at identical range. closest_type must resolve to PEDESTRIAN (higher priority)
+  — today it is whichever is iterated first (vehicles→walkers→props): pedestrian wins by iteration order, which
+  is luck, not design.'
+tags:
+- boundary_condition
+- day
+- edge
+- two_objects_same_distance
+required_capabilities:
+- robustness
+- boundary_conditions
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: a
+  type: prop
+  blueprint: static.prop.trafficcone01
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: -0.8
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: b
+  type: pedestrian
+  blueprint: walker.pedestrian.0001
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 0.8
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stand
+events: []
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No exception escapes the loop; no contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

@@ -1,0 +1,107 @@
+id: WAV-0157
+name: Queue of 4 stopped vehicles from 20 m
+category: vehicle_ahead
+family: va_queue
+capability_status: implemented
+catalog_version: 1.0.0
+description: 4 stopped cars queue nose-to-tail starting 20 m ahead. Ego must stop behind the LAST (closest) one,
+  not an intermediate.
+tags:
+- day
+- multi_actor
+- queue
+required_capabilities:
+- vehicle_detection
+- closest_in_path_selection
+odd:
+  town: Town05
+  weather: CloudyNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 170
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: q0
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 20
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: q1
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 28
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: q2
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 36
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: q3
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 44
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior: stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_vehicle
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+- metric: stopped_within_s_of_trigger
+  op: <=
+  value: 4.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Stop behind nearest vehicle.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

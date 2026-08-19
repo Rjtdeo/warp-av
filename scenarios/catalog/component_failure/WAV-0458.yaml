@@ -1,0 +1,76 @@
+id: WAV-0458
+name: localization stale (1.2 s old data)
+category: component_failure
+family: cf_stale_and_freeze
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'localization keeps returning data but its timestamp is held 1.2 s in the past. Supervisor threshold
+  is 1.0 s: must trip staleness check. Freeze is the nastier case: values look plausible but are old — exactly what
+  a hung sensor driver produces.'
+tags:
+- age_1.2
+- day
+- fault_injection
+- localization
+- stale
+- staleness
+required_capabilities:
+- staleness_detection
+- safe_stop
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: localization
+    action: stale
+    age_s: 1.2
+expected:
+  safety_state: intervention
+  reason_contains: stale
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+- metric: safety_reaction_time_s
+  op: <=
+  value: 1.7
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Stale data must never drive the vehicle for more than max_age.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

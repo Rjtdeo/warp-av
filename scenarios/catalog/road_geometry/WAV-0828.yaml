@@ -1,0 +1,73 @@
+id: WAV-0828
+name: 'Geometry: long straight at 12.0 m/s (Town04)'
+category: road_geometry
+family: rg_geometry
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Route selected to include a long straight in Town04; cruise 12.0 m/s. Pure-pursuit with a 5 m lookahead
+  and gain 1.5: measure cross-track error, steer oscillation and corner-cutting. Speed is not yet curvature-aware
+  — taking a sharp turn at 8 m/s will overshoot; that is the data we want.'
+tags:
+- control_tuning
+- cruise_12.0
+- day
+- geometry
+- long_straight
+- overcast
+required_capabilities:
+- path_following
+- curvature_aware_speed
+- lateral_stability
+odd:
+  town: Town04
+  weather: CloudyNoon
+  light: day
+  road_type: long_straight
+  speed_limit_mps: 13.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+    feature: long_straight
+  cruise_speed_mps: 12.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  route_deviation_max_m: 1.5
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: route_deviation_max_m
+  op: <=
+  value: 2.0
+- metric: steer_oscillation_index
+  op: <=
+  value: 4.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Stay in lane through the feature.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 150

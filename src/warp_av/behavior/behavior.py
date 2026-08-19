@@ -227,6 +227,11 @@ class BehaviorSystem:
             should_stop=stop
         )
 
+    def set_cruise_speed(self, speed_mps: float):
+        """Runtime speed-limit change from operator/API. Clamped to [0, 15] m/s."""
+        self.cruise_speed = max(0.0, min(15.0, float(speed_mps)))
+        print(f"[Behavior] cruise speed set to {self.cruise_speed:.1f} m/s")
+
     def set_mission(self):
         self.has_mission = True
         self.mission_complete = False

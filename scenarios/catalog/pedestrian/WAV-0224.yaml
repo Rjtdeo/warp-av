@@ -1,0 +1,92 @@
+id: WAV-0224
+name: Pedestrian stops in lane for 5 s (30 m, from left)
+category: pedestrian
+family: ped_cross_and_stop
+capability_status: implemented
+catalog_version: 1.0.0
+description: Pedestrian crosses from the left and halts in the middle of the ego lane for 5 s, then finishes crossing.
+  Ego must stop, wait (no creeping), and resume only after the lane is clear; mission should still complete.
+tags:
+- crossing
+- day
+- dwell
+- dwell_5
+- left
+- resume_after_clear
+required_capabilities:
+- pedestrian_detection
+- stop_for_pedestrian
+- resume_when_clear
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 130
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: ped
+  type: pedestrian
+  blueprint: walker.pedestrian.0004
+  spawn:
+    mode: route_ahead
+    distance_m: 30
+    lateral_m: -5.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cross_and_stop
+    speed_mps: 1.4
+    dwell_s: 5
+  trigger:
+    ego_within_m: 40
+events: []
+expected:
+  behavior: stopped_pedestrian
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_pedestrian
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+- metric: behavior_reasons_seen
+  op: contains
+  value: PEDESTRIAN
+- metric: mission_completed
+  op: ==
+  value: true
+- metric: stop_duration_s
+  op: '>='
+  value: 4.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No creeping toward pedestrian while stopped.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 95

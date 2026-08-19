@@ -1,0 +1,71 @@
+id: WAV-0728
+name: Localization stale 0.5 s in urban_canyon
+category: localization_degradation
+family: ld_stale_and_loss
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'Localization stops updating for 0.5 s (urban_canyon; models GNSS loss without dead-reckoning). Threshold
+  1 s → no trip. Never recovers: hold stopped, operator must take over.'
+tags:
+- day
+- dur_0.5
+- localization
+- stale
+- urban_canyon
+required_capabilities:
+- staleness_detection
+- dead_reckoning
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_canyon
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: inject
+  params:
+    component: localization
+    action: stale
+    age_s: 0.5
+expected:
+  safety_state: ok
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: not_in
+  value:
+  - intervention
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No driving on a pose older than 1 s.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

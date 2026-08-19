@@ -1,0 +1,71 @@
+id: WAV-0598
+name: E-stop double press (Town03) [v2]
+category: emergency_stop
+family: es_during_pause_and_before_mission
+capability_status: implemented
+catalog_version: 1.0.0
+description: E-stop pressed twice in 100 ms (double-click). Second press must be idempotent.
+tags:
+- day
+- double_press
+- estop
+- state_machine
+required_capabilities:
+- estop
+- state_machine_robustness
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 5.0
+  action: estop
+- trigger:
+    after_event: 0
+    at_s: 0.1
+  action: estop
+expected:
+  safety_state: emergency_stop
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: emergency_stop
+- metric: final_speed_mps
+  op: <=
+  value: 0.1
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No motion while latched.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 40

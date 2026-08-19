@@ -1,0 +1,79 @@
+id: WAV-0087
+name: Slow lead car at 4.0 m/s, gap 20 m
+category: vehicle_ahead
+family: va_slow_lead
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Lead car drives the ego lane at 4.0 m/s starting 20 m ahead. Ego (8 m/s) closes in. Current stack
+  has no car-following: it will slow at <15 m then stop at <5 m, then re-accelerate when the gap opens — a stop-and-go
+  oscillation. Target capability is adaptive following at a time-gap.'
+tags:
+- car
+- car_following
+- day
+- moving_lead
+required_capabilities:
+- vehicle_detection
+- relative_speed_estimation
+- adaptive_following
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 400
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: lead
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 20
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: constant_speed
+    speed_mps: 4.0
+events: []
+expected:
+  no_collision: true
+  behavior_any:
+  - following_route
+  - stopped_vehicle
+  target_capability: follow at >=2 s gap without full stops
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 2.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never closer than 2 m to lead.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

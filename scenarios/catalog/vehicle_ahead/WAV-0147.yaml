@@ -1,0 +1,104 @@
+id: WAV-0147
+name: 'Ambient traffic: 5 autopilot vehicles, Town03, WetNoon'
+category: vehicle_ahead
+family: va_traffic_autopilot
+capability_status: implemented
+catalog_version: 1.0.0
+description: 5 CARLA traffic-manager vehicles roam Town03. Ego runs a 300 m mission amid them. Tests in-path filtering
+  with many detections and behaviour when traffic crosses the route.
+tags:
+- ambient_traffic
+- day
+- density_5
+- multi_actor
+- wet_road
+required_capabilities:
+- vehicle_detection
+- in_path_check
+- multi_object_tracking
+odd:
+  town: Town03
+  weather: WetNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: tm_0
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 2
+  behavior:
+    kind: autopilot
+- name: tm_1
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 3
+  behavior:
+    kind: autopilot
+- name: tm_2
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 4
+  behavior:
+    kind: autopilot
+- name: tm_3
+  type: vehicle
+  blueprint: vehicle.nissan.patrol
+  spawn:
+    mode: absolute
+    spawn_point_index: 5
+  behavior:
+    kind: autopilot
+- name: tm_4
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: absolute
+    spawn_point_index: 6
+  behavior:
+    kind: autopilot
+events: []
+expected:
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No collision with any traffic participant.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 180

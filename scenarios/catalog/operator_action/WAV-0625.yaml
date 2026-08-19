@@ -1,0 +1,69 @@
+id: WAV-0625
+name: Change destination mid-mission → further (at 8.0 m/s)
+category: operator_action
+family: oa_change_destination
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'While driving at 8.0 m/s the operator sets a new destination (further). Current implementation re-plans
+  from the current pose and starts a new mission record. '
+tags:
+- change_destination
+- day
+- further
+- replanning
+required_capabilities:
+- replanning
+- mission_state_machine
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 7.5
+  action: change_destination
+  params:
+    destination:
+      mode: route_ahead
+      distance_m: 300
+expected:
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No reversing; no stop longer than 3 s during re-plan.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 180

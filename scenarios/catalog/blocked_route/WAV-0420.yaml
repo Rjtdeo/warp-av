@@ -1,0 +1,66 @@
+id: WAV-0420
+name: 'Unreachable destination: off_map (Town03)'
+category: blocked_route
+family: br_unreachable
+capability_status: implemented
+catalog_version: 1.0.0
+description: Destination is off the road network. Planner must fail cleanly; mission state → failed with reason
+  'Route planning failed'; vehicle must not move.
+tags:
+- day
+- off_map
+- planner_failure
+- unreachable
+required_capabilities:
+- route_planning
+- mission_failure_reporting
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: off_map
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  final_mission_state: failed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: max_speed_mps
+  op: <=
+  value: 0.3
+- metric: final_mission_state
+  op: in
+  value:
+  - failed
+  - idle
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No motion toward an unplannable goal.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

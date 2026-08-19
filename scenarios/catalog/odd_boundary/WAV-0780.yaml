@@ -1,0 +1,63 @@
+id: WAV-0780
+name: 'ODD boundary: speed limit above odd (Town10HD_Opt)'
+category: odd_boundary
+family: ob_speed_and_weather
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: Operator requests cruise 20 m/s but ODD max is 12 m/s. System must clamp to the ODD cap and warn, not
+  obey.
+tags:
+- day
+- odd
+- speed_limit_above_odd
+required_capabilities:
+- odd_enforcement
+- speed_cap
+- weather_awareness
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 12.0
+  odd_max_speed_mps: 12.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 20.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  target: ODD enforcement
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: max_speed_mps
+  op: <=
+  value: 13.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never exceed ODD speed cap.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

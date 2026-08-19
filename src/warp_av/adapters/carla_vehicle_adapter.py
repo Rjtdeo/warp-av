@@ -87,6 +87,9 @@ class CarlaVehicleAdapter(VehicleInterface):
 
         self._autonomy_state = AutonomyState.MANUAL
         self._alive = True
+        self._simulate_connection_loss = False   # fault injection (testing/fault_injector.py)
+        self.max_command_age_s = 0.5
+        self.last_command_rejected = ""
 
         print(
             f"[CarlaVehicleAdapter] Spawned "
@@ -115,6 +118,11 @@ class CarlaVehicleAdapter(VehicleInterface):
         # Normal driving commands are only accepted
         # when autonomy is engaged.
         if self._autonomy_state != AutonomyState.AUTONOMOUS:
+            return False
+
+        # --- command validation: a physical DBW gateway must do exactly this ---
+        if not self._command_valid(cmd):
+            self.vehicle.apply_control(carla.VehicleControl(brake=1.0))
             return False
 
         try:
@@ -318,10 +326,32 @@ class CarlaVehicleAdapter(VehicleInterface):
             "E-STOP cleared -> MANUAL"
         )
 
+    def _command_valid(self, cmd: VehicleCommand) -> bool:
+        """Reject non-finite or stale commands (fail-safe: caller brakes)."""
+        vals = (cmd.steering, cmd.throttle, cmd.brake)
+        if any(v != v or v in (float("inf"), float("-inf")) for v in vals):   # NaN / inf
+            self.last_command_rejected = "INVALID_COMMAND: non-finite value"
+            print("[CarlaVehicleAdapter] REJECTED command (non-finite) -> brake")
+            return False
+        age = time.time() - cmd.timestamp
+        if age > self.max_command_age_s:
+            self.last_command_rejected = f"STALE_COMMAND: {age:.2f}s old"
+            print(f"[CarlaVehicleAdapter] REJECTED stale command ({age:.2f}s) -> brake")
+            return False
+        self.last_command_rejected = ""
+        return True
+
+    def simulate_connection_loss(self, lost: bool):
+        """Fault injection: make is_alive() report False without touching CARLA."""
+        self._simulate_connection_loss = lost
+        print(f"[CarlaVehicleAdapter] simulated connection loss = {lost}")
+
     def is_alive(self) -> bool:
         """
         Check whether communication with the vehicle still works.
         """
+        if self._simulate_connection_loss:
+            return False
 
         try:
 

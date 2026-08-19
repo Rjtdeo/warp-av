@@ -1,0 +1,58 @@
+id: WAV-0815
+name: 'Sign: yield (Town02)'
+category: traffic_control
+family: tc_signs
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: Route passes a yield. Stack has no sign detection or map-based regulatory elements. Target behaviour
+  documented; today the scenario records whether ego stops/slows at all.
+tags:
+- day
+- sign
+- yield
+required_capabilities:
+- sign_detection
+- map_regulatory_elements
+odd:
+  town: Town02
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 7
+  cruise_speed_mps: 7.0
+  start_at_s: 0.0
+actors: []
+events: []
+expected:
+  target: slow, yield if traffic
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Regulatory compliance (target).
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

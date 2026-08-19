@@ -1,0 +1,110 @@
+id: WAV-0399
+name: Block 8 m before destination (clears) [v2]
+category: blocked_route
+family: br_block_near_destination
+capability_status: implemented
+catalog_version: 1.0.0
+description: Full block 8 m short of the goal. Clears after 10 s → must complete.
+tags:
+- clears
+- day
+- destination
+- full_block
+required_capabilities:
+- obstacle_detection
+- mission_completion
+- mission_failure_reporting
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: blk0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: at_destination
+    offset_m: -8
+    lateral_m: -3.5
+  behavior:
+    kind: remove_after
+    delay_s: 10
+  trigger:
+    on_behavior: stopped_obstacle
+- name: blk1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: at_destination
+    offset_m: -8
+    lateral_m: -1.2
+  behavior:
+    kind: remove_after
+    delay_s: 10
+  trigger:
+    on_behavior: stopped_obstacle
+- name: blk2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: at_destination
+    offset_m: -8
+    lateral_m: 1.2
+  behavior:
+    kind: remove_after
+    delay_s: 10
+  trigger:
+    on_behavior: stopped_obstacle
+- name: blk3
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: at_destination
+    offset_m: -8
+    lateral_m: 3.5
+  behavior:
+    kind: remove_after
+    delay_s: 10
+  trigger:
+    on_behavior: stopped_obstacle
+events: []
+expected:
+  final_mission_state: completed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: mission_completed
+  op: ==
+  value: true
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No false completion.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

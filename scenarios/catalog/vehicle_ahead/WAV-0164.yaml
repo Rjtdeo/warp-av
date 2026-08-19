@@ -1,0 +1,77 @@
+id: WAV-0164
+name: Cross traffic from right at 10.0 m/s (Town03)
+category: vehicle_ahead
+family: va_intersection_crossing
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'A car approaches the next intersection from the right at 10.0 m/s, timed to cross as ego arrives.
+  Current in-path box (3.5 m wide, forward only) sees it late. Target: intersection right-of-way reasoning.'
+tags:
+- cross_traffic
+- day
+- intersection
+- right
+required_capabilities:
+- vehicle_detection
+- intersection_handling
+- right_of_way
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: intersection
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 7.0
+  start_at_s: 0.0
+actors:
+- name: crosser
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: 12
+    yaw_offset_deg: -90
+  behavior:
+    kind: constant_speed
+    speed_mps: 10.0
+  trigger:
+    ego_within_m: 45
+events: []
+expected:
+  no_collision: true
+  target_capability: yield to crossing traffic
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 2.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No collision in intersection.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

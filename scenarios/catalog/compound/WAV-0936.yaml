@@ -1,0 +1,104 @@
+id: WAV-0936
+name: 'Compound: jam plus estop plus clear (Town10HD_Opt)'
+category: compound
+family: compound
+capability_status: partial
+catalog_version: 1.0.0
+description: Stopped behind a jam; e-stop; clear; resume. Resume must not creep into the jam. Compound scenarios
+  exist to catch priority-ordering bugs between independent subsystems.
+tags:
+- compound
+- day
+- jam_plus_estop_plus_clear
+- priority_ordering
+required_capabilities:
+- priority_ordering
+- multi_hazard
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_mixed
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: jam0
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: jam1
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 32
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: jam2
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 39
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events:
+- trigger:
+    on_behavior: stopped_vehicle
+  action: estop
+- trigger:
+    after_event: 0
+    at_s: 3
+  action: estop_clear
+- trigger:
+    after_event: 1
+    at_s: 1
+  action: resume
+expected:
+  behaviors_any:
+  - stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact with anything.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

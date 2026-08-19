@@ -1,0 +1,68 @@
+id: WAV-0805
+name: Traffic light all red flash (Town05)
+category: traffic_control
+family: tc_traffic_light
+capability_status: not_implemented
+catalog_version: 1.0.0
+description: 'Next signalised junction on the route is forced to ''all_red_flash''. Current stack ignores traffic
+  lights entirely (will run a red). Target: stop at red/yellow-if-stoppable, proceed on green, handle light change
+  on approach (dilemma zone). Runner sets the light state via CARLA TrafficLight API; ego''s reaction is recorded
+  against ''stop line crossed while red''.'
+tags:
+- all_red_flash
+- day
+- intersection
+- traffic_light
+required_capabilities:
+- traffic_light_detection
+- stop_line_map
+- signal_compliance
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: signalised_intersection
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: spawn_point
+    index: 5
+  cruise_speed_mps: 7.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    at_s: 0.5
+  action: wait
+  params:
+    traffic_light: all_red_flash
+expected:
+  target: no red-light violation
+  current: violation expected
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Never enter junction on red.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

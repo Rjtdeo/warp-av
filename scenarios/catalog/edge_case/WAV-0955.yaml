@@ -1,0 +1,65 @@
+id: WAV-0955
+name: 'Edge: estop during route planning (Town05)'
+category: edge_case
+family: edge
+capability_status: partial
+catalog_version: 1.0.0
+description: E-stop fires in the same tick the route is being planned. Planning should finish/abort cleanly; no
+  motion.
+tags:
+- boundary_condition
+- day
+- edge
+- estop_during_route_planning
+required_capabilities:
+- robustness
+- boundary_conditions
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 150
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    at_s: 0.05
+  action: estop
+expected:
+  no_crash: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: final_speed_mps
+  op: <=
+  value: 0.1
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No exception escapes the loop; no contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 120

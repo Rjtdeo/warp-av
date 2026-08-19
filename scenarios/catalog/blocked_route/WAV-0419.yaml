@@ -1,0 +1,142 @@
+id: WAV-0419
+name: 'Unreachable destination: opposite_side_blocked (Town01)'
+category: blocked_route
+family: br_unreachable
+capability_status: partial
+catalog_version: 1.0.0
+description: Route fully blocked immediately (5 m) AND again at 60 m. No alternative. Ego holds at the first block;
+  target is mission failure with 'route blocked' after a timeout.
+tags:
+- day
+- opposite_side_blocked
+- planner_failure
+- unreachable
+required_capabilities:
+- route_planning
+- mission_failure_reporting
+odd:
+  town: Town01
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: a0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 6
+    lateral_m: -3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: a1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 6
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: a2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 6
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: a3
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 6
+    lateral_m: 3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: b0
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: -3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: b1
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: -1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: b2
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: 1.2
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+- name: b3
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 60
+    lateral_m: 3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  final_mission_state: failed
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: max_speed_mps
+  op: <=
+  value: 2.0
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No motion toward an unplannable goal.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

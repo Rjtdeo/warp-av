@@ -1,0 +1,78 @@
+id: WAV-0139
+name: car reverses toward ego from 25 m
+category: vehicle_ahead
+family: va_reversing
+capability_status: partial
+catalog_version: 1.0.0
+description: A car 25 m ahead starts reversing toward ego at 2 m/s once ego is within 30 m. Closing speed is higher
+  than it looks.
+tags:
+- car
+- day
+- reversing
+required_capabilities:
+- vehicle_detection
+- relative_speed_estimation
+- stop_for_vehicle
+odd:
+  town: Town10HD_Opt
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 6.0
+  start_at_s: 0.0
+actors:
+- name: rev
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 25
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: reverse
+    speed_mps: 2.0
+  trigger:
+    ego_within_m: 30
+events: []
+expected:
+  behavior: stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_vehicle
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

@@ -1,0 +1,92 @@
+id: WAV-0125
+name: Lead van cuts out revealing stopped truck (30 m)
+category: vehicle_ahead
+family: va_cut_out_reveal
+capability_status: partial
+catalog_version: 1.0.0
+description: Lead van drives ahead at 6 m/s; a stopped truck sits 55 m along the route. When ego is within 25 m
+  of the lead, the lead swerves out of lane, exposing the stopped vehicle with little time. Ground-truth perception
+  sees both from the start — with real sensors the hidden one is occluded.
+tags:
+- cut_out
+- day
+- occlusion
+- truck
+- van
+required_capabilities:
+- vehicle_detection
+- occlusion_reasoning
+- emergency_braking
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: lead
+  type: vehicle
+  blueprint: vehicle.volkswagen.t2
+  spawn:
+    mode: route_ahead
+    distance_m: 30
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cut_out
+    speed_mps: 6.0
+    side: left
+  trigger:
+    ego_within_m: 25
+- name: hidden
+  type: vehicle
+  blueprint: vehicle.carlamotors.carlacola
+  spawn:
+    mode: route_ahead
+    distance_m: 55
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events: []
+expected:
+  behavior: stopped_vehicle
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: behaviors_seen
+  op: contains
+  value: stopped_vehicle
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No contact with revealed vehicle.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

@@ -1,0 +1,152 @@
+id: WAV-0586
+name: 10 e-stops, 4.0 s apart
+category: emergency_stop
+family: es_repeated
+capability_status: implemented
+catalog_version: 1.0.0
+description: E-stop/clear/resume cycled 10 times with 4.0 s hold. Checks the state machine has no stuck state and
+  the latch is idempotent.
+tags:
+- day
+- estop
+- repeated
+- state_machine
+required_capabilities:
+- estop
+- state_machine_robustness
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    at_s: 5.0
+  action: estop
+- trigger:
+    at_s: 9.0
+  action: estop_clear
+- trigger:
+    at_s: 9.3
+  action: resume
+- trigger:
+    at_s: 11.0
+  action: estop
+- trigger:
+    at_s: 15.0
+  action: estop_clear
+- trigger:
+    at_s: 15.3
+  action: resume
+- trigger:
+    at_s: 17.0
+  action: estop
+- trigger:
+    at_s: 21.0
+  action: estop_clear
+- trigger:
+    at_s: 21.3
+  action: resume
+- trigger:
+    at_s: 23.0
+  action: estop
+- trigger:
+    at_s: 27.0
+  action: estop_clear
+- trigger:
+    at_s: 27.3
+  action: resume
+- trigger:
+    at_s: 29.0
+  action: estop
+- trigger:
+    at_s: 33.0
+  action: estop_clear
+- trigger:
+    at_s: 33.3
+  action: resume
+- trigger:
+    at_s: 35.0
+  action: estop
+- trigger:
+    at_s: 39.0
+  action: estop_clear
+- trigger:
+    at_s: 39.3
+  action: resume
+- trigger:
+    at_s: 41.0
+  action: estop
+- trigger:
+    at_s: 45.0
+  action: estop_clear
+- trigger:
+    at_s: 45.3
+  action: resume
+- trigger:
+    at_s: 47.0
+  action: estop
+- trigger:
+    at_s: 51.0
+  action: estop_clear
+- trigger:
+    at_s: 51.3
+  action: resume
+- trigger:
+    at_s: 53.0
+  action: estop
+- trigger:
+    at_s: 57.0
+  action: estop_clear
+- trigger:
+    at_s: 57.3
+  action: resume
+- trigger:
+    at_s: 59.0
+  action: estop
+- trigger:
+    at_s: 63.0
+  action: estop_clear
+- trigger:
+    at_s: 63.3
+  action: resume
+expected:
+  no_stuck_state: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: emergency_stop
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Every e-stop must brake; every clear must not move the vehicle.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 110

@@ -1,0 +1,88 @@
+id: WAV-0457
+name: Disable vehicle_connection while stopped for obstacle
+category: component_failure
+family: cf_disable
+capability_status: implemented
+catalog_version: 1.0.0
+description: 'vehicle_connection is disabled while stopped for obstacle (mission starts at t=2 s). Expected: safety
+  supervisor → intervention with ''Vehicle connection lost'', vehicle brought to a stop and held; behaviour reports
+  stopped_safety. '
+tags:
+- day
+- fault_injection
+- vehicle_connection
+- while_stopped_for_obstacle
+required_capabilities:
+- component_health_monitoring
+- safe_stop
+- vehicle_connection_health
+odd:
+  town: Town03
+  weather: ClearNoon
+  light: day
+  road_type: urban_2lane
+  speed_limit_mps: 8.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 200
+  cruise_speed_mps: 8.0
+  start_at_s: 2.0
+actors:
+- name: obs
+  type: prop
+  blueprint: static.prop.streetbarrier
+  spawn:
+    mode: route_ahead
+    distance_m: 30
+    lateral_m: 0.0
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: stopped
+events:
+- trigger:
+    on_behavior: stopped_obstacle
+  action: inject
+  params:
+    component: vehicle_connection
+    action: disable
+expected:
+  safety_state: intervention
+  error_contains: Vehicle connection lost
+  behavior: stopped_safety
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: safety_states_seen
+  op: contains
+  value: intervention
+- metric: errors_seen
+  op: contains
+  value: Vehicle connection lost
+- metric: safety_reaction_time_s
+  op: <=
+  value: 0.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Vehicle must reach and hold zero speed after detection; no autonomous motion while unhealthy.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 60

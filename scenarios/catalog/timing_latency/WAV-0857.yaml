@@ -1,0 +1,69 @@
+id: WAV-0857
+name: 'Timing: command age at 5.0 m/s'
+category: timing_latency
+family: tl_timing
+capability_status: partial
+catalog_version: 1.0.0
+description: 'Vehicle adapter receives a command older than max_command_age (0.5 s) — target: adapter rejects stale
+  commands & brakes.'
+tags:
+- command_age
+- day
+- timing
+required_capabilities:
+- watchdog
+- latency_tolerance
+- thread_isolation
+odd:
+  town: Town04
+  weather: ClearNoon
+  light: day
+  road_type: arterial
+  speed_limit_mps: 6.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 250
+  cruise_speed_mps: 5.0
+  start_at_s: 0.0
+actors: []
+events:
+- trigger:
+    ego_speed_gt: 4.0
+  action: inject
+  params:
+    component: controller
+    action: stale
+    kind: command_age
+expected:
+  loop_keeps_running: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: tick_gap_max_s
+  op: <=
+  value: 2.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: Non-safety threads must never stall the autonomy loop.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90

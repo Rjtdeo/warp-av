@@ -1,0 +1,81 @@
+id: WAV-0119
+name: car cuts in from left, gap 8 m at 8.0 m/s
+category: vehicle_ahead
+family: va_cut_in
+capability_status: partial
+catalog_version: 1.0.0
+description: A car in the adjacent left lane, 8 m ahead, moving at 8.0 m/s, steers into the ego lane when ego is
+  within 30 m. Ego must treat it as in-path as soon as it crosses the lane boundary.
+tags:
+- car
+- cut_in
+- day
+- gap_8
+- left
+required_capabilities:
+- vehicle_detection
+- lateral_position_tracking
+- in_path_check
+odd:
+  town: Town05
+  weather: ClearNoon
+  light: day
+  road_type: multilane
+  speed_limit_mps: 10.0
+mission:
+  origin:
+    mode: ego_current
+  destination:
+    mode: route_ahead
+    distance_m: 300
+  cruise_speed_mps: 8.0
+  start_at_s: 0.0
+actors:
+- name: cutter
+  type: vehicle
+  blueprint: vehicle.tesla.model3
+  spawn:
+    mode: route_ahead
+    distance_m: 8
+    lateral_m: -3.5
+    yaw_offset_deg: 0.0
+  behavior:
+    kind: cut_in
+    speed_mps: 8.0
+    side: left
+  trigger:
+    ego_within_m: 30
+events: []
+expected:
+  behavior_any:
+  - stopped_vehicle
+  - following_route
+  no_collision: true
+pass_criteria:
+- metric: collision_count
+  op: ==
+  value: 0
+- metric: min_distance_to_actor_m
+  op: '>='
+  value: 1.5
+fail_criteria:
+- metric: collision_count
+  op: '>'
+  value: 0
+safety_boundary: No side or rear contact with cutting vehicle.
+data_to_collect:
+- pose
+- speed
+- behavior
+- behavior_reason
+- safety_state
+- safety_reason
+- command
+- perception.objects
+- perception.closest_distance
+- mission.state
+- warnings
+- errors
+- actor_positions
+- collisions
+timeout_s: 90
