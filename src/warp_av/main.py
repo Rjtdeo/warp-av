@@ -25,8 +25,9 @@ import threading
 import math
 import json
 import carla
+import cv2
 from pathlib import Path
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, Response
 from flask_socketio import SocketIO
 
 # Our modules
@@ -1200,6 +1201,218 @@ av_system: WarpAV = None
 def operator_console():
     console_file = Path(__file__).resolve().parent / "console" / "index.html"
     return send_file(console_file)
+
+
+
+# ============================================================
+# Live front RGB camera preview
+#
+# IMPORTANT:
+# This uses ONE JPEG PER REQUEST instead of an infinite MJPEG
+# stream. That keeps Mission Control responsive while YOLOX
+# and CARLA are also running.
+# ============================================================
+
+@app.route('/api/camera/frame')
+def camera_frame():
+
+    system = globals().get("av_system")
+
+    if system is None:
+        return Response(
+            "AV system not ready",
+            status=503
+        )
+
+    sensor_adapter = getattr(
+        system,
+        "sensor_adapter",
+        None
+    )
+
+    if sensor_adapter is None:
+        return Response(
+            "Sensor adapter not ready",
+            status=503
+        )
+
+    frame = sensor_adapter.latest_camera
+
+    if frame is None:
+        return Response(
+            "Camera frame not available yet",
+            status=503
+        )
+
+    try:
+
+        # CARLA gives BGRA.
+        # OpenCV uses BGR.
+        image_bgr = frame.image[:, :, :3]
+
+        # Dashboard preview does not need full 800x600.
+        # Smaller image = less CPU + less network work.
+        image_bgr = cv2.resize(
+            image_bgr,
+            (640, 480),
+            interpolation=cv2.INTER_AREA
+        )
+
+        success, jpeg = cv2.imencode(
+            ".jpg",
+            image_bgr,
+            [cv2.IMWRITE_JPEG_QUALITY, 60]
+        )
+
+        if not success:
+            return Response(
+                "JPEG encoding failed",
+                status=500
+            )
+
+        return Response(
+            jpeg.tobytes(),
+            mimetype="image/jpeg",
+            headers={
+                "Cache-Control":
+                    "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+
+    except Exception as exc:
+
+        print(
+            "[CameraFrame] Encode error:",
+            exc
+        )
+
+        return Response(
+            f"Camera error: {exc}",
+            status=500
+        )
+
+
+@app.route('/camera')
+def camera_viewer():
+
+    return Response(
+        r"""
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+
+    <title>Warp AV Front Camera</title>
+
+    <style>
+
+        body {
+            margin: 0;
+            background: #05070a;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .viewer {
+            width: min(95vw, 900px);
+        }
+
+        h2 {
+            margin-bottom: 6px;
+        }
+
+        .status {
+            color: #9aa4b2;
+            margin-bottom: 12px;
+        }
+
+        img {
+            width: 100%;
+            display: block;
+            background: #111;
+            border-radius: 12px;
+        }
+
+    </style>
+</head>
+
+<body>
+
+<div class="viewer">
+
+    <h2>Warp AV — Front RGB Camera</h2>
+
+    <div class="status" id="status">
+        Waiting for camera...
+    </div>
+
+    <img id="camera">
+
+</div>
+
+<script>
+
+const camera =
+    document.getElementById("camera");
+
+const status =
+    document.getElementById("status");
+
+
+function requestFrame() {
+
+    camera.src =
+        "/api/camera/frame?t=" +
+        Date.now();
+}
+
+
+camera.onload = function() {
+
+    status.textContent =
+        "LIVE • Front RGB Sensor • ~2 FPS";
+
+    /*
+     * Request the NEXT frame only after
+     * the current one completely loaded.
+     *
+     * This prevents overlapping HTTP requests.
+     */
+
+    setTimeout(
+        requestFrame,
+        500
+    );
+};
+
+
+camera.onerror = function() {
+
+    status.textContent =
+        "Waiting for camera frame...";
+
+    setTimeout(
+        requestFrame,
+        1000
+    );
+};
+
+
+requestFrame();
+
+</script>
+
+</body>
+</html>
+""",
+        mimetype="text/html"
+    )
 
 
 @app.route('/api/state')
