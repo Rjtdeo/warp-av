@@ -7,3 +7,5 @@
 - `docs/` — README, strategy, known issues, catalog table
 
 Deploy: `vercel --prod` from the repo root. Rebuild after regenerating the catalog.
+
+Auto-deploy: the Vercel project is linked to `Rjtdeo/warp-av`; every push to `master` deploys https://warp-av.vercel.app.
