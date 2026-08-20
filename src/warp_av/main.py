@@ -118,6 +118,7 @@ class WarpAV:
         # Temporary CARLA actors created from dashboard scenario tests.
         self._scenario_actors = []
         self._scenario_type = None
+        self._scenario_lights_frozen = False
 
         self._running = False
 
@@ -300,6 +301,7 @@ class WarpAV:
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         # Never overrides stops; only lowers a positive desired speed.
+        curve_cap = None
         if self._route and not behavior_output.should_stop and behavior_output.desired_speed_mps > 0.5:
             curve_cap = self.planner.curve_speed_cap(
                 self._route, pose.x, pose.y, cruise=self.behavior.cruise_speed)
@@ -312,17 +314,23 @@ class WarpAV:
         target_x, target_y = pose.x + math.cos(pose.yaw) * 10, pose.y + math.sin(pose.yaw) * 10
         if self._route:
             lookahead = max(5.0, min(13.0, 1.6 * pose.speed))
+            # In/near a bend, aim closer so the van follows the arc instead of
+            # cutting across it (kerb/divider clipping fix).
+            if curve_cap is not None and curve_cap < self.behavior.cruise_speed - 0.5:
+                lookahead = min(lookahead, 5.5)
             next_wp = self.planner.get_next_waypoint(self._route, pose.x, pose.y, lookahead=lookahead)
             if next_wp:
                 target_x, target_y = next_wp.x, next_wp.y
 
         # 6. Compute vehicle command
+        cross_track = self.planner.signed_cross_track(self._route, pose.x, pose.y) if self._route else 0.0
         cmd = self.controller.compute_command(
             current_x=pose.x, current_y=pose.y,
             current_yaw=pose.yaw, current_speed=pose.speed,
             target_x=target_x, target_y=target_y,
             desired_speed=behavior_output.desired_speed_mps,
             should_stop=behavior_output.should_stop,
+            cross_track_m=cross_track,
         )
 
         # 7. Send command to vehicle
@@ -528,6 +536,15 @@ class WarpAV:
         self._scenario_actors.clear()
         self._scenario_type = None
 
+        if getattr(self, "_scenario_lights_frozen", False):
+            try:
+                for tl in self.vehicle_adapter.world.get_actors().filter("traffic.traffic_light"):
+                    tl.freeze(False)
+                print("[Scenario] Traffic lights released to automatic cycling")
+            except Exception as e:
+                print(f"[Scenario] Could not release traffic lights: {e}")
+            self._scenario_lights_frozen = False
+
         print("[Scenario] Test objects cleared")
 
 
@@ -608,12 +625,14 @@ class WarpAV:
         pedestrian
         vehicle
         barrier
+        red_light   (freezes every traffic light red; cleared by clear_scenario)
         """
 
         allowed = {
             "pedestrian",
             "vehicle",
             "barrier",
+            "red_light",
         }
 
         if scenario_type not in allowed:
@@ -638,6 +657,24 @@ class WarpAV:
 
         # Remove any previous test object first.
         self.clear_scenario()
+
+
+        # Red light test: no object to spawn — freeze every light red.
+        if scenario_type == "red_light":
+            lights = list(self.vehicle_adapter.world.get_actors().filter("traffic.traffic_light"))
+            if not lights:
+                return {"success": False, "reason": "This map has no traffic lights"}
+            for tl in lights:
+                tl.set_state(carla.TrafficLightState.Red)
+                tl.freeze(True)
+            self._scenario_lights_frozen = True
+            self._scenario_type = scenario_type
+            try:
+                self.logger.log_event("scenario_spawned", f"red_light: {len(lights)} lights frozen RED")
+            except Exception:
+                pass
+            return {"success": True,
+                    "reason": f"{len(lights)} traffic lights frozen RED — the van must stop at the next junction. CLEAR releases them."}
 
 
         target_wp = self._get_scenario_waypoint(

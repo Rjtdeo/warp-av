@@ -65,17 +65,23 @@ class VehicleController:
     STEER_FILTER_ALPHA = 0.5  # low-pass: new = old + alpha*(raw-old) per tick (10 Hz)
     STEER_RATE_FAST = 0.30    # max steering change per tick above 5 m/s
     STEER_RATE_SLOW = 0.60    # max steering change per tick at low speed
+    CT_GAIN = 0.12            # centreline correction (per metre of offset)
+    CT_MAX = 0.30             # cap of that correction
 
     # --- Speed tuning (no more random brake taps) ---
     COAST_BAND_MPS = 0.8      # up to this much over target: coast, do not brake
     BRAKE_GAIN = 0.35         # proportional brake beyond the coast band
     SERVICE_BRAKE_CAP = 0.6   # normal slowing never exceeds this (~3.6 m/s^2);
                               # should_stop / e-stop paths still use full brake
+    SPEED_SLEW_UP = 0.15      # max increase of the speed target per tick
+                              # (1.5 m/s^2): stops it flooring the throttle
+                              # mid-corner-exit; slowing down is never limited
 
     def __init__(self):
         self.speed_pid = PIDController(kp=0.5, ki=0.05, kd=0.1)
         self._enabled = True
         self._last_steer = 0.0       # low-pass / rate-limit state
+        self._desired_eff = 0.0      # slew-limited speed target
         self._fault_nan = False      # inject NaN steering (command-validation test)
         self._fault_stale_s = 0.0    # back-date command timestamps
 
@@ -88,7 +94,8 @@ class VehicleController:
         target_x: float,
         target_y: float,
         desired_speed: float,
-        should_stop: bool
+        should_stop: bool,
+        cross_track_m: float = 0.0,
     ) -> VehicleCommand:
         """
         Compute steering + throttle + brake.
@@ -105,6 +112,7 @@ class VehicleController:
         if should_stop or desired_speed <= 0:
             self.speed_pid.reset()
             self._last_steer = 0.0
+            self._desired_eff = 0.0
             return VehicleCommand(
                 steering=0.0,
                 throttle=0.0,
@@ -137,7 +145,12 @@ class VehicleController:
         else:
             frac = (v - self.GAIN_SPEED_LO) / (self.GAIN_SPEED_HI - self.GAIN_SPEED_LO)
             gain = self.STEER_GAIN_LOW + (self.STEER_GAIN_HIGH - self.STEER_GAIN_LOW) * frac
-        raw_steer = max(-1.0, min(1.0, angle_error * gain))
+        raw_steer = angle_error * gain
+        # Centreline correction: pull back toward the lane centre. Pure pursuit
+        # alone tolerates a steady offset in bends (kerb clipping); this term
+        # cancels it. cross_track_m > 0 = left of path -> steer right (negative).
+        raw_steer += max(-self.CT_MAX, min(self.CT_MAX, -self.CT_GAIN * cross_track_m))
+        raw_steer = max(-1.0, min(1.0, raw_steer))
 
         # Low-pass + rate limit: kills tick-to-tick steering chatter without
         # touching the stop path (braking above never goes through this).
@@ -148,9 +161,17 @@ class VehicleController:
         self._last_steer = steering
 
         # --- SPEED ---
+        # Slew-limit target increases (never decreases): smooth pull-away after
+        # corners/stops instead of full throttle while still turning.
+        if desired_speed <= self._desired_eff:
+            self._desired_eff = desired_speed
+        else:
+            self._desired_eff = min(desired_speed,
+                                    max(self._desired_eff, current_speed) + self.SPEED_SLEW_UP)
+
         # Throttle from the PID; braking is separate with a coast band, so a
         # small overshoot means "lift off", not "tap the brakes".
-        speed_error = desired_speed - current_speed
+        speed_error = self._desired_eff - current_speed
 
         if speed_error >= 0:
             pid_output = self.speed_pid.update(speed_error)
@@ -191,6 +212,7 @@ class VehicleController:
         """Immediate full brake."""
         self.speed_pid.reset()
         self._last_steer = 0.0
+        self._desired_eff = 0.0
         return VehicleCommand(steering=0.0, throttle=0.0, brake=1.0)
 
     def disable(self):

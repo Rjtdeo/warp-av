@@ -12,9 +12,13 @@ Perception currently reads CARLA's actor list (world.get_actors()) instead of pr
 
 The vehicle follows CARLA's route waypoints but does not detect lane markings visually. It relies on the map graph for staying in lane.
 
-## Simple Steering Controller
+## Safety Buffers (Troy #4, applied)
 
-Pure pursuit steering works but oscillates at higher speeds. A Stanley controller or MPC would be more stable. PID speed control also needs tuning.
+Stop trigger (perception.danger_distance) raised 5 → 8 m in BOTH perception implementations; slow-down zone (behavior.slow_distance) 15 → 20 m. Lateral path width intentionally left at 3.5 m — widening it makes the van stop for shoulder objects (parked cars, cones) and would flip the expected result of the path-box boundary scenarios; revisit together with route-aware corridor checking.
+
+## Steering Controller (improved, needs CARLA validation)
+
+Fix for the observed weave/brake-taps (Troy #5): speed-scaled lookahead (1.6 s of travel, 5–13 m, was fixed 5 m), speed-scheduled steering gain (1.5 at ≤3 m/s → 0.55 at ≥10 m/s, was fixed 1.5), low-pass + rate limit on steering, and a coast band so small speed overshoot lifts off instead of tapping the brakes. Covered by tests/test_controller_stability.py (kinematic bicycle model). NOTE: the original oscillation could not be reproduced in the lag-free offline model — the tuning is validated for stability offline, but the before/after weave comparison must be done in CARLA (steer_oscillation_index in nm_speed_sweep / rg_geometry scenarios). A Stanley controller or MPC is still the longer-term answer.
 
 ## No Re-planning
 
@@ -58,10 +62,12 @@ Vehicle doesn't know its allowed operating area. Safety supervisor should check 
 
 - **Sensor health not wired to the safety supervisor.** `CarlaSensorAdapter` tracks camera/lidar/gnss/imu staleness but `SafetySupervisor.update()` never receives it; in ground-truth perception mode a dead camera does not stop the vehicle. 50 `sensor_degradation` + 9 `cf_disable` scenarios are `not_implemented` for this reason.
 - **No geofence / ODD enforcement** (40 `odd_boundary` scenarios define the contract).
-- **Traffic lights / signs ignored** (30 `traffic_control` scenarios; will run a red).
-- **No car-following** → stop/go oscillation behind a slow lead (`va_slow_lead`, `br_traffic_jam`).
+- ~~Traffic lights ignored~~ **Implemented (ground-truth mode)**: perception reports the light governing our lane (red/yellow/green), behavior stops for red AND yellow (no dilemma-zone judgement yet — without stop-line distance we cannot decide "proceed on yellow", so we always stop; revisit with map stop lines). Camera mode reports "none" until a light classifier exists → unchanged behavior there. Signs (stop/yield/speed) still ignored. CARLA validation of `tc_traffic_light` pending.
+- ~~No car-following~~ **Implemented (ground-truth mode)**: time-gap following (1.5 s + 8 m) behind moving vehicles — `behavior.FOLLOWING_VEHICLE`. In camera+LiDAR mode detections carry no speed (no tracking yet) so the van falls back to the old slow/stop behaviour; needs object tracking to enable following there. CARLA validation of `va_slow_lead` pending.
 - **No re-plan / mission-failure timeout on a persistent block.**
 - **Straight ego-frame in-path box** → late detection around curves (`so_after_curve`).
+- ~~Speed not curvature-aware~~ **Implemented**: `planner.curve_speed_cap` slows the van before/through bends (1.3 m/s² lateral comfort, gradual approach); appended to the behavior reason string when active.
+- ~~Corner cutting (kerb/divider clipping)~~ **Improved**: aim point measured along the route arc (not straight-line), shorter aim distance in bends, a centreline-correction steering term (mini-Stanley, gain 0.12 capped ±0.3), and slew-limited pull-away after slow points. Offline model: worst lane-centre deviation through a tight 90° corner 1.25 m → 0.78 m (van body stays in lane). CARLA validation pending — if it still clips a specific corner, raise `VehicleController.CT_GAIN` slightly (0.12 → 0.15).
 - **Supervisor reports only the first failed check** → second simultaneous fault invisible (`cf_double_failure`).
 - **Recovery policy undefined**: a component coming back auto-resumes motion (`cf_recover`, `cf_flapping`). Needs a decision + hysteresis.
 - **Wall-clock time (`time.time()`) everywhere** → an NTP/GNSS clock step trips every staleness check.

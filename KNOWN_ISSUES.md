@@ -66,7 +66,8 @@ Vehicle doesn't know its allowed operating area. Safety supervisor should check 
 - ~~No car-following~~ **Implemented (ground-truth mode)**: time-gap following (1.5 s + 8 m) behind moving vehicles — `behavior.FOLLOWING_VEHICLE`. In camera+LiDAR mode detections carry no speed (no tracking yet) so the van falls back to the old slow/stop behaviour; needs object tracking to enable following there. CARLA validation of `va_slow_lead` pending.
 - **No re-plan / mission-failure timeout on a persistent block.**
 - **Straight ego-frame in-path box** → late detection around curves (`so_after_curve`).
-- ~~Speed not curvature-aware~~ **Implemented**: `planner.curve_speed_cap` slows the van before/through bends (2.0 m/s² lateral comfort, gradual 1.5 m/s² approach); appended to the behavior reason string when active. CARLA validation of `rg_geometry` pending.
+- ~~Speed not curvature-aware~~ **Implemented**: `planner.curve_speed_cap` slows the van before/through bends (1.3 m/s² lateral comfort, gradual approach); appended to the behavior reason string when active.
+- ~~Corner cutting (kerb/divider clipping)~~ **Improved**: aim point measured along the route arc (not straight-line), shorter aim distance in bends, a centreline-correction steering term (mini-Stanley, gain 0.12 capped ±0.3), and slew-limited pull-away after slow points. Offline model: worst lane-centre deviation through a tight 90° corner 1.25 m → 0.78 m (van body stays in lane). CARLA validation pending — if it still clips a specific corner, raise `VehicleController.CT_GAIN` slightly (0.12 → 0.15).
 - **Supervisor reports only the first failed check** → second simultaneous fault invisible (`cf_double_failure`).
 - **Recovery policy undefined**: a component coming back auto-resumes motion (`cf_recover`, `cf_flapping`). Needs a decision + hysteresis.
 - **Wall-clock time (`time.time()`) everywhere** → an NTP/GNSS clock step trips every staleness check.

@@ -95,8 +95,8 @@ class RoutePlanner:
             return None
 
     # --- Curve-aware speed (Troy #2/#3: left & right turns) ---
-    A_LAT_MAX = 2.0     # m/s^2 comfortable lateral accel for a cargo van
-    A_DECEL = 1.5       # m/s^2 gentle pre-corner deceleration
+    A_LAT_MAX = 1.3     # m/s^2 comfortable lateral accel for a cargo van (higher clipped kerbs)
+    A_DECEL = 1.2       # m/s^2 gentle pre-corner deceleration (earlier slowdown)
     V_TURN_MIN = 2.5    # m/s never asked to go slower than this for a bend
     CURVE_HORIZON_M = 30.0
 
@@ -136,9 +136,39 @@ class RoutePlanner:
             if curvature < 1e-3:        # straight enough
                 continue
             v_turn = max(self.V_TURN_MIN, math.sqrt(self.A_LAT_MAX / curvature))
-            allowed_now = math.sqrt(v_turn ** 2 + 2.0 * self.A_DECEL * max(0.0, dist))
+            # subtract the controller's coast band so actual speed (which rides
+            # ~0.8 m/s above a falling target) meets v_turn AT the bend
+            allowed_now = max(v_turn, math.sqrt(v_turn ** 2 + 2.0 * self.A_DECEL * max(0.0, dist)) - 0.8)
             cap = min(cap, allowed_now)
         return max(self.V_TURN_MIN, min(cruise, cap))
+
+    def signed_cross_track(self, route: Route, current_x, current_y) -> float:
+        """
+        Signed lateral offset of the vehicle from the route polyline.
+        Positive = left of the path direction (right-handed frame, consistent
+        with the atan2/yaw math used everywhere else). Used by the controller's
+        centreline-correction term.
+        """
+        if not route or len(route.waypoints) < 2:
+            return 0.0
+        best_d2 = float("inf")
+        best_sign = 0.0
+        wps = route.waypoints
+        for i in range(len(wps) - 1):
+            ax, ay = wps[i].x, wps[i].y
+            bx, by = wps[i + 1].x, wps[i + 1].y
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            if L2 < 1e-9:
+                continue
+            t = max(0.0, min(1.0, ((current_x - ax) * dx + (current_y - ay) * dy) / L2))
+            cx, cy = ax + t * dx, ay + t * dy
+            d2 = (current_x - cx) ** 2 + (current_y - cy) ** 2
+            if d2 < best_d2:
+                best_d2 = d2
+                cross = dx * (current_y - ay) - dy * (current_x - ax)
+                best_sign = 1.0 if cross > 0 else -1.0
+        return best_sign * math.sqrt(best_d2)
 
     def get_next_waypoint(
         self,
@@ -171,16 +201,27 @@ class RoutePlanner:
                 closest_distance = distance
                 closest_index = i
 
-        # Only search FORWARD from our current route position.
-        for i in range(closest_index, len(route.waypoints)):
-            wp = route.waypoints[i]
-
-            dx = wp.x - current_x
-            dy = wp.y - current_y
-            distance = math.sqrt(dx ** 2 + dy ** 2)
-
-            if distance >= lookahead:
-                return wp
+        # Walk FORWARD along the route accumulating arc length, and return the
+        # point exactly `lookahead` metres along the road (interpolated).
+        # The old version returned the first waypoint at a straight-line
+        # distance >= lookahead — in a bend that point is much further around
+        # the corner, so the van aimed across the inside and clipped kerbs.
+        acc = 0.0
+        for i in range(closest_index + 1, len(route.waypoints)):
+            a = route.waypoints[i - 1]
+            b = route.waypoints[i]
+            seg = math.hypot(b.x - a.x, b.y - a.y)
+            if seg <= 1e-6:
+                continue
+            if acc + seg >= lookahead:
+                t = (lookahead - acc) / seg
+                return Waypoint(
+                    x=a.x + (b.x - a.x) * t,
+                    y=a.y + (b.y - a.y) * t,
+                    z=a.z + (b.z - a.z) * t,
+                    yaw=b.yaw,
+                )
+            acc += seg
 
         # Near destination, use final waypoint.
         return route.waypoints[-1]
