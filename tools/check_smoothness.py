@@ -60,8 +60,19 @@ def analyze(path):
     moving_time = len(moving) * (t1 - t0) / max(1, len(ticks))
     flips_per_s = flips / moving_time if moving_time > 0 else 0.0
 
-    # --- 2. brake taps at speed (braking to a planned stop is fine and brief) ---
-    brake_ticks = sum(1 for t, b in zip(ticks, brakes) if t["pose"]["speed"] > 5.0 and b > 0.01)
+    # --- 2. brake taps at speed. Braking is JUSTIFIED when an object is within
+    # 25 m in our path, or we are stopping/arriving — only the rest are "taps".
+    brake_ticks = 0
+    justified_ticks = 0
+    for t, b in zip(ticks, brakes):
+        if t["pose"]["speed"] <= 5.0 or b <= 0.01:
+            continue
+        closest = t.get("perception", {}).get("closest", 999)
+        behavior = t.get("behavior", "")
+        if closest < 25.0 or behavior.startswith("stopped") or behavior in ("approaching_destination", "mission_complete"):
+            justified_ticks += 1
+        else:
+            brake_ticks += 1
 
     # --- 3. speed stability at cruise (top-25% speed portion of the drive) ---
     cruise = [v for v in speeds if v > 0.75 * vmax] if vmax > 3 else []
@@ -77,7 +88,7 @@ def analyze(path):
     print(f"\n=== {path} ===")
     print(f"duration {t1 - t0:6.1f} s | ticks {len(ticks)} | max speed {vmax:.1f} m/s")
     print(f"[{verdict(flips_per_s <= 2.0)}] steering flips/sec while moving : {flips_per_s:5.2f}   (target <= 2.0)")
-    print(f"[{verdict(brake_ticks <= 5)}] brake ticks while speed > 5 m/s : {brake_ticks:5d}   (target <= 5)")
+    print(f"[{verdict(brake_ticks <= 5)}] UNJUSTIFIED brake ticks at speed : {brake_ticks:5d}   (target <= 5; {justified_ticks} justified ticks for objects/arrival not counted)")
     print(f"[{verdict(std <= 0.5)}] speed wobble at cruise (stddev)  : {std:5.2f} m/s (target <= 0.5, cruise mean {mean:.1f})")
     print("max |steer| command:", round(max(abs(s) for s in steers), 3))
 

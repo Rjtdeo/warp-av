@@ -122,3 +122,13 @@ def test_low_speed_keeps_full_authority():
     for _ in range(10):   # let the filter converge
         cmd = ctrl.compute_command(0, 0, 0.0, 1.5, 3, 3, 2.0, should_stop=False)
     assert abs(cmd.steering) > 0.8, f"low-speed steering too weak: {cmd.steering:.2f}"
+
+
+def test_normal_slowing_is_capped_but_stop_is_full_brake():
+    ctrl = VehicleController()
+    # cruise 8 m/s, target suddenly 3 m/s (slow zone entry): brake must be firm but capped
+    cmd = ctrl.compute_command(0, 0, 0.0, 8.0, 20, 0, 3.0, should_stop=False)
+    assert 0.0 < cmd.brake <= ctrl.SERVICE_BRAKE_CAP, f"service brake not capped: {cmd.brake}"
+    # obstacle/e-stop path is untouched: full brake
+    cmd = ctrl.compute_command(0, 0, 0.0, 8.0, 20, 0, 0.0, should_stop=True)
+    assert cmd.brake == 1.0

@@ -69,6 +69,8 @@ class VehicleController:
     # --- Speed tuning (no more random brake taps) ---
     COAST_BAND_MPS = 0.8      # up to this much over target: coast, do not brake
     BRAKE_GAIN = 0.35         # proportional brake beyond the coast band
+    SERVICE_BRAKE_CAP = 0.6   # normal slowing never exceeds this (~3.6 m/s^2);
+                              # should_stop / e-stop paths still use full brake
 
     def __init__(self):
         self.speed_pid = PIDController(kp=0.5, ki=0.05, kd=0.1)
@@ -161,7 +163,7 @@ class VehicleController:
         else:
             self.speed_pid.reset()
             throttle = 0.0
-            brake = min(1.0, self.BRAKE_GAIN * (-speed_error - self.COAST_BAND_MPS))
+            brake = min(self.SERVICE_BRAKE_CAP, self.BRAKE_GAIN * (-speed_error - self.COAST_BAND_MPS))
 
         cmd = VehicleCommand(
             steering=steering,
