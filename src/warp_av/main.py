@@ -477,6 +477,8 @@ class WarpAV:
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
             "cruise_speed_mps": self.behavior.cruise_speed,
+            "junction": junction,   # {"distance_m", "direction"} when a turn at a junction is within 20 m, else null
+
             "localization": {"confidence": round(pose.confidence, 2), "quality": pose.quality.value, "healthy": pose.healthy},
             "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
                             if self.mission_manager.current_mission else None),
