@@ -94,6 +94,52 @@ class RoutePlanner:
             print(f"[Planner] Route planning failed: {e}")
             return None
 
+    # --- Curve-aware speed (Troy #2/#3: left & right turns) ---
+    A_LAT_MAX = 2.0     # m/s^2 comfortable lateral accel for a cargo van
+    A_DECEL = 1.5       # m/s^2 gentle pre-corner deceleration
+    V_TURN_MIN = 2.5    # m/s never asked to go slower than this for a bend
+    CURVE_HORIZON_M = 30.0
+
+    def curve_speed_cap(self, route: Route, current_x, current_y, cruise=8.0) -> float:
+        """
+        How fast may we go RIGHT NOW given the bends in the next 30 m?
+
+        For each upcoming waypoint: local curvature (heading change / distance)
+        gives a comfortable in-turn speed v_turn = sqrt(a_lat / curvature); a
+        bend d metres away allows sqrt(v_turn^2 + 2*a_decel*d) now — so the cap
+        tightens gradually as the corner approaches instead of braking late.
+        """
+        if not route or len(route.waypoints) < 3:
+            return cruise
+
+        # locate ourselves on the route (same scan as get_next_waypoint)
+        ci, cd = 0, float("inf")
+        for i, wp in enumerate(route.waypoints):
+            d = math.hypot(wp.x - current_x, wp.y - current_y)
+            if d < cd:
+                cd, ci = d, i
+
+        cap = cruise
+        dist = 0.0
+        prev = route.waypoints[ci]
+        for i in range(ci + 1, len(route.waypoints) - 1):
+            a, b, c = route.waypoints[i - 1], route.waypoints[i], route.waypoints[i + 1]
+            seg = math.hypot(b.x - a.x, b.y - a.y)
+            dist += seg
+            if dist > self.CURVE_HORIZON_M:
+                break
+            h1 = math.atan2(b.y - a.y, b.x - a.x)
+            h2 = math.atan2(c.y - b.y, c.x - b.x)
+            dh = abs((h2 - h1 + math.pi) % (2 * math.pi) - math.pi)
+            step = max(0.5, math.hypot(c.x - b.x, c.y - b.y))
+            curvature = dh / step
+            if curvature < 1e-3:        # straight enough
+                continue
+            v_turn = max(self.V_TURN_MIN, math.sqrt(self.A_LAT_MAX / curvature))
+            allowed_now = math.sqrt(v_turn ** 2 + 2.0 * self.A_DECEL * max(0.0, dist))
+            cap = min(cap, allowed_now)
+        return max(self.V_TURN_MIN, min(cruise, cap))
+
     def get_next_waypoint(
         self,
         route: Route,

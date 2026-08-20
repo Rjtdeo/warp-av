@@ -298,6 +298,15 @@ class WarpAV:
             safety_ok=safety_output.driving_allowed,
         )
 
+        # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
+        # Never overrides stops; only lowers a positive desired speed.
+        if self._route and not behavior_output.should_stop and behavior_output.desired_speed_mps > 0.5:
+            curve_cap = self.planner.curve_speed_cap(
+                self._route, pose.x, pose.y, cruise=self.behavior.cruise_speed)
+            if curve_cap < behavior_output.desired_speed_mps - 0.2:
+                behavior_output.desired_speed_mps = curve_cap
+                behavior_output.reason += f" | curve ahead — slowing to {curve_cap:.1f} m/s"
+
         # 5. Get next waypoint — aim further ahead the faster we go (1.6 s of
         # travel, clamped 5–13 m). A fixed 5 m aim point caused weaving at speed.
         target_x, target_y = pose.x + math.cos(pose.yaw) * 10, pose.y + math.sin(pose.yaw) * 10
