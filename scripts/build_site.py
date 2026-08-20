@@ -22,7 +22,7 @@ static_src = ROOT / "src" / "warp_av" / "static"
 if static_src.exists():
     shutil.copytree(static_src, OUT / "static", dirs_exist_ok=True)
 (OUT / "docs").mkdir(exist_ok=True)
-for md in ["README.md", "KNOWN_ISSUES.md", "OPEN_SOURCE.md", "docs/SCENARIO_STRATEGY.md", "scenarios/README.md", "architecture/README.md", "scenarios/catalog/CATALOG.md"]:
+for md in ["README.md", "PROGRESS.md", "KNOWN_ISSUES.md", "OPEN_SOURCE.md", "docs/SCENARIO_STRATEGY.md", "scenarios/README.md", "architecture/README.md", "scenarios/catalog/CATALOG.md"]:
     p = ROOT / md
     if p.exists():
         shutil.copy(p, OUT / "docs" / p.name.replace("README.md", (p.parent.name if p.parent != ROOT else "README") + ".md"))
