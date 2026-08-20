@@ -67,6 +67,17 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 - Finish: pull-over and **"Parked 1.45 m from the kerbside spot, heading off 8 deg"**
 - Whole-run verification: steering flips **0.08/sec**, **0** unjustified brake ticks, speed wobble 0.43 m/s, safety supervisor `ok` throughout — every check [OK]
 
+## 6a. Dense-traffic run — mission_0005 (rush hour)
+
+463 m through ~46 spawned actors (20 cars, 20 roaming/crossing pedestrians, 6 cyclists via `tools/spawn_traffic.py --near`):
+
+- Started boxed in behind a car 6 m ahead → held, then FOLLOWED it (gap 8.1 m < wanted 18.2 m → dropped back to 3.8 m/s; later closed a 29.8 m gap — both directions of the time-gap law correct)
+- **24.6 s held at 7.9 m** behind a queued vehicle, resumed alone
+- 34 ticks of genuine giving-way to passing traffic at turns; **0 give-way timeouts** (the conflict heuristic never deadlocked)
+- Three red/yellow holds at the stop line (35–55 s) while traffic flowed
+- Finish: **"Parked 1.43 m from the kerbside spot, heading off 3°"**
+- Verification all [OK]: flips 0.14/sec, 0 unjustified brakes, settled-cruise wobble 0.04 m/s, safety `ok` throughout
+
 ## 6b. What's left
 
 1. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
