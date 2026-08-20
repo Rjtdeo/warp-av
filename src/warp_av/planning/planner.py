@@ -202,6 +202,48 @@ class RoutePlanner:
                 return True
         return run >= need_m
 
+    def _right_bay(self, x, y, z):
+        """Is there a Parking/Shoulder bay to the right of the driving lane at
+        this point? Returns (bx, by, byaw_rad, width) or None. CARLA-only."""
+        wp = self.carla_map.get_waypoint(
+            carla.Location(x=x, y=y, z=z), project_to_road=True,
+            lane_type=carla.LaneType.Driving)
+        if wp is None:
+            return None
+        for _ in range(4):      # slide to the rightmost same-direction driving lane
+            r = wp.get_right_lane()
+            if (r is not None and r.lane_type == carla.LaneType.Driving
+                    and abs((r.transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180) < 60):
+                wp = r
+            else:
+                break
+        bay = wp.get_right_lane()
+        if (bay is not None
+                and bay.lane_type in (carla.LaneType.Parking, carla.LaneType.Shoulder)
+                and bay.lane_width >= 1.8):
+            t = bay.transform
+            return (t.location.x, t.location.y, math.radians(t.rotation.yaw), bay.lane_width)
+        return None
+
+    def _find_bay_anchor(self, wps):
+        """Scan the final PARK_MAX_PULLBACK_M of the route (nearest-to-pin
+        first) for a point with a real stopping bay to the right AND enough
+        straight road behind it to blend in. Returns (index, target) or None."""
+        arc = 0.0
+        for i in range(len(wps) - 1, 2, -1):
+            if i < len(wps) - 1:
+                arc += math.hypot(wps[i + 1].x - wps[i].x, wps[i + 1].y - wps[i].y)
+            if arc > self.PARK_MAX_PULLBACK_M:
+                return None
+            if not self._straight_run_before(wps, i, 6.0):
+                continue
+            bay = self._right_bay(wps[i].x, wps[i].y, wps[i].z)
+            if bay is not None:
+                bx, by, byaw, bw = bay
+                off = math.hypot(bx - wps[i].x, by - wps[i].y)
+                return i, (bx, by, byaw, off)
+        return None
+
     def apply_pullover(self, route: Route, side="right"):
         """
         Bend the end of the route so the mission finishes at the kerb on the
@@ -217,21 +259,36 @@ class RoutePlanner:
             return None
         wps = route.waypoints
 
-        # Step 1: find the anchor — the last waypoint with >=6 m of straight
-        # road behind it, at most PARK_MAX_PULLBACK_M before the pin.
-        moved_back = 0.0
-        a = len(wps) - 1
-        while a > 2 and moved_back <= self.PARK_MAX_PULLBACK_M:
-            if self._straight_run_before(wps, a, 6.0):
-                break
-            moved_back += math.hypot(wps[a].x - wps[a - 1].x, wps[a].y - wps[a - 1].y)
-            a -= 1
+        # Step 0: PREFER a real stopping bay (parking/shoulder strip beyond the
+        # lane line) anywhere in the last 40 m — park fully OFF the driving lane.
+        bay_target = None
+        kind = "kerb"
+        try:
+            found = self._find_bay_anchor(wps)
+        except Exception:
+            found = None
+        if found is not None:
+            a, bay_target = found
+            kind = "bay"
+            moved_back = 0.0
+            for i in range(a + 1, len(wps)):
+                moved_back += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
         else:
-            return None
-        if a <= 2 or moved_back > self.PARK_MAX_PULLBACK_M:
-            return None
+            # Step 1: kerb-hug fallback — last waypoint with >=6 m of straight
+            # road behind it, at most PARK_MAX_PULLBACK_M before the pin.
+            moved_back = 0.0
+            a = len(wps) - 1
+            while a > 2 and moved_back <= self.PARK_MAX_PULLBACK_M:
+                if self._straight_run_before(wps, a, 6.0):
+                    break
+                moved_back += math.hypot(wps[a].x - wps[a - 1].x, wps[a].y - wps[a - 1].y)
+                a -= 1
+            else:
+                return None
+            if a <= 2 or moved_back > self.PARK_MAX_PULLBACK_M:
+                return None
         if a < len(wps) - 1:
-            route.waypoints = wps = wps[:a + 1]   # mission now ends before the bend
+            route.waypoints = wps = wps[:a + 1]   # mission now ends at the bay / before the bend
         last = wps[-1]
 
         # Step 2: how much straight tail do we have to blend over?
@@ -248,7 +305,10 @@ class RoutePlanner:
         if usable < 6.0:
             return None
 
-        tx, ty, tyaw, off = self._pullover_target(last)
+        if bay_target is not None:
+            tx, ty, tyaw, off = bay_target
+        else:
+            tx, ty, tyaw, off = self._pullover_target(last)
         if off <= 0.1:
             return None      # nowhere to pull over (very narrow lane)
 
@@ -271,7 +331,7 @@ class RoutePlanner:
                 z=last.z, yaw=tyaw))
         route.waypoints[i0 + 1:] = new_tail
         return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3),
-                "offset_m": round(off, 2), "moved_back_m": round(moved_back, 1)}
+                "offset_m": round(off, 2), "moved_back_m": round(moved_back, 1), "kind": kind}
 
     def _pullover_target(self, last: Waypoint):
         """Kerb-side point for the final stop. Uses the CARLA map when

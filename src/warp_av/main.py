@@ -197,9 +197,11 @@ class WarpAV:
             self._parking_spot = None
         if self._parking_spot:
             moved = self._parking_spot.get("moved_back_m", 0)
-            note = f", {moved} m before the pin (bend/junction at the pin)" if moved > 1 else ""
+            kind = self._parking_spot.get("kind", "kerb")
+            what = "PARKING BAY off the driving lane" if kind == "bay" else "kerb-hug inside the lane (no bay on this street)"
+            note = f", {moved} m before the pin" if moved > 1 else ""
             self.logger.log_event("parking_spot",
-                                  f"kerbside spot ({self._parking_spot['x']}, {self._parking_spot['y']}), "
+                                  f"{what}: ({self._parking_spot['x']}, {self._parking_spot['y']}), "
                                   f"{self._parking_spot['offset_m']} m right of lane centre{note}")
             print(f"[Mission] parking spot: {self._parking_spot}")
         else:

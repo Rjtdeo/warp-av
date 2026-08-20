@@ -124,3 +124,36 @@ def test_endless_bend_still_refuses():
     wps = [Waypoint(x=30 * math.sin(t / 40), y=30 - 30 * math.cos(t / 40),
                     yaw=t / 40, is_junction=True) for t in range(0, 80)]
     assert p.apply_pullover(Route(waypoints=wps)) is None
+
+
+def test_bay_preferred_over_kerb_hug(monkeypatch):
+    """When a stopping bay exists to the right, park fully in it (kind=bay)."""
+    p = planner()
+    r = straight_route()
+    bay_at = {"x": None}
+
+    def fake_bay(x, y, z):
+        # bay exists only in the stretch x in [90, 110]: centre 2.8 m right
+        if 90 <= x <= 110:
+            bay_at["x"] = x
+            return (x, 2.8, 0.0, 2.5)
+        return None
+
+    monkeypatch.setattr(p, "_right_bay", fake_bay)
+    spot = p.apply_pullover(r)
+    assert spot is not None and spot["kind"] == "bay"
+    assert spot["offset_m"] > 2.0, "must move fully off the driving lane into the bay"
+    last = r.waypoints[-1]
+    assert abs(last.y - 2.8) < 0.05 and 90 <= last.x <= 112
+    # ramp is monotone toward the bay
+    ys = [w.y for w in r.waypoints[-6:]]
+    assert all(b >= a - 0.05 for a, b in zip(ys, ys[1:]))
+
+
+def test_no_bay_falls_back_to_kerb_hug(monkeypatch):
+    p = planner()
+    r = straight_route()
+    monkeypatch.setattr(p, "_right_bay", lambda x, y, z: None)
+    spot = p.apply_pullover(r)
+    assert spot is not None and spot["kind"] == "kerb"
+    assert 0.5 <= spot["offset_m"] <= 1.5
