@@ -314,18 +314,23 @@ class WarpAV:
         # 5. Get next waypoint — aim further ahead the faster we go (1.6 s of
         # travel, clamped 5–13 m). A fixed 5 m aim point caused weaving at speed.
         target_x, target_y = pose.x + math.cos(pose.yaw) * 10, pose.y + math.sin(pose.yaw) * 10
+        cross_track = self.planner.signed_cross_track(self._route, pose.x, pose.y) if self._route else 0.0
         if self._route:
             lookahead = max(5.0, min(13.0, 1.6 * pose.speed))
             # In/near a bend, aim closer so the van follows the arc instead of
             # cutting across it (kerb/divider clipping fix).
             if curve_cap is not None and curve_cap < self.behavior.cruise_speed - 0.5:
                 lookahead = min(lookahead, 5.5)
+            # Off the lane centre by more than a metre (post-corner drift, lane
+            # change): aim closer so it gets back into its lane NOW instead of
+            # sliding diagonally between lanes for tens of metres.
+            if abs(cross_track) > 1.0:
+                lookahead = min(lookahead, 6.0)
             next_wp = self.planner.get_next_waypoint(self._route, pose.x, pose.y, lookahead=lookahead)
             if next_wp:
                 target_x, target_y = next_wp.x, next_wp.y
 
         # 6. Compute vehicle command
-        cross_track = self.planner.signed_cross_track(self._route, pose.x, pose.y) if self._route else 0.0
         cmd = self.controller.compute_command(
             current_x=pose.x, current_y=pose.y,
             current_yaw=pose.yaw, current_speed=pose.speed,

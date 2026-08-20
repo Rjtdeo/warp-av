@@ -65,8 +65,8 @@ class VehicleController:
     STEER_FILTER_ALPHA = 0.5  # low-pass: new = old + alpha*(raw-old) per tick (10 Hz)
     STEER_RATE_FAST = 0.30    # max steering change per tick above 5 m/s
     STEER_RATE_SLOW = 0.60    # max steering change per tick at low speed
-    CT_GAIN = 0.12            # centreline correction (per metre of offset)
-    CT_MAX = 0.30             # cap of that correction
+    CT_GAIN = 0.20            # centreline correction (per metre of offset)
+    CT_MAX = 0.35             # cap of that correction
 
     # --- Speed tuning (no more random brake taps) ---
     COAST_BAND_MPS = 0.8      # up to this much over target: coast, do not brake
