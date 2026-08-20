@@ -180,6 +180,92 @@ class RoutePlanner:
                         "direction": "right" if dyaw > 0 else "left"}
         return None
 
+    # --- Parking / pull-over (Troy #7) ---
+    PARK_BLEND_M = 15.0        # length of the pull-over ramp before the spot
+    PARK_CURB_MARGIN_M = 1.2   # keep the van's centre this far off the lane edge
+
+    def apply_pullover(self, route: Route, side="right"):
+        """
+        Bend the end of the route so the mission finishes at the kerb on the
+        right-hand side (or a real Parking/Shoulder lane if the map has one)
+        instead of dead-centre on the road. Returns {"x","y","yaw","offset_m"}
+        or None when there is no safe straight stretch to blend (destination
+        right after a corner) — in that case the route is left untouched.
+        """
+        if not route or len(route.waypoints) < 4:
+            return None
+        last = route.waypoints[-1]
+
+        # How much straight tail do we have to blend over?
+        wps = route.waypoints
+        usable = 0.0
+        i0 = len(wps) - 1
+        for i in range(len(wps) - 1, 0, -1):
+            dyaw = abs((wps[i - 1].yaw - last.yaw + math.pi) % (2 * math.pi) - math.pi)
+            if dyaw > math.radians(20) or wps[i - 1].is_junction:
+                break
+            usable += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
+            i0 = i - 1
+            if usable >= self.PARK_BLEND_M:
+                break
+        if usable < 6.0:
+            return None      # too twisty near the goal: park on the lane as before
+
+        tx, ty, tyaw, off = self._pullover_target(last)
+        if off <= 0.1:
+            return None      # nowhere to pull over (very narrow lane)
+
+        # Replace the tail with a smooth ramp P0 -> spot (heading = road heading).
+        p0 = wps[i0]
+        h = last.yaw
+        fwd = (math.cos(h), math.sin(h))
+        right = (-math.sin(h), math.cos(h))     # CARLA frame: right of the heading
+        dx, dy = tx - p0.x, ty - p0.y
+        along = dx * fwd[0] + dy * fwd[1]
+        lat = dx * right[0] + dy * right[1]
+        K = max(6, int(usable / 2.0))
+        new_tail = []
+        for k in range(1, K + 1):
+            a = k / K
+            smooth = a * a * (3 - 2 * a)        # smoothstep: no lateral jerk
+            new_tail.append(Waypoint(
+                x=p0.x + fwd[0] * (a * along) + right[0] * (smooth * lat),
+                y=p0.y + fwd[1] * (a * along) + right[1] * (smooth * lat),
+                z=last.z, yaw=tyaw))
+        route.waypoints[i0 + 1:] = new_tail
+        return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3), "offset_m": round(off, 2)}
+
+    def _pullover_target(self, last: Waypoint):
+        """Kerb-side point for the final stop. Uses the CARLA map when
+        available (rightmost driving lane edge, or a Parking/Shoulder lane);
+        falls back to pure geometry 1.2 m right of the final waypoint."""
+        try:
+            wp = self.carla_map.get_waypoint(
+                carla.Location(x=last.x, y=last.y, z=last.z),
+                project_to_road=True, lane_type=carla.LaneType.Driving)
+            # walk to the rightmost same-direction driving lane
+            for _ in range(4):
+                r = wp.get_right_lane()
+                if (r is not None and r.lane_type == carla.LaneType.Driving
+                        and abs((r.transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180) < 60):
+                    wp = r
+                else:
+                    break
+            park = wp.get_right_lane()
+            if (park is not None and park.lane_type in (carla.LaneType.Parking, carla.LaneType.Shoulder)
+                    and park.lane_width > 2.2):
+                t = park.transform
+                return (t.location.x, t.location.y, math.radians(t.rotation.yaw), park.lane_width / 2.0)
+            t = wp.transform
+            rv = t.get_right_vector()
+            edge = max(0.0, wp.lane_width / 2.0 - self.PARK_CURB_MARGIN_M)
+            return (t.location.x + rv.x * edge, t.location.y + rv.y * edge,
+                    math.radians(t.rotation.yaw), edge)
+        except Exception:
+            edge = 1.2
+            return (last.x - math.sin(last.yaw) * edge,
+                    last.y + math.cos(last.yaw) * edge, last.yaw, edge)
+
     def distance_to_next_junction(self, route: Route, current_x, current_y, horizon_m=45.0):
         """Distance along the route to the first junction waypoint (turning or
         straight-through), or None. Used as the stop-line fallback at lights."""

@@ -119,6 +119,7 @@ class WarpAV:
         self._scenario_actors = []
         self._scenario_type = None
         self._scenario_lights_frozen = False
+        self._parking_spot = None
 
         self._running = False
 
@@ -186,6 +187,18 @@ class WarpAV:
         if not self._route:
             self.mission_manager.fail_mission("Route planning failed")
             return False
+
+        # Bend the end of the route to a kerbside parking spot (Troy #7):
+        # finish pulled over on the right, not dead-centre on the road.
+        try:
+            self._parking_spot = self.planner.apply_pullover(self._route, side="right")
+        except Exception as e:
+            print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
+            self._parking_spot = None
+        if self._parking_spot:
+            self.logger.log_event("parking_spot",
+                                  f"kerbside spot ({self._parking_spot['x']}, {self._parking_spot['y']}), "
+                                  f"{self._parking_spot['offset_m']} m right of lane centre")
 
         # Start logging
         self.logger.start_mission_log(mission.mission_id)
@@ -357,7 +370,14 @@ class WarpAV:
         if behavior_output.behavior == DrivingBehavior.MISSION_COMPLETE:
             self.vehicle_adapter.disengage_autonomy()
             self.mission_manager.complete_mission()
-            self.logger.log_event("mission_completed", "Arrived at destination")
+            detail = "Arrived at destination"
+            if getattr(self, "_parking_spot", None):
+                sp = self._parking_spot
+                d = math.hypot(pose.x - sp["x"], pose.y - sp["y"])
+                herr = abs((pose.yaw - sp["yaw"] + math.pi) % (2 * math.pi) - math.pi)
+                detail = f"Parked {d:.2f} m from the kerbside spot, heading off {math.degrees(herr):.0f} deg"
+            self.logger.log_event("mission_completed", detail)
+            print(f"[Mission] {detail}")
             self.logger.stop_mission_log()
 
         # 9. Log
@@ -494,6 +514,7 @@ class WarpAV:
             "cruise_speed_mps": self.behavior.cruise_speed,
             "junction": junction,   # {"distance_m", "direction"} when a turn at a junction is within 20 m, else null
             "junction_ahead_m": junction_ahead,
+            "parking_spot": getattr(self, "_parking_spot", None),
             "traffic_light": {"state": perception.traffic_light,
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None)},
 

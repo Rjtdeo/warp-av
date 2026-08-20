@@ -60,8 +60,8 @@ def test_behavior_priority_order():
     near = PerceptionOutput(closest_obstacle_distance=10.0)
     out = b.update(near, pose, 100.0, True)
     assert out.behavior == DrivingBehavior.FOLLOWING_ROUTE and out.desired_speed_mps == b.slow_speed
-    # arrival
-    assert b.update(PerceptionOutput(), pose, 3.0, True).behavior == DrivingBehavior.MISSION_COMPLETE
+    # arrival: parked = within 1.5 m of the spot AND nearly stopped
+    assert b.update(PerceptionOutput(), pose, 1.0, True).behavior == DrivingBehavior.MISSION_COMPLETE
     # lost localization
     b.set_mission()
     lost = Pose(healthy=False, quality=LocalizationQuality.LOST, reason="x")

@@ -173,18 +173,22 @@ class VehicleController:
         # small overshoot means "lift off", not "tap the brakes".
         speed_error = self._desired_eff - current_speed
 
+        # At parking speeds precision matters more than smoothness: shrink the
+        # coast band so the van actually tracks a falling low-speed target.
+        band = self.COAST_BAND_MPS if self._desired_eff >= 3.0 else 0.2
+
         if speed_error >= 0:
             pid_output = self.speed_pid.update(speed_error)
             throttle = max(0.0, min(1.0, pid_output))
             brake = 0.0
-        elif -speed_error <= self.COAST_BAND_MPS:
+        elif -speed_error <= band:
             self.speed_pid.reset()          # avoid integral wind-up while coasting
             throttle = 0.0
             brake = 0.0
         else:
             self.speed_pid.reset()
             throttle = 0.0
-            brake = min(self.SERVICE_BRAKE_CAP, self.BRAKE_GAIN * (-speed_error - self.COAST_BAND_MPS))
+            brake = min(self.SERVICE_BRAKE_CAP, self.BRAKE_GAIN * (-speed_error - band))
 
         cmd = VehicleCommand(
             steering=steering,

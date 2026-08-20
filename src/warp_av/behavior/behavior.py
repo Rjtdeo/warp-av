@@ -36,6 +36,7 @@ class DrivingBehavior(Enum):
     STOPPED_ESTOP = "stopped_estop"
     STOPPED_RED_LIGHT = "stopped_red_light"
     WAITING_AT_JUNCTION = "waiting_at_junction"
+    PARKING = "parking"
     MISSION_COMPLETE = "mission_complete"
     NO_MISSION = "no_mission"
 
@@ -89,7 +90,9 @@ class BehaviorSystem:
         self.junction_creep_mps = 2.0
         self._junction_wait_started = None
         self._junction_done = False          # cleared for the junction we're in
-        self.destination_threshold = 5.0 # meters — "close enough" to destination
+        self.destination_threshold = 1.5 # meters — parked when this close to the SPOT (was 5.0 anywhere on the road)
+        self.parked_max_speed = 0.8      # ...and slower than this
+        self.park_zone_m = 15.0          # final approach: taper to walking pace
 
         # If the path stays blocked for this long,
         # treat it as a blocked route instead of a temporary obstacle.
@@ -148,13 +151,15 @@ class BehaviorSystem:
                 speed=0.0, stop=True
             )
 
-        # --- Arrived at destination ---
-        if destination_distance is not None and destination_distance < self.destination_threshold:
+        # --- Parked at the spot (close AND nearly stopped) ---
+        if (destination_distance is not None
+                and destination_distance < self.destination_threshold
+                and pose.speed < self.parked_max_speed):
             self.mission_complete = True
             self.has_mission = False
             return self._decide(
                 DrivingBehavior.MISSION_COMPLETE,
-                f"Arrived at destination (distance: {destination_distance:.1f}m)",
+                f"Parked — {destination_distance:.1f} m from the spot",
                 speed=0.0, stop=True
             )
 
@@ -314,8 +319,17 @@ class BehaviorSystem:
                 speed=self.slow_speed, stop=False
             )
 
+        # --- Final approach: park at the kerb ---
+        if destination_distance is not None and destination_distance < self.park_zone_m:
+            creep = max(0.7, min(2.5, 0.35 * destination_distance))
+            return self._decide(
+                DrivingBehavior.PARKING,
+                f"Parking — pulling over, {destination_distance:.1f} m to the spot",
+                speed=creep, stop=False
+            )
+
         # --- Approaching destination ---
-        if destination_distance is not None and destination_distance < 20.0:
+        if destination_distance is not None and destination_distance < 25.0:
             return self._decide(
                 DrivingBehavior.APPROACHING_DESTINATION,
                 f"Approaching destination ({destination_distance:.1f}m) — slowing",
