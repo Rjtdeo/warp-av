@@ -123,3 +123,14 @@ def test_stops_still_outrank_junction_wait():
     red = PerceptionOutput(traffic_light="red")
     out = b.update(red, pose, 500, True, junction=j)
     assert out.behavior == DrivingBehavior.STOPPED_RED_LIGHT
+
+
+def test_distance_to_next_junction():
+    p = planner()
+    r = turn_route("right", junction_at=20.0)
+    d = p.distance_to_next_junction(r, 4.0, 0.0)
+    assert d is not None and 12 < d < 20
+    straight = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0) for i in range(40)])
+    assert p.distance_to_next_junction(straight, 0.0, 0.0) is None
+    # already inside the junction
+    assert p.distance_to_next_junction(r, 22.0, 1.0) == 0.0

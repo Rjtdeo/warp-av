@@ -180,6 +180,28 @@ class RoutePlanner:
                         "direction": "right" if dyaw > 0 else "left"}
         return None
 
+    def distance_to_next_junction(self, route: Route, current_x, current_y, horizon_m=45.0):
+        """Distance along the route to the first junction waypoint (turning or
+        straight-through), or None. Used as the stop-line fallback at lights."""
+        if not route or len(route.waypoints) < 2:
+            return None
+        wps = route.waypoints
+        ci, cd = 0, float("inf")
+        for i, wp in enumerate(wps):
+            d = math.hypot(wp.x - current_x, wp.y - current_y)
+            if d < cd:
+                cd, ci = d, i
+        if wps[ci].is_junction:
+            return 0.0
+        dist = 0.0
+        for i in range(ci + 1, len(wps)):
+            dist += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
+            if dist > horizon_m:
+                return None
+            if wps[i].is_junction:
+                return round(dist, 1)
+        return None
+
     def signed_cross_track(self, route: Route, current_x, current_y) -> float:
         """
         Signed lateral offset of the vehicle from the route polyline.

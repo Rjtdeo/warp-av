@@ -54,3 +54,18 @@ def test_camera_mode_default_is_unchanged_behavior():
     assert PerceptionOutput().traffic_light == "none"
     b = BehaviorSystem(); b.set_mission()
     assert out(b).behavior == DrivingBehavior.FOLLOWING_ROUTE
+
+
+def test_red_light_without_stop_line_uses_junction_edge():
+    b = BehaviorSystem(); b.set_mission()
+    pose = Pose(healthy=True)
+    # no stop-line data, but the map says the junction starts 14 m ahead: roll up
+    o = b.update(PerceptionOutput(traffic_light="red"), pose, 500, True, junction_ahead_m=14.0)
+    assert o.behavior == DrivingBehavior.FOLLOWING_ROUTE and not o.should_stop
+    assert "junction edge" in o.reason and o.desired_speed_mps <= 4.0
+    # close to the junction: hold
+    o = b.update(PerceptionOutput(traffic_light="red"), pose, 500, True, junction_ahead_m=2.5)
+    assert o.behavior == DrivingBehavior.STOPPED_RED_LIGHT and o.should_stop
+    # no data at all: stop immediately (early is the safe direction)
+    o = b.update(PerceptionOutput(traffic_light="red"), pose, 500, True, junction_ahead_m=None)
+    assert o.behavior == DrivingBehavior.STOPPED_RED_LIGHT and o.should_stop

@@ -102,7 +102,8 @@ class BehaviorSystem:
         pose: Pose,
         destination_distance: Optional[float],
         safety_ok: bool,
-        junction: Optional[dict] = None
+        junction: Optional[dict] = None,
+        junction_ahead_m: Optional[float] = None
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -221,16 +222,22 @@ class BehaviorSystem:
         # automatically on the next tick.
         if perception.traffic_light in ("red", "yellow"):
             d = perception.traffic_light_distance_m
+            line = "stop line"
+            if d is None and junction_ahead_m is not None:
+                # No stop-line data for this light: roll up to where the
+                # junction itself begins on our route (map fallback).
+                d = junction_ahead_m
+                line = "junction edge"
             if d is not None and d > self.hold_line_m + 0.5:
                 creep = max(0.8, min(4.0, 0.5 * (d - self.hold_line_m)))
                 return self._decide(
                     DrivingBehavior.FOLLOWING_ROUTE,
-                    f"{perception.traffic_light.upper()} light ahead ({d:.0f} m) — rolling up to the stop line",
+                    f"{perception.traffic_light.upper()} light ahead ({d:.0f} m to {line}) — rolling up",
                     speed=creep, stop=False
                 )
             return self._decide(
                 DrivingBehavior.STOPPED_RED_LIGHT,
-                f"{perception.traffic_light.upper()} traffic light — holding at the line, waiting for green",
+                f"{perception.traffic_light.upper()} traffic light — holding at the {line}, waiting for green",
                 speed=0.0, stop=True
             )
 
