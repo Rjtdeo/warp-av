@@ -12,9 +12,9 @@ Perception currently reads CARLA's actor list (world.get_actors()) instead of pr
 
 The vehicle follows CARLA's route waypoints but does not detect lane markings visually. It relies on the map graph for staying in lane.
 
-## Simple Steering Controller
+## Steering Controller (improved, needs CARLA validation)
 
-Pure pursuit steering works but oscillates at higher speeds. A Stanley controller or MPC would be more stable. PID speed control also needs tuning.
+Fix for the observed weave/brake-taps (Troy #5): speed-scaled lookahead (1.6 s of travel, 5–13 m, was fixed 5 m), speed-scheduled steering gain (1.5 at ≤3 m/s → 0.55 at ≥10 m/s, was fixed 1.5), low-pass + rate limit on steering, and a coast band so small speed overshoot lifts off instead of tapping the brakes. Covered by tests/test_controller_stability.py (kinematic bicycle model). NOTE: the original oscillation could not be reproduced in the lag-free offline model — the tuning is validated for stability offline, but the before/after weave comparison must be done in CARLA (steer_oscillation_index in nm_speed_sweep / rg_geometry scenarios). A Stanley controller or MPC is still the longer-term answer.
 
 ## No Re-planning
 

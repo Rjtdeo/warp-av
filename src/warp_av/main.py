@@ -298,10 +298,12 @@ class WarpAV:
             safety_ok=safety_output.driving_allowed,
         )
 
-        # 5. Get next waypoint
+        # 5. Get next waypoint — aim further ahead the faster we go (1.6 s of
+        # travel, clamped 5–13 m). A fixed 5 m aim point caused weaving at speed.
         target_x, target_y = pose.x + math.cos(pose.yaw) * 10, pose.y + math.sin(pose.yaw) * 10
         if self._route:
-            next_wp = self.planner.get_next_waypoint(self._route, pose.x, pose.y)
+            lookahead = max(5.0, min(13.0, 1.6 * pose.speed))
+            next_wp = self.planner.get_next_waypoint(self._route, pose.x, pose.y, lookahead=lookahead)
             if next_wp:
                 target_x, target_y = next_wp.x, next_wp.y
 
