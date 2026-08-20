@@ -320,11 +320,16 @@ class RoutePlanner:
         dx, dy = tx - p0.x, ty - p0.y
         along = dx * fwd[0] + dy * fwd[1]
         lat = dx * right[0] + dy * right[1]
+        # Finish the sideways move early: the last few metres run STRAIGHT
+        # inside the bay so the van arrives parallel to the lane line.
+        straight_in = min(5.0, max(0.0, along - 6.0))
+        cut = max(0.5, along - straight_in)
         K = max(6, int(usable / 2.0))
         new_tail = []
         for k in range(1, K + 1):
             a = k / K
-            smooth = a * a * (3 - 2 * a)        # smoothstep: no lateral jerk
+            t = min(1.0, (a * along) / cut)
+            smooth = t * t * (3 - 2 * t)        # smoothstep: no lateral jerk
             new_tail.append(Waypoint(
                 x=p0.x + fwd[0] * (a * along) + right[0] * (smooth * lat),
                 y=p0.y + fwd[1] * (a * along) + right[1] * (smooth * lat),
@@ -535,8 +540,24 @@ class RoutePlanner:
                 )
             acc += seg
 
-        # Near destination, use final waypoint.
-        return route.waypoints[-1]
+        # Near the destination the route runs out before the lookahead: aim at
+        # a virtual point extended past the end along the final heading, so the
+        # vehicle ALIGNS with the parking direction instead of beelining
+        # diagonally at the endpoint.
+        last = route.waypoints[-1]
+        ext = max(0.0, lookahead - acc)
+        if ext > 0.1:
+            # direction from the last real segment (yaw fields can be unset/stale)
+            hd = last.yaw
+            for j in range(len(route.waypoints) - 2, -1, -1):
+                pv = route.waypoints[j]
+                if math.hypot(last.x - pv.x, last.y - pv.y) > 0.3:
+                    hd = math.atan2(last.y - pv.y, last.x - pv.x)
+                    break
+            return Waypoint(x=last.x + math.cos(hd) * ext,
+                            y=last.y + math.sin(hd) * ext,
+                            z=last.z, yaw=hd)
+        return last
 
     def distance_to_destination(self, route: Route, current_x, current_y) -> float:
         """How far to the end of the route."""

@@ -81,7 +81,9 @@ def test_closed_loop_parks_in_the_box():
         last = route.waypoints[-1]
         dest_d = math.hypot(van.x - last.x, van.y - last.y)
         pose.speed = van.speed
-        out = b.update(PerceptionOutput(), pose, dest_d, True)
+        herr_now = abs((van.yaw - spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
+        out = b.update(PerceptionOutput(), pose, dest_d, True,
+                       park_heading_ok=herr_now < math.radians(15))
         if out.behavior == DrivingBehavior.MISSION_COMPLETE:
             done_reason = out.reason
             break
@@ -99,7 +101,7 @@ def test_closed_loop_parks_in_the_box():
     err = math.hypot(van.x - spot["x"], van.y - spot["y"])
     herr = abs((van.yaw - spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
     assert err < 1.5, f"stopped {err:.2f} m from the spot"
-    assert herr < math.radians(15), f"parked {math.degrees(herr):.0f} deg off the road direction"
+    assert herr < math.radians(10), f"parked {math.degrees(herr):.0f} deg off the road direction"
     assert van.y > 0.4, "did not actually pull over to the right"
 
 
@@ -157,3 +159,26 @@ def test_no_bay_falls_back_to_kerb_hug(monkeypatch):
     spot = p.apply_pullover(r)
     assert spot is not None and spot["kind"] == "kerb"
     assert 0.5 <= spot["offset_m"] <= 1.5
+
+
+def test_ramp_ends_with_a_straight_section():
+    p = planner()
+    r = straight_route()
+    spot = p.apply_pullover(r)
+    assert spot is not None
+    tail = r.waypoints[-4:]
+    ys = [w.y for w in tail]
+    # last few metres hold the full lateral offset (parallel to the lane line)
+    assert max(ys) - min(ys) < 0.08, f"no straight-in section: {ys}"
+
+
+def test_completion_waits_for_straight_heading():
+    b = BehaviorSystem(); b.set_mission()
+    slow = Pose(healthy=True); slow.speed = 0.3
+    out = b.update(PerceptionOutput(), slow, 1.2, True, park_heading_ok=False)
+    assert out.behavior != DrivingBehavior.MISSION_COMPLETE, "must straighten before declaring parked"
+    out = b.update(PerceptionOutput(), slow, 0.4, True, park_heading_ok=False)
+    assert out.behavior == DrivingBehavior.MISSION_COMPLETE   # dead on the spot: accept
+    b2 = BehaviorSystem(); b2.set_mission()
+    out = b2.update(PerceptionOutput(), slow, 1.2, True, park_heading_ok=True)
+    assert out.behavior == DrivingBehavior.MISSION_COMPLETE

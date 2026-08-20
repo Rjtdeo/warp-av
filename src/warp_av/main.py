@@ -322,6 +322,10 @@ class WarpAV:
 
         junction = self.planner.upcoming_turn(self._route, pose.x, pose.y) if self._route else None
         junction_ahead = self.planner.distance_to_next_junction(self._route, pose.x, pose.y) if self._route else None
+        park_heading_ok = True
+        if getattr(self, "_parking_spot", None):
+            herr = abs((pose.yaw - self._parking_spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
+            park_heading_ok = herr < math.radians(15)
         behavior_output = self.behavior.update(
             perception=perception,
             pose=pose,
@@ -329,6 +333,7 @@ class WarpAV:
             safety_ok=safety_output.driving_allowed,
             junction=junction,
             junction_ahead_m=junction_ahead,
+            park_heading_ok=park_heading_ok,
         )
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.

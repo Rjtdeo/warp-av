@@ -106,7 +106,8 @@ class BehaviorSystem:
         destination_distance: Optional[float],
         safety_ok: bool,
         junction: Optional[dict] = None,
-        junction_ahead_m: Optional[float] = None
+        junction_ahead_m: Optional[float] = None,
+        park_heading_ok: bool = True
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -154,7 +155,8 @@ class BehaviorSystem:
         # --- Parked at the spot (close AND nearly stopped) ---
         if (destination_distance is not None
                 and destination_distance < self.destination_threshold
-                and pose.speed < self.parked_max_speed):
+                and pose.speed < self.parked_max_speed
+                and (park_heading_ok or destination_distance < 0.5)):
             self.mission_complete = True
             self.has_mission = False
             return self._decide(
