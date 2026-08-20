@@ -35,6 +35,7 @@ class DrivingBehavior(Enum):
     STOPPED_SAFETY = "stopped_safety"
     STOPPED_ESTOP = "stopped_estop"
     STOPPED_RED_LIGHT = "stopped_red_light"
+    WAITING_AT_JUNCTION = "waiting_at_junction"
     MISSION_COMPLETE = "mission_complete"
     NO_MISSION = "no_mission"
 
@@ -77,6 +78,16 @@ class BehaviorSystem:
         self.follow_standstill_m = 8.0   # plus this fixed gap (matches stop buffer)
         self.follow_gain = 0.3           # how hard to close/open the gap (1/s)
         self.follow_min_lead_mps = 0.7   # below this the lead counts as stopped
+
+        # Junction give-way (Troy request): before turning at a junction, stop,
+        # look for a moment, and only go when no moving vehicle is nearby.
+        self.junction_stop_within_m = 10.0   # start the wait this close to the turn
+        self.junction_dwell_s = 1.5          # mandatory look time even if clear
+        self.junction_conflict_radius_m = 25.0
+        self.junction_wait_timeout_s = 12.0  # then creep instead of deadlocking
+        self.junction_creep_mps = 2.0
+        self._junction_wait_started = None
+        self._junction_done = False          # cleared for the junction we're in
         self.destination_threshold = 5.0 # meters — "close enough" to destination
 
         # If the path stays blocked for this long,
@@ -89,7 +100,8 @@ class BehaviorSystem:
         perception: PerceptionOutput,
         pose: Pose,
         destination_distance: Optional[float],
-        safety_ok: bool
+        safety_ok: bool,
+        junction: Optional[dict] = None
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -213,6 +225,45 @@ class BehaviorSystem:
                 speed=0.0, stop=True
             )
 
+        # --- Give way before turning at a junction ---
+        if junction is None or junction.get("distance_m", 99) > 15.0:
+            self._junction_done = False      # next junction is a fresh decision
+        if (junction is not None
+                and not self._junction_done
+                and junction.get("distance_m", 99) <= self.junction_stop_within_m):
+            now = time.time()
+            if self._junction_wait_started is None:
+                self._junction_wait_started = now
+            waited = now - self._junction_wait_started
+            conflict = self._junction_conflict(perception)
+            direction = junction.get("direction", "?")
+            if waited >= self.junction_wait_timeout_s:
+                self._junction_done = True
+                self._junction_wait_started = None
+                return self._decide(
+                    DrivingBehavior.WAITING_AT_JUNCTION,
+                    f"Give-way timeout at {direction} turn ({waited:.0f}s) — proceeding carefully",
+                    speed=self.junction_creep_mps, stop=False
+                )
+            if waited < self.junction_dwell_s:
+                return self._decide(
+                    DrivingBehavior.WAITING_AT_JUNCTION,
+                    f"Approaching {direction} turn — pausing to check for traffic",
+                    speed=0.0, stop=True
+                )
+            if conflict is not None:
+                return self._decide(
+                    DrivingBehavior.WAITING_AT_JUNCTION,
+                    f"Giving way at {direction} turn — moving vehicle {conflict:.0f} m away",
+                    speed=0.0, stop=True
+                )
+            self._junction_done = True
+            self._junction_wait_started = None
+            print(f"[Behavior] Junction clear after {waited:.1f}s — taking the {direction} turn")
+        elif self._junction_wait_started is not None and (
+                junction is None or junction.get("distance_m", 99) > self.junction_stop_within_m):
+            self._junction_wait_started = None
+
         # --- Moving vehicle ahead: follow at a time gap instead of stop-and-go ---
         if (perception.closest_obstacle_type == ObjectType.VEHICLE
                 and perception.closest_obstacle_speed > self.follow_min_lead_mps
@@ -264,6 +315,26 @@ class BehaviorSystem:
             desired_speed_mps=speed,
             should_stop=stop
         )
+
+    def _junction_conflict(self, perception: PerceptionOutput):
+        """Distance of the nearest moving vehicle that could cross our turn,
+        or None. Vehicles directly ahead in our own lane are the car-following
+        problem, not a junction conflict; far/parked/behind vehicles ignored."""
+        nearest = None
+        for obj in perception.objects:
+            if obj.object_type != ObjectType.VEHICLE:
+                continue
+            if obj.speed < 1.0:
+                continue
+            if obj.distance > self.junction_conflict_radius_m:
+                continue
+            if obj.x < -3.0:
+                continue                      # well behind us
+            if obj.x > 0 and abs(obj.y) < 1.75:
+                continue                      # our own lane: following handles it
+            if nearest is None or obj.distance < nearest:
+                nearest = obj.distance
+        return nearest
 
     def set_cruise_speed(self, speed_mps: float):
         """Runtime speed-limit change from operator/API. Clamped to [0, 15] m/s."""

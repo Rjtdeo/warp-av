@@ -24,6 +24,7 @@ class Waypoint:
     z: float = 0.0
     yaw: float = 0.0       # desired heading at this point
     speed: float = 8.0     # desired speed at this point
+    is_junction: bool = False   # inside an intersection (from the CARLA map)
 
 
 @dataclass
@@ -77,7 +78,8 @@ class RoutePlanner:
                     x=wp.transform.location.x,
                     y=wp.transform.location.y,
                     z=wp.transform.location.z,
-                    yaw=math.radians(wp.transform.rotation.yaw)
+                    yaw=math.radians(wp.transform.rotation.yaw),
+                    is_junction=bool(getattr(wp, "is_junction", False))
                 )
                 waypoints.append(point)
 
@@ -141,6 +143,42 @@ class RoutePlanner:
             allowed_now = max(v_turn, math.sqrt(v_turn ** 2 + 2.0 * self.A_DECEL * max(0.0, dist)) - 0.8)
             cap = min(cap, allowed_now)
         return max(self.V_TURN_MIN, min(cruise, cap))
+
+    TURN_ANGLE_RAD = 0.35   # ~20 deg heading change across a junction = a turn
+
+    def upcoming_turn(self, route: Route, current_x, current_y, horizon_m=20.0):
+        """
+        Is there a TURN at a junction within `horizon_m` along the route?
+        Returns {"distance_m": d, "direction": "left"|"right"} or None.
+        Direction uses CARLA's yaw convention (positive yaw change = right).
+        """
+        if not route or len(route.waypoints) < 3:
+            return None
+        wps = route.waypoints
+        ci, cd = 0, float("inf")
+        for i, wp in enumerate(wps):
+            d = math.hypot(wp.x - current_x, wp.y - current_y)
+            if d < cd:
+                cd, ci = d, i
+
+        dist = 0.0
+        j_start = None
+        for i in range(ci + 1, len(wps)):
+            dist += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
+            if dist > horizon_m and j_start is None:
+                return None
+            if wps[i].is_junction and j_start is None:
+                j_start = i
+                j_dist = dist
+            if j_start is not None and not wps[i].is_junction:
+                # heading change across the junction span
+                dyaw = (wps[i].yaw - wps[max(0, j_start - 1)].yaw + math.pi) % (2 * math.pi) - math.pi
+                if abs(dyaw) < self.TURN_ANGLE_RAD:
+                    j_start = None      # straight through — keep scanning
+                    continue
+                return {"distance_m": round(j_dist, 1),
+                        "direction": "right" if dyaw > 0 else "left"}
+        return None
 
     def signed_cross_track(self, route: Route, current_x, current_y) -> float:
         """

@@ -292,11 +292,13 @@ class WarpAV:
             m = self.mission_manager.current_mission
             dest_dist = self.planner.distance_to_destination(self._route, pose.x, pose.y)
 
+        junction = self.planner.upcoming_turn(self._route, pose.x, pose.y) if self._route else None
         behavior_output = self.behavior.update(
             perception=perception,
             pose=pose,
             destination_distance=dest_dist,
             safety_ok=safety_output.driving_allowed,
+            junction=junction,
         )
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
