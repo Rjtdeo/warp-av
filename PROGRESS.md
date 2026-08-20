@@ -2,7 +2,7 @@
 
 22 commits in one working session. Every driving change was implemented on the Mac, pushed to GitHub,
 pulled on the Windows CARLA machine, and **verified live in CARLA** by the operator before moving on.
-63 automated tests (no CARLA needed) guard everything against regressions.
+73 automated tests (no CARLA needed) guard everything against regressions. All 7 requests are now CARLA-verified end-to-end — see the reference run below.
 
 ---
 
@@ -16,7 +16,7 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 | 2 | Correct left turns | ✅ verified | curve-aware speed (slows before bends), arc-following aim point, corner-cut deviation 1.25 → **0.78 m** in the reference 90° corner |
 | 3 | Correct right turns | ✅ verified | same mechanism, left/right symmetric by construction (tested) |
 | 1 | Observe traffic lights | ✅ verified | operator watched the van stop at red and release on green; red/yellow stop, green auto-release; hazards outrank the light |
-| 7 | Park inside a parking box | ✅ implemented (sim-verified) | finishes pulled over at the right kerb; closed-loop sim parks **0.93 m** from the spot, **8°** off road heading; completion needs ≤1.5 m AND nearly stopped. CARLA validation pending |
+| 7 | Park inside a parking box | ✅ **CARLA-verified** | pulls over to a kerbside spot / real parking bay, arrives parallel: **"Parked 1.45 m from the kerbside spot, heading off 8°"** (mission_0011); completion requires ≤1.5 m AND ≤15° AND nearly stopped |
 
 ## 2. Operator-feedback fixes (found by driving it, fixed same day)
 
@@ -56,10 +56,20 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 | `tools/demo_red_light.py` | hands-free demo: finds the route with the most lights, starts the mission, freezes red on approach, verifies the stop, releases green, verifies pull-away |
 | `tools/set_traffic_lights.py` | force all lights red/green/auto on demand |
 
-## 6. What's left
+## 6. Reference run — mission_0011 (the whole system in one drive)
 
-1. **CARLA-validate parking** (implemented and sim-verified; needs the operator's drive)
-2. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
+457 m, 237 s, Town10 — full report in [logs/mission_0011_report.txt](logs/mission_0011_report.txt):
+
+- Right-turn give-way roll-up interrupted correctly by a YELLOW light → held at the stop line 20.1 s
+- Mandatory 2.1 s junction look before the right turn, then proceeded
+- Operator spawned a vehicle mid-run: brief car-following (gap 21.7 m), then stopped at **7.9 m** behind it (the 8 m buffer), resumed on clear
+- Two more lights (RED 32.5 s, RED 6.8 s, YELLOW 35.5 s) each held AT the stop line; left-turn give-way looks after each
+- Finish: pull-over and **"Parked 1.45 m from the kerbside spot, heading off 8 deg"**
+- Whole-run verification: steering flips **0.08/sec**, **0** unjustified brake ticks, speed wobble 0.43 m/s, safety supervisor `ok` throughout — every check [OK]
+
+## 6b. What's left
+
+1. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
    no object tracking yet (so following/light detection run on ground truth), give-way uses a radius
    heuristic rather than true right-of-way, corridor check trusts localization (fine in sim)
 3. Run the full 1000-scenario catalog on the CARLA machine and commit the first `REPORT.md` scoreboard
