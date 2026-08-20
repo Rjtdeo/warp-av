@@ -81,7 +81,8 @@ class BehaviorSystem:
 
         # Junction give-way (Troy request): before turning at a junction, stop,
         # look for a moment, and only go when no moving vehicle is nearby.
-        self.junction_stop_within_m = 10.0   # start the wait this close to the turn
+        self.junction_stop_within_m = 12.0   # start handling the turn this close
+        self.hold_line_m = 3.0               # hold ~this far from the line/crossing (roll up first, like a driver)
         self.junction_dwell_s = 1.5          # mandatory look time even if clear
         self.junction_conflict_radius_m = 25.0
         self.junction_wait_timeout_s = 12.0  # then creep instead of deadlocking
@@ -214,14 +215,22 @@ class BehaviorSystem:
                 speed=0.0, stop=True
             )
 
-        # --- Traffic light (Troy #1): red or yellow -> stop and hold at the line.
+        # --- Traffic light (Troy #1): roll up to the stop line, hold there.
         # Ranked below pedestrian/vehicle/obstacle stops (a closer physical
         # hazard always wins) and above following/cruising. Green releases it
         # automatically on the next tick.
         if perception.traffic_light in ("red", "yellow"):
+            d = perception.traffic_light_distance_m
+            if d is not None and d > self.hold_line_m + 0.5:
+                creep = max(0.8, min(4.0, 0.5 * (d - self.hold_line_m)))
+                return self._decide(
+                    DrivingBehavior.FOLLOWING_ROUTE,
+                    f"{perception.traffic_light.upper()} light ahead ({d:.0f} m) — rolling up to the stop line",
+                    speed=creep, stop=False
+                )
             return self._decide(
                 DrivingBehavior.STOPPED_RED_LIGHT,
-                f"{perception.traffic_light.upper()} traffic light — stopped, waiting for green",
+                f"{perception.traffic_light.upper()} traffic light — holding at the line, waiting for green",
                 speed=0.0, stop=True
             )
 
@@ -231,12 +240,22 @@ class BehaviorSystem:
         if (junction is not None
                 and not self._junction_done
                 and junction.get("distance_m", 99) <= self.junction_stop_within_m):
+            direction = junction.get("direction", "?")
+            jdist = junction.get("distance_m", 99)
+            # Phase 1: roll up to the crossing first (like a driver), THEN wait.
+            if jdist > self.hold_line_m + 0.5:
+                self._junction_wait_started = None
+                creep = max(0.8, min(3.0, 0.5 * (jdist - self.hold_line_m)))
+                return self._decide(
+                    DrivingBehavior.WAITING_AT_JUNCTION,
+                    f"Approaching {direction} turn — rolling up to the crossing ({jdist:.0f} m)",
+                    speed=creep, stop=False
+                )
             now = time.time()
             if self._junction_wait_started is None:
                 self._junction_wait_started = now
             waited = now - self._junction_wait_started
             conflict = self._junction_conflict(perception)
-            direction = junction.get("direction", "?")
             if waited >= self.junction_wait_timeout_s:
                 self._junction_done = True
                 self._junction_wait_started = None

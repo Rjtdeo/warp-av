@@ -10,7 +10,7 @@ def out(b, **kw):
 
 def test_red_and_yellow_stop_green_goes():
     b = BehaviorSystem(); b.set_mission()
-    r = out(b, traffic_light="red")
+    r = out(b, traffic_light="red")     # unknown stop-line distance -> stop now
     assert r.behavior == DrivingBehavior.STOPPED_RED_LIGHT and r.should_stop
     assert "RED" in r.reason and "green" in r.reason.lower()
     y = out(b, traffic_light="yellow")
@@ -19,6 +19,15 @@ def test_red_and_yellow_stop_green_goes():
     assert g.behavior == DrivingBehavior.FOLLOWING_ROUTE and not g.should_stop
     n = out(b, traffic_light="none")
     assert n.behavior == DrivingBehavior.FOLLOWING_ROUTE
+
+
+def test_red_light_far_away_rolls_up_to_the_line():
+    b = BehaviorSystem(); b.set_mission()
+    far = out(b, traffic_light="red", traffic_light_distance_m=18.0)
+    assert far.behavior == DrivingBehavior.FOLLOWING_ROUTE and not far.should_stop
+    assert far.desired_speed_mps <= 4.0 and "rolling up" in far.reason
+    near = out(b, traffic_light="red", traffic_light_distance_m=2.6)
+    assert near.behavior == DrivingBehavior.STOPPED_RED_LIGHT and near.should_stop
 
 
 def test_green_light_releases_red_stop():

@@ -54,7 +54,12 @@ def moving_cross_car(dist=15.0):
 def test_pause_then_go_when_clear():
     b = _b()
     pose = Pose(healthy=True)
-    j = {"distance_m": 8.0, "direction": "right"}
+    # far from the crossing: roll up, don't freeze early
+    roll = b.update(PerceptionOutput(), pose, 500, True, junction={"distance_m": 8.0, "direction": "right"})
+    assert roll.behavior == DrivingBehavior.WAITING_AT_JUNCTION and not roll.should_stop
+    assert 0.8 <= roll.desired_speed_mps <= 3.0 and "rolling up" in roll.reason
+    # at the crossing: hold and look
+    j = {"distance_m": 3.0, "direction": "right"}
     out = b.update(PerceptionOutput(), pose, 500, True, junction=j)
     assert out.behavior == DrivingBehavior.WAITING_AT_JUNCTION and out.should_stop
     assert "pausing to check" in out.reason
@@ -69,7 +74,7 @@ def test_pause_then_go_when_clear():
 def test_waits_for_moving_cross_traffic_then_goes():
     b = _b()
     pose = Pose(healthy=True)
-    j = {"distance_m": 7.0, "direction": "right"}
+    j = {"distance_m": 3.0, "direction": "right"}
     conflict = PerceptionOutput(objects=[moving_cross_car()])
     b.update(conflict, pose, 500, True, junction=j)
     time.sleep(0.07)
@@ -84,7 +89,7 @@ def test_waits_for_moving_cross_traffic_then_goes():
 def test_own_lane_lead_and_parked_cars_are_not_conflicts():
     b = _b()
     pose = Pose(healthy=True)
-    j = {"distance_m": 7.0, "direction": "left"}
+    j = {"distance_m": 3.0, "direction": "left"}
     lead_in_lane = DetectedObject(object_type=ObjectType.VEHICLE, x=12.0, y=0.3, distance=12.0, speed=5.0)
     parked_side = DetectedObject(object_type=ObjectType.VEHICLE, x=6.0, y=8.0, distance=10.0, speed=0.0)
     p_out = PerceptionOutput(objects=[lead_in_lane, parked_side])
@@ -97,7 +102,7 @@ def test_own_lane_lead_and_parked_cars_are_not_conflicts():
 def test_timeout_creeps_instead_of_deadlock():
     b = _b(dwell=0.02, timeout=0.15)
     pose = Pose(healthy=True)
-    j = {"distance_m": 7.0, "direction": "right"}
+    j = {"distance_m": 3.0, "direction": "right"}
     conflict = PerceptionOutput(objects=[moving_cross_car()])
     b.update(conflict, pose, 500, True, junction=j)
     time.sleep(0.2)
@@ -110,7 +115,7 @@ def test_timeout_creeps_instead_of_deadlock():
 def test_stops_still_outrank_junction_wait():
     b = _b()
     pose = Pose(healthy=True)
-    j = {"distance_m": 7.0, "direction": "right"}
+    j = {"distance_m": 3.0, "direction": "right"}
     ped = PerceptionOutput(path_blocked=True, closest_obstacle_type=ObjectType.PEDESTRIAN,
                            closest_obstacle_distance=5.0)
     out = b.update(ped, pose, 500, True, junction=j)

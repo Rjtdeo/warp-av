@@ -50,6 +50,7 @@ class PerceptionOutput:
     closest_obstacle_type: ObjectType = ObjectType.UNKNOWN
     closest_obstacle_speed: float = 0.0     # m/s; 0.0 also means "unknown" (camera mode has no tracking yet)
     traffic_light: str = "none"             # none | red | yellow | green (Troy #1; camera mode reports none until a classifier exists)
+    traffic_light_distance_m: float = None  # distance to that light's stop line (None = unknown -> stop immediately on red)
     path_blocked: bool = False
     timestamp: float = field(default_factory=time.time)
     healthy: bool = True
@@ -69,6 +70,7 @@ class PerceptionSystem:
         self.world = world
         self.vehicle = vehicle
         self._enabled = True
+        self._tl_stop_cache = {}   # traffic light id -> stop-line points
         # Fault-injection hooks (see testing/fault_injector.py). All default off.
         self._fault = {"freeze": False, "stale_age_s": 0.0, "latency_s": 0.0, "crash": False}
         self._last_output: Optional["PerceptionOutput"] = None
@@ -129,13 +131,23 @@ class PerceptionSystem:
             # Traffic light governing our lane (CARLA ground truth — the same
             # answer a camera classifier will produce later).
             tl_state = "none"
+            tl_dist = None
             try:
                 tl = self.vehicle.get_traffic_light()
                 if tl is not None:
                     tl_state = {"Red": "red", "Yellow": "yellow", "Green": "green"}.get(
                         str(tl.get_state()).split(".")[-1], "none")
+                    # distance to the stop line, so behavior can roll up to it
+                    pts = self._tl_stop_cache.get(tl.id)
+                    if pts is None:
+                        pts = [(w.transform.location.x, w.transform.location.y)
+                               for w in tl.get_stop_waypoints()]
+                        self._tl_stop_cache[tl.id] = pts
+                    if pts:
+                        vloc = self.vehicle.get_location()
+                        tl_dist = min(math.hypot(px - vloc.x, py - vloc.y) for px, py in pts)
             except Exception:
-                tl_state = "none"
+                pass
 
             closest_dist = 999.0
             closest_type = ObjectType.UNKNOWN
@@ -158,6 +170,7 @@ class PerceptionSystem:
                 closest_obstacle_type=closest_type,
                 closest_obstacle_speed=closest_speed,
                 traffic_light=tl_state,
+                traffic_light_distance_m=tl_dist,
                 path_blocked=path_blocked,
                 timestamp=time.time() - self._fault["stale_age_s"],
                 healthy=True,
