@@ -26,6 +26,7 @@ from ..localization.localization import Pose, LocalizationQuality
 class DrivingBehavior(Enum):
     IDLE = "idle"
     FOLLOWING_ROUTE = "following_route"
+    FOLLOWING_VEHICLE = "following_vehicle"
     APPROACHING_DESTINATION = "approaching_destination"
     STOPPED_OBSTACLE = "stopped_obstacle"
     STOPPED_PEDESTRIAN = "stopped_pedestrian"
@@ -66,6 +67,15 @@ class BehaviorSystem:
         self.slow_speed = 3.0            # m/s when approaching obstacle
         self.stop_distance = 8.0         # meters — informational; the actual stop trigger is perception.danger_distance
         self.slow_distance = 20.0        # meters — slow down (Troy #4: was 15.0)
+
+        # Car-following (Troy #6). Engages only for a MOVING vehicle ahead;
+        # a stopped one still uses slow-zone + stop. Camera mode reports lead
+        # speed 0 (no tracking yet), so it safely falls back to slow/stop.
+        self.follow_engage_m = 30.0      # start following when lead within this
+        self.follow_time_gap_s = 1.5     # keep this many seconds behind the lead
+        self.follow_standstill_m = 8.0   # plus this fixed gap (matches stop buffer)
+        self.follow_gain = 0.3           # how hard to close/open the gap (1/s)
+        self.follow_min_lead_mps = 0.7   # below this the lead counts as stopped
         self.destination_threshold = 5.0 # meters — "close enough" to destination
 
         # If the path stays blocked for this long,
@@ -189,6 +199,22 @@ class BehaviorSystem:
                 DrivingBehavior.STOPPED_OBSTACLE,
                 f"OBSTACLE in path at {perception.closest_obstacle_distance:.1f}m — stopped",
                 speed=0.0, stop=True
+            )
+
+        # --- Moving vehicle ahead: follow at a time gap instead of stop-and-go ---
+        if (perception.closest_obstacle_type == ObjectType.VEHICLE
+                and perception.closest_obstacle_speed > self.follow_min_lead_mps
+                and perception.closest_obstacle_distance < self.follow_engage_m):
+            gap = perception.closest_obstacle_distance
+            lead = perception.closest_obstacle_speed
+            desired_gap = self.follow_standstill_m + self.follow_time_gap_s * lead
+            target = lead + self.follow_gain * (gap - desired_gap)
+            target = max(0.0, min(self.cruise_speed, target))
+            return self._decide(
+                DrivingBehavior.FOLLOWING_VEHICLE,
+                f"Following vehicle: gap {gap:.1f}m (want {desired_gap:.1f}m), "
+                f"lead {lead:.1f} m/s — target {target:.1f} m/s",
+                speed=target, stop=False
             )
 
         # --- Object ahead, slow down ---

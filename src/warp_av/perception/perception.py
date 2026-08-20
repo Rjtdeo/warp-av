@@ -48,6 +48,7 @@ class PerceptionOutput:
     objects: List[DetectedObject] = field(default_factory=list)
     closest_obstacle_distance: float = 999.0
     closest_obstacle_type: ObjectType = ObjectType.UNKNOWN
+    closest_obstacle_speed: float = 0.0     # m/s; 0.0 also means "unknown" (camera mode has no tracking yet)
     path_blocked: bool = False
     timestamp: float = field(default_factory=time.time)
     healthy: bool = True
@@ -126,6 +127,7 @@ class PerceptionSystem:
             # Find closest object in our path
             closest_dist = 999.0
             closest_type = ObjectType.UNKNOWN
+            closest_speed = 0.0
             path_blocked = False
 
             for obj in objects:
@@ -134,6 +136,7 @@ class PerceptionSystem:
                     if obj.distance < closest_dist:
                         closest_dist = obj.distance
                         closest_type = obj.object_type
+                        closest_speed = obj.speed
                     if obj.distance < self.danger_distance:
                         path_blocked = True
 
@@ -141,6 +144,7 @@ class PerceptionSystem:
                 objects=objects,
                 closest_obstacle_distance=closest_dist,
                 closest_obstacle_type=closest_type,
+                closest_obstacle_speed=closest_speed,
                 path_blocked=path_blocked,
                 timestamp=time.time() - self._fault["stale_age_s"],
                 healthy=True,
