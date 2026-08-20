@@ -14,10 +14,23 @@ will see real pedestrian encounters. Cyclists are bicycles driven by the
 traffic manager. Everything avoids spawning on top of the Warp van.
 """
 import argparse
+import json
+import math
 import random
 import time
+import urllib.request
 
 import carla
+
+
+def ego_position(api="http://localhost:5000"):
+    """Where is the Warp van right now? (None if the stack isn't running)"""
+    try:
+        with urllib.request.urlopen(api + "/api/state", timeout=2) as r:
+            d = json.loads(r.read().decode())
+        return d["pose"]["x"], d["pose"]["y"]
+    except Exception:
+        return None
 
 
 def main():
@@ -27,6 +40,8 @@ def main():
     ap.add_argument("--cyclists", type=int, default=4)
     ap.add_argument("--cross-factor", type=float, default=0.35,
                     help="fraction of walkers allowed to cross roads (0..1)")
+    ap.add_argument("--near", type=float, default=120.0,
+                    help="concentrate traffic within this many metres of the van (0 = whole town)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--host", default="localhost")
     ap.add_argument("--port", type=int, default=2000)
@@ -50,6 +65,15 @@ def main():
                    if int(bp.get_attribute("number_of_wheels").as_int()) == 4]
         points = world.get_map().get_spawn_points()
         rng.shuffle(points)
+        ego = ego_position(f"http://{a.host}:5000") if a.near > 0 else None
+        if ego is not None:
+            near = [p for p in points
+                    if math.hypot(p.location.x - ego[0], p.location.y - ego[1]) < a.near]
+            far = [p for p in points if p not in near]
+            points = near + far      # fill close to the van first
+            print(f"van at ({ego[0]:.0f}, {ego[1]:.0f}) — {len(near)} spawn points within {a.near:.0f} m")
+        else:
+            print("van position unknown (stack not running?) — spawning town-wide")
         cars = 0
         for sp in points:
             if cars >= a.cars:
@@ -83,11 +107,13 @@ def main():
         ctrl_bp = bp_lib.find("controller.ai.walker")
         walkers = 0
         attempts = 0
-        while walkers < a.walkers and attempts < a.walkers * 4:
+        while walkers < a.walkers and attempts < a.walkers * 6:
             attempts += 1
             loc = world.get_random_location_from_navigation()
             if loc is None:
                 continue
+            if ego is not None and math.hypot(loc.x - ego[0], loc.y - ego[1]) > a.near:
+                continue      # keep pedestrians near the action too
             w = world.try_spawn_actor(rng.choice(walker_bps),
                                       carla.Transform(loc))
             if w is None:
