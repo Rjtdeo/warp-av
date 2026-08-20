@@ -73,19 +73,25 @@ def main(path):
 
     # ---------------- stops ----------------
     print("\n--- STOPS (speed < 0.2 for >= 1 s) " + "-" * 36)
-    in_stop, s_start, s_reason, n_stops = False, 0, "", 0
+    in_stop, s_start, n_stops = False, 0, 0
+    reasons = {}
+    def top_reason():
+        return max(reasons.items(), key=lambda kv: kv[1])[0] if reasons else ""
     for t in ticks:
         v = t["pose"]["speed"]
         if v < 0.2 and not in_stop:
-            in_stop, s_start, s_reason = True, t["t"], t.get("behavior_reason", "")
+            in_stop, s_start, reasons = True, t["t"], {}
+        if v < 0.2 and in_stop:
+            r = t.get("behavior_reason", "")
+            reasons[r] = reasons.get(r, 0) + 1
         elif v >= 0.2 and in_stop:
             in_stop = False
             if t["t"] - s_start >= 1.0:
                 n_stops += 1
-                print(f"{fmt_t(t0, s_start)}  {t['t'] - s_start:5.1f} s   {s_reason[:66]}")
+                print(f"{fmt_t(t0, s_start)}  {t['t'] - s_start:5.1f} s   {top_reason()[:66]}")
     if in_stop and t1 - s_start >= 1.0:
         n_stops += 1
-        print(f"{fmt_t(t0, s_start)}  {t1 - s_start:5.1f} s   {s_reason[:66]}  (final)")
+        print(f"{fmt_t(t0, s_start)}  {t1 - s_start:5.1f} s   {top_reason()[:66]}  (final)")
     if n_stops == 0:
         print("  none")
 
@@ -111,10 +117,15 @@ def main(path):
         else:
             bad_brakes += 1
     vmax = max(speeds)
-    cruise = [t["pose"]["speed"] for t in ticks
-              if t["pose"]["speed"] > 0.75 * vmax
-              and "curve ahead" not in (t.get("behavior_reason") or "")
-              and t.get("behavior") not in ("following_vehicle", "approaching_destination", "parking")]
+    # wobble only on SETTLED cruise: exclude accelerating/braking ramps
+    cruise = []
+    for prev, t in zip(ticks, ticks[1:]):
+        v = t["pose"]["speed"]
+        if (v > 0.75 * vmax
+                and abs(v - prev["pose"]["speed"]) <= 0.05
+                and "curve ahead" not in (t.get("behavior_reason") or "")
+                and t.get("behavior") not in ("following_vehicle", "approaching_destination", "parking")):
+            cruise.append(v)
     if len(cruise) >= 20:
         m = sum(cruise) / len(cruise)
         wob = math.sqrt(sum((v - m) ** 2 for v in cruise) / len(cruise))

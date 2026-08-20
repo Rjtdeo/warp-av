@@ -80,12 +80,15 @@ def analyze(path):
     cruise = []
     excluded = 0
     if vmax > 3:
+        prev_v = None
         for t, v in zip(ticks, speeds):
+            ramping = prev_v is not None and abs(v - prev_v) > 0.05
+            prev_v = v
             if v <= 0.75 * vmax:
                 continue
             reason = t.get("behavior_reason", "") or ""
             behavior = t.get("behavior", "")
-            if "curve ahead" in reason or behavior in ("following_vehicle", "approaching_destination"):
+            if ramping or "curve ahead" in reason or behavior in ("following_vehicle", "approaching_destination", "parking"):
                 excluded += 1
                 continue
             cruise.append(v)
