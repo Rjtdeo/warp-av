@@ -45,8 +45,9 @@ def drive(route, start_y=0.0, speed=8.0, seconds=30):
                                    wp.x, wp.y, min(8.0, cap), False, cross_track_m=ct)
         van.step(cmd)
         traj.append((van.x, van.y, cmd.steering))
-        if van.x > 185.0:      # stop before the route ends (this sim has no arrival logic)
-            break
+        last = route.waypoints[-1]
+        if math.hypot(van.x - last.x, van.y - last.y) < 6.0:
+            break              # reached route end (this sim has no arrival logic)
     return traj
 
 
