@@ -1234,6 +1234,16 @@ class WarpAV:
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+
+@app.after_request
+def _add_cors_headers(resp):
+    # The operator console may be served from another origin (e.g. warp-av.vercel.app).
+    # Without these headers the browser blocks its fetches to this API.
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    return resp
 av_system: WarpAV = None
 
 

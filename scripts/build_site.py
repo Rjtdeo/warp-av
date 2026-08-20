@@ -18,6 +18,9 @@ for e in idx["scenarios"]:
 (OUT / "catalog" / "scenarios.json").write_text(json.dumps(full, separators=(",", ":")))
 (OUT / "catalog" / "index.json").write_text(json.dumps(idx, separators=(",", ":")))
 shutil.copy(ROOT / "src/warp_av/console/index.html", OUT / "console.html")
+static_src = ROOT / "src" / "warp_av" / "static"
+if static_src.exists():
+    shutil.copytree(static_src, OUT / "static", dirs_exist_ok=True)
 (OUT / "docs").mkdir(exist_ok=True)
 for md in ["README.md", "KNOWN_ISSUES.md", "OPEN_SOURCE.md", "docs/SCENARIO_STRATEGY.md", "scenarios/README.md", "architecture/README.md", "scenarios/catalog/CATALOG.md"]:
     p = ROOT / md
