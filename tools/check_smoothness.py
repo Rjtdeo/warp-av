@@ -74,9 +74,22 @@ def analyze(path):
         else:
             brake_ticks += 1
 
-    # --- 3. speed stability at cruise (top-25% speed portion of the drive) ---
-    cruise = [v for v in speeds if v > 0.75 * vmax] if vmax > 3 else []
-    if cruise:
+    # --- 3. speed stability at CLEAN cruise: exclude ticks where the stack is
+    # deliberately changing speed (curve slowdowns, car-following, arrival) —
+    # those are features, not wobble.
+    cruise = []
+    excluded = 0
+    if vmax > 3:
+        for t, v in zip(ticks, speeds):
+            if v <= 0.75 * vmax:
+                continue
+            reason = t.get("behavior_reason", "") or ""
+            behavior = t.get("behavior", "")
+            if "curve ahead" in reason or behavior in ("following_vehicle", "approaching_destination"):
+                excluded += 1
+                continue
+            cruise.append(v)
+    if len(cruise) >= 20:
         mean = sum(cruise) / len(cruise)
         std = math.sqrt(sum((v - mean) ** 2 for v in cruise) / len(cruise))
     else:
@@ -89,7 +102,7 @@ def analyze(path):
     print(f"duration {t1 - t0:6.1f} s | ticks {len(ticks)} | max speed {vmax:.1f} m/s")
     print(f"[{verdict(flips_per_s <= 2.0)}] steering flips/sec while moving : {flips_per_s:5.2f}   (target <= 2.0)")
     print(f"[{verdict(brake_ticks <= 5)}] UNJUSTIFIED brake ticks at speed : {brake_ticks:5d}   (target <= 5; {justified_ticks} justified ticks for objects/arrival not counted)")
-    print(f"[{verdict(std <= 0.5)}] speed wobble at cruise (stddev)  : {std:5.2f} m/s (target <= 0.5, cruise mean {mean:.1f})")
+    print(f"[{verdict(std <= 0.5)}] speed wobble at clean cruise     : {std:5.2f} m/s (target <= 0.5, mean {mean:.1f}; {excluded} deliberate-slowdown ticks excluded)")
     print("max |steer| command:", round(max(abs(s) for s in steers), 3))
 
 
