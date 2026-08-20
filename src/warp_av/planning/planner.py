@@ -202,6 +202,74 @@ class RoutePlanner:
                 return round(dist, 1)
         return None
 
+    def filter_to_route_corridor(self, perception, route: Route, ego_x, ego_y, ego_yaw,
+                                 corridor_halfwidth_m=1.75, danger_m=8.0, max_ahead_m=50.0):
+        """
+        Recompute perception's "in my path" verdict against the ROUTE CORRIDOR
+        instead of a straight box along the vehicle's nose.
+
+        Mid-turn the nose points across neighbouring lanes, so the ego-frame box
+        flags vehicles that are not on our path (false stop) and misses
+        obstacles around the bend (late stop). Here an object counts only if it
+        lies within corridor_halfwidth of the route polyline AND ahead of us
+        along the route. Mutates and returns the PerceptionOutput.
+        """
+        if not route or len(route.waypoints) < 2 or not getattr(perception, "objects", None):
+            return perception
+
+        wps = route.waypoints
+        n = len(wps)
+
+        def arc_pos(px, py):
+            """(arc-length along route of nearest point, lateral distance)."""
+            best_d2, best_arc = float("inf"), 0.0
+            arc = 0.0
+            for i in range(n - 1):
+                ax, ay, bx, by = wps[i].x, wps[i].y, wps[i + 1].x, wps[i + 1].y
+                dx, dy = bx - ax, by - ay
+                L2 = dx * dx + dy * dy
+                seg = math.sqrt(L2) if L2 > 1e-9 else 0.0
+                if seg > 0:
+                    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
+                    cx, cy = ax + t * dx, ay + t * dy
+                    d2 = (px - cx) ** 2 + (py - cy) ** 2
+                    if d2 < best_d2:
+                        best_d2, best_arc = d2, arc + t * seg
+                arc += seg
+            return best_arc, math.sqrt(best_d2)
+
+        ego_arc, _ = arc_pos(ego_x, ego_y)
+        cos_y, sin_y = math.cos(ego_yaw), math.sin(ego_yaw)
+
+        closest = 999.0
+        closest_type = perception.closest_obstacle_type
+        closest_speed = 0.0
+        blocked = False
+        found = False
+        for obj in perception.objects:
+            # ego frame (x fwd, y left) -> world
+            wx = ego_x + cos_y * obj.x - sin_y * obj.y
+            wy = ego_y + sin_y * obj.x + cos_y * obj.y
+            oarc, lat = arc_pos(wx, wy)
+            along = oarc - ego_arc
+            if lat > corridor_halfwidth_m or along < -1.0 or along > max_ahead_m:
+                continue
+            found = True
+            dist = max(0.0, along)
+            if dist < closest:
+                closest = dist
+                closest_type = obj.object_type
+                closest_speed = obj.speed
+            if dist < danger_m:
+                blocked = True
+
+        perception.closest_obstacle_distance = closest
+        perception.closest_obstacle_speed = closest_speed
+        perception.path_blocked = blocked
+        if found:
+            perception.closest_obstacle_type = closest_type
+        return perception
+
     def signed_cross_track(self, route: Route, current_x, current_y) -> float:
         """
         Signed lateral offset of the vehicle from the route polyline.

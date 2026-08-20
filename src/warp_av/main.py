@@ -214,6 +214,14 @@ class WarpAV:
 
         # 2. Perceive
         perception = self.perception.update()
+        # Route-aware in-path check: judge objects against the corridor we will
+        # actually drive, not the direction the nose points (mid-turn the nose
+        # sweeps neighbouring lanes -> false "vehicle ahead" stops).
+        if self._route and perception.healthy and pose.healthy:
+            perception = self.planner.filter_to_route_corridor(
+                perception, self._route, pose.x, pose.y, pose.yaw,
+                danger_m=getattr(self.perception, "danger_distance", 8.0),
+            )
 
         # 3. Safety check
         safety_output = self.safety.update(
