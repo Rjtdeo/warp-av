@@ -196,9 +196,14 @@ class WarpAV:
             print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
             self._parking_spot = None
         if self._parking_spot:
+            moved = self._parking_spot.get("moved_back_m", 0)
+            note = f", {moved} m before the pin (bend/junction at the pin)" if moved > 1 else ""
             self.logger.log_event("parking_spot",
                                   f"kerbside spot ({self._parking_spot['x']}, {self._parking_spot['y']}), "
-                                  f"{self._parking_spot['offset_m']} m right of lane centre")
+                                  f"{self._parking_spot['offset_m']} m right of lane centre{note}")
+            print(f"[Mission] parking spot: {self._parking_spot}")
+        else:
+            print("[Mission] no kerbside spot found near the pin — will park on the lane")
 
         # Start logging
         self.logger.start_mission_log(mission.mission_id)

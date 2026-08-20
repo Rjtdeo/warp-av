@@ -36,14 +36,20 @@ def test_pullover_bends_tail_to_the_right():
     assert abs(last.yaw - 0.0) < 0.01
 
 
-def test_pullover_refuses_twisty_tail():
+def test_twisty_tail_parks_before_the_bend_not_across_it():
     p = planner()
     wps = [Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(10)]
     for i in range(1, 8):   # sharp turn right up to the destination
         a = (math.pi / 2) * i / 7
         wps.append(Waypoint(x=20 + 6 * math.sin(a), y=6 - 6 * math.cos(a), yaw=a))
     r = Route(waypoints=wps)
-    assert p.apply_pullover(r) is None, "must not flatten a corner into a pull-over ramp"
+    spot = p.apply_pullover(r)
+    assert spot is not None and spot["moved_back_m"] > 0
+    last = r.waypoints[-1]
+    assert last.x <= 20.5, "route must end on the straight, before the corner"
+    assert last.y > 0.5, "pulled to the right at the pre-corner spot"
+    # the ramp must not contain the corner's curvature
+    assert all(abs(w.yaw) < 0.05 for w in r.waypoints[-5:])
 
 
 def test_behavior_parking_taper_and_completion():
@@ -95,3 +101,26 @@ def test_closed_loop_parks_in_the_box():
     assert err < 1.5, f"stopped {err:.2f} m from the spot"
     assert herr < math.radians(15), f"parked {math.degrees(herr):.0f} deg off the road direction"
     assert van.y > 0.4, "did not actually pull over to the right"
+
+
+def test_pin_in_a_bend_parks_before_it():
+    # straight road, then the pin sits INSIDE a junction curve at the end
+    p = planner()
+    wps = [Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(25)]      # straight to x=48
+    for i in range(1, 9):                                                # then a bend to the pin
+        a = (math.pi / 2) * i / 8
+        wps.append(Waypoint(x=48 + 8 * math.sin(a), y=8 - 8 * math.cos(a), yaw=a, is_junction=True))
+    r = Route(waypoints=wps)
+    spot = p.apply_pullover(r)
+    assert spot is not None, "must park before the bend, not give up"
+    assert spot["moved_back_m"] > 5.0
+    last = r.waypoints[-1]
+    assert last.x < 50.0, "route must be truncated before the bend"
+    assert last.y > 0.5, "still pulled over to the right at the new spot"
+
+
+def test_endless_bend_still_refuses():
+    p = planner()
+    wps = [Waypoint(x=30 * math.sin(t / 40), y=30 - 30 * math.cos(t / 40),
+                    yaw=t / 40, is_junction=True) for t in range(0, 80)]
+    assert p.apply_pullover(Route(waypoints=wps)) is None

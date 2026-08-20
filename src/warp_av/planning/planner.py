@@ -183,21 +183,58 @@ class RoutePlanner:
     # --- Parking / pull-over (Troy #7) ---
     PARK_BLEND_M = 15.0        # length of the pull-over ramp before the spot
     PARK_CURB_MARGIN_M = 1.2   # keep the van's centre this far off the lane edge
+    PARK_MAX_PULLBACK_M = 40.0 # may park up to this far BEFORE a pin that sits in a bend/junction
+
+    def _straight_run_before(self, wps, idx, need_m):
+        """Is there >= need_m of straight, non-junction road ending at wps[idx]?"""
+        if wps[idx].is_junction:
+            return False
+        # the anchor itself must be locally straight (not the first point of a bend)
+        if idx > 0 and abs((wps[idx - 1].yaw - wps[idx].yaw + math.pi) % (2 * math.pi) - math.pi) > math.radians(5):
+            return False
+        run = 0.0
+        for i in range(idx, 0, -1):
+            dyaw = abs((wps[i - 1].yaw - wps[idx].yaw + math.pi) % (2 * math.pi) - math.pi)
+            if dyaw > math.radians(20) or wps[i - 1].is_junction:
+                return run >= need_m
+            run += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
+            if run >= need_m:
+                return True
+        return run >= need_m
 
     def apply_pullover(self, route: Route, side="right"):
         """
         Bend the end of the route so the mission finishes at the kerb on the
         right-hand side (or a real Parking/Shoulder lane if the map has one)
-        instead of dead-centre on the road. Returns {"x","y","yaw","offset_m"}
-        or None when there is no safe straight stretch to blend (destination
-        right after a corner) — in that case the route is left untouched.
+        instead of dead-centre on the road.
+
+        If the pin itself sits in a bend or junction, park like a driver would:
+        at the kerb on the nearest STRAIGHT stretch before it (up to 40 m back,
+        the route is truncated there). Returns {"x","y","yaw","offset_m",
+        "moved_back_m"} or None when no safe spot exists within the pullback.
         """
         if not route or len(route.waypoints) < 4:
             return None
-        last = route.waypoints[-1]
-
-        # How much straight tail do we have to blend over?
         wps = route.waypoints
+
+        # Step 1: find the anchor — the last waypoint with >=6 m of straight
+        # road behind it, at most PARK_MAX_PULLBACK_M before the pin.
+        moved_back = 0.0
+        a = len(wps) - 1
+        while a > 2 and moved_back <= self.PARK_MAX_PULLBACK_M:
+            if self._straight_run_before(wps, a, 6.0):
+                break
+            moved_back += math.hypot(wps[a].x - wps[a - 1].x, wps[a].y - wps[a - 1].y)
+            a -= 1
+        else:
+            return None
+        if a <= 2 or moved_back > self.PARK_MAX_PULLBACK_M:
+            return None
+        if a < len(wps) - 1:
+            route.waypoints = wps = wps[:a + 1]   # mission now ends before the bend
+        last = wps[-1]
+
+        # Step 2: how much straight tail do we have to blend over?
         usable = 0.0
         i0 = len(wps) - 1
         for i in range(len(wps) - 1, 0, -1):
@@ -209,7 +246,7 @@ class RoutePlanner:
             if usable >= self.PARK_BLEND_M:
                 break
         if usable < 6.0:
-            return None      # too twisty near the goal: park on the lane as before
+            return None
 
         tx, ty, tyaw, off = self._pullover_target(last)
         if off <= 0.1:
@@ -233,7 +270,8 @@ class RoutePlanner:
                 y=p0.y + fwd[1] * (a * along) + right[1] * (smooth * lat),
                 z=last.z, yaw=tyaw))
         route.waypoints[i0 + 1:] = new_tail
-        return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3), "offset_m": round(off, 2)}
+        return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3),
+                "offset_m": round(off, 2), "moved_back_m": round(moved_back, 1)}
 
     def _pullover_target(self, last: Waypoint):
         """Kerb-side point for the final stop. Uses the CARLA map when
