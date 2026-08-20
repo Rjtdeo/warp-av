@@ -1389,11 +1389,15 @@ def camera_frame():
             status=503
         )
 
-    frame = sensor_adapter.latest_camera
+    view = request.args.get("view", "front")
+    if view == "front":
+        frame = sensor_adapter.latest_camera
+    else:
+        frame = getattr(sensor_adapter, "latest_frames", {}).get(view)
 
     if frame is None:
         return Response(
-            "Camera frame not available yet",
+            f"Camera frame not available yet ({view})",
             status=503
         )
 
@@ -1405,11 +1409,13 @@ def camera_frame():
 
         # Dashboard preview does not need full 800x600.
         # Smaller image = less CPU + less network work.
-        image_bgr = cv2.resize(
-            image_bgr,
-            (640, 480),
-            interpolation=cv2.INTER_AREA
-        )
+        # Front gets the big preview; surround views are already small.
+        if view == "front":
+            image_bgr = cv2.resize(
+                image_bgr,
+                (640, 480),
+                interpolation=cv2.INTER_AREA
+            )
 
         success, jpeg = cv2.imencode(
             ".jpg",
@@ -1492,6 +1498,21 @@ def camera_viewer():
             border-radius: 12px;
         }
 
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .grid .cell { position: relative; }
+        .grid img { border-radius: 8px; }
+        .grid .tag {
+            position: absolute; top: 6px; left: 8px;
+            font-size: 11px; letter-spacing: 1px;
+            color: #cfd6df; background: rgba(0,0,0,.55);
+            padding: 2px 7px; border-radius: 4px;
+        }
+
     </style>
 </head>
 
@@ -1499,13 +1520,20 @@ def camera_viewer():
 
 <div class="viewer">
 
-    <h2>Warp AV — Front RGB Camera</h2>
+    <h2>Warp AV — Surround View</h2>
 
     <div class="status" id="status">
         Waiting for camera...
     </div>
 
     <img id="camera">
+
+    <div class="grid">
+        <div class="cell"><span class="tag">LEFT</span><img id="cam_left"></div>
+        <div class="cell"><span class="tag">RIGHT</span><img id="cam_right"></div>
+        <div class="cell"><span class="tag">REAR</span><img id="cam_rear"></div>
+        <div class="cell"><span class="tag">TOP</span><img id="cam_top"></div>
+    </div>
 
 </div>
 
@@ -1525,11 +1553,22 @@ function requestFrame() {
         Date.now();
 }
 
+const sideViews = ["left", "right", "rear", "top"];
+sideViews.forEach(function(v, i) {
+    const el = document.getElementById("cam_" + v);
+    function tick() {
+        el.src = "/api/camera/frame?view=" + v + "&t=" + Date.now();
+    }
+    el.onload = function() { setTimeout(tick, 500); };
+    el.onerror = function() { setTimeout(tick, 1500); };
+    setTimeout(tick, 300 + i * 150);
+});
+
 
 camera.onload = function() {
 
     status.textContent =
-        "LIVE • Front RGB Sensor • ~2 FPS";
+        "LIVE • Front + Surround • ~2 FPS";
 
     /*
      * Request the NEXT frame only after

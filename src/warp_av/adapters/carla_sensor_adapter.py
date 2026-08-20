@@ -70,6 +70,9 @@ class CarlaSensorAdapter:
 
         # Latest data (thread-safe via GIL for simple reads)
         self.latest_camera: Optional[CameraFrame] = None
+        # Surround views for the operator (observability only, not perception):
+        # left / right / rear / top. Front stays in latest_camera.
+        self.latest_frames: dict = {}
         self.latest_lidar: Optional[LidarScan] = None
         self.latest_gnss: Optional[GnssReading] = None
         self.latest_imu: Optional[ImuReading] = None
@@ -108,6 +111,29 @@ class CarlaSensorAdapter:
         camera.listen(self._on_camera)
         self.sensors.append(camera)
 
+        # --- Surround view cameras (operator situational awareness) ---
+        # Lower resolution + slower tick: cheap on the GPU, plenty for the dashboard.
+        views = [
+            ("left",  400, 300, 100, carla.Transform(carla.Location(x=0.0, y=-1.1, z=1.7),
+                                                     carla.Rotation(yaw=-90, pitch=-15))),
+            ("right", 400, 300, 100, carla.Transform(carla.Location(x=0.0, y=1.1, z=1.7),
+                                                     carla.Rotation(yaw=90, pitch=-15))),
+            ("rear",  400, 300, 90,  carla.Transform(carla.Location(x=-2.6, z=1.8),
+                                                     carla.Rotation(yaw=180, pitch=-12))),
+            # bird's-eye: floats above the van looking straight down (~45 m square)
+            ("top",   420, 420, 90,  carla.Transform(carla.Location(x=0.0, z=22.0),
+                                                     carla.Rotation(pitch=-90))),
+        ]
+        for view_name, w, h, fov, tf in views:
+            bp = bp_lib.find('sensor.camera.rgb')
+            bp.set_attribute('image_size_x', str(w))
+            bp.set_attribute('image_size_y', str(h))
+            bp.set_attribute('fov', str(fov))
+            bp.set_attribute('sensor_tick', '0.15')   # ~7 Hz
+            cam = self.world.spawn_actor(bp, tf, attach_to=self.vehicle)
+            cam.listen(self._make_view_callback(view_name))
+            self.sensors.append(cam)
+
         # --- LiDAR ---
         lidar_bp = bp_lib.find('sensor.lidar.ray_cast')
         lidar_bp.set_attribute('channels', '32')
@@ -135,6 +161,18 @@ class CarlaSensorAdapter:
         self.sensors.append(imu)
 
         print(f"[CarlaSensorAdapter] {len(self.sensors)} sensors attached")
+
+    def _make_view_callback(self, view_name):
+        def _cb(image):
+            if not self.camera_enabled:
+                return
+            array = np.frombuffer(image.raw_data, dtype=np.uint8)
+            array = array.reshape((image.height, image.width, 4))
+            self.latest_frames[view_name] = CameraFrame(
+                image=array, width=image.width, height=image.height,
+                fov=float(image.fov), timestamp=time.time()
+            )
+        return _cb
 
     def _on_camera(self, image):
         if not self.camera_enabled:

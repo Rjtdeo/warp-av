@@ -6470,7 +6470,7 @@ navItems.forEach(item => {
                 <div>
 
                     <span class="warp-inline-camera-name">
-                        FRONT RGB CAMERA
+                        SURROUND VIEW — FRONT / LEFT / RIGHT / REAR / TOP
                     </span>
 
                 </div>
@@ -6509,6 +6509,25 @@ navItems.forEach(item => {
                 <img
                     id="warp-inline-camera-img"
                     alt="Warp AV Front RGB">
+
+                <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:6px;">
+                    <div style="position:relative;">
+                        <span style="position:absolute;top:4px;left:6px;font-size:10px;letter-spacing:1px;color:#cfd6df;background:rgba(0,0,0,.55);padding:1px 6px;border-radius:4px;">LEFT</span>
+                        <img id="warp-cam-left" style="width:100%;display:block;background:#0b0d11;border-radius:6px;" alt="left">
+                    </div>
+                    <div style="position:relative;">
+                        <span style="position:absolute;top:4px;left:6px;font-size:10px;letter-spacing:1px;color:#cfd6df;background:rgba(0,0,0,.55);padding:1px 6px;border-radius:4px;">RIGHT</span>
+                        <img id="warp-cam-right" style="width:100%;display:block;background:#0b0d11;border-radius:6px;" alt="right">
+                    </div>
+                    <div style="position:relative;">
+                        <span style="position:absolute;top:4px;left:6px;font-size:10px;letter-spacing:1px;color:#cfd6df;background:rgba(0,0,0,.55);padding:1px 6px;border-radius:4px;">REAR</span>
+                        <img id="warp-cam-rear" style="width:100%;display:block;background:#0b0d11;border-radius:6px;" alt="rear">
+                    </div>
+                    <div style="position:relative;">
+                        <span style="position:absolute;top:4px;left:6px;font-size:10px;letter-spacing:1px;color:#cfd6df;background:rgba(0,0,0,.55);padding:1px 6px;border-radius:4px;">TOP</span>
+                        <img id="warp-cam-top" style="width:100%;display:block;background:#0b0d11;border-radius:6px;" alt="top">
+                    </div>
+                </div>
 
             </div>
 
@@ -6598,6 +6617,23 @@ navItems.forEach(item => {
                 1000
             );
         };
+
+
+        // Surround views: left / right / rear / top at ~2 FPS each.
+        ["left", "right", "rear", "top"].forEach(function (v, i) {
+
+            const el = document.getElementById("warp-cam-" + v);
+            if (!el) { return; }
+
+            function tick() {
+                if (!running) { setTimeout(tick, 1000); return; }
+                el.src = API + "/api/camera/frame?view=" + v + "&t=" + Date.now();
+            }
+
+            el.onload = function () { setTimeout(tick, 500); };
+            el.onerror = function () { setTimeout(tick, 1500); };
+            setTimeout(tick, 400 + i * 150);
+        });
 
 
         button.onclick = function () {
