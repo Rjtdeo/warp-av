@@ -13,7 +13,7 @@ stop_margin_s: 1.5
 
 # Stack thresholds the catalog brackets (keep in sync with the code they mirror)
 perception_path_width_m: 3.5        # perception.py
-perception_danger_distance_m: 5.0   # perception.py
+perception_danger_distance_m: 8.0   # perception.py (Troy #4)
 perception_detection_range_m: 50.0  # perception.py
 safety_max_perception_age_s: 1.0    # safety_supervisor.py
 safety_max_localization_age_s: 1.0  # safety_supervisor.py

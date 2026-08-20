@@ -12,6 +12,10 @@ Perception currently reads CARLA's actor list (world.get_actors()) instead of pr
 
 The vehicle follows CARLA's route waypoints but does not detect lane markings visually. It relies on the map graph for staying in lane.
 
+## Safety Buffers (Troy #4, applied)
+
+Stop trigger (perception.danger_distance) raised 5 → 8 m in BOTH perception implementations; slow-down zone (behavior.slow_distance) 15 → 20 m. Lateral path width intentionally left at 3.5 m — widening it makes the van stop for shoulder objects (parked cars, cones) and would flip the expected result of the path-box boundary scenarios; revisit together with route-aware corridor checking.
+
 ## Steering Controller (improved, needs CARLA validation)
 
 Fix for the observed weave/brake-taps (Troy #5): speed-scaled lookahead (1.6 s of travel, 5–13 m, was fixed 5 m), speed-scheduled steering gain (1.5 at ≤3 m/s → 0.55 at ≥10 m/s, was fixed 1.5), low-pass + rate limit on steering, and a coast band so small speed overshoot lifts off instead of tapping the brakes. Covered by tests/test_controller_stability.py (kinematic bicycle model). NOTE: the original oscillation could not be reproduced in the lag-free offline model — the tuning is validated for stability offline, but the before/after weave comparison must be done in CARLA (steer_oscillation_index in nm_speed_sweep / rg_geometry scenarios). A Stanley controller or MPC is still the longer-term answer.

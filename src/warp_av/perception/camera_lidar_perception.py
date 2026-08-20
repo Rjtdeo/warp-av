@@ -581,7 +581,7 @@ class CameraLidarPerception:
 
         # Same general limits as old perception.
         self.detection_range = 50.0
-        self.danger_distance = 5.0
+        self.danger_distance = 8.0   # Troy #4: was 5.0
         self.path_width = 3.5
 
         # Ignore extremely close points that could be

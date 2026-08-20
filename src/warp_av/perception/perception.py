@@ -73,7 +73,7 @@ class PerceptionSystem:
 
         # Detection parameters
         self.detection_range = 50.0          # meters
-        self.danger_distance = 5.0           # meters — close enough to worry
+        self.danger_distance = 8.0           # meters — stop trigger (Troy #4: was 5.0; 8 m gives a real margin at 8 m/s cruise)
         self.path_width = 3.5                # meters — lane width to check
 
     def update(self) -> PerceptionOutput:

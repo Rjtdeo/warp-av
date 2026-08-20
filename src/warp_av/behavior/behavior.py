@@ -64,8 +64,8 @@ class BehaviorSystem:
         # Tuning
         self.cruise_speed = 8.0          # m/s (~18 mph, good for cargo van)
         self.slow_speed = 3.0            # m/s when approaching obstacle
-        self.stop_distance = 5.0         # meters — stop if object closer
-        self.slow_distance = 15.0        # meters — slow down
+        self.stop_distance = 8.0         # meters — informational; the actual stop trigger is perception.danger_distance
+        self.slow_distance = 20.0        # meters — slow down (Troy #4: was 15.0)
         self.destination_threshold = 5.0 # meters — "close enough" to destination
 
         # If the path stays blocked for this long,
