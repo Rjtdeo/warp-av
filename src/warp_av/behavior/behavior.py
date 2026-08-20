@@ -34,6 +34,7 @@ class DrivingBehavior(Enum):
     STOPPED_BLOCKED = "stopped_blocked"
     STOPPED_SAFETY = "stopped_safety"
     STOPPED_ESTOP = "stopped_estop"
+    STOPPED_RED_LIGHT = "stopped_red_light"
     MISSION_COMPLETE = "mission_complete"
     NO_MISSION = "no_mission"
 
@@ -198,6 +199,17 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_OBSTACLE,
                 f"OBSTACLE in path at {perception.closest_obstacle_distance:.1f}m — stopped",
+                speed=0.0, stop=True
+            )
+
+        # --- Traffic light (Troy #1): red or yellow -> stop and hold at the line.
+        # Ranked below pedestrian/vehicle/obstacle stops (a closer physical
+        # hazard always wins) and above following/cruising. Green releases it
+        # automatically on the next tick.
+        if perception.traffic_light in ("red", "yellow"):
+            return self._decide(
+                DrivingBehavior.STOPPED_RED_LIGHT,
+                f"{perception.traffic_light.upper()} traffic light — stopped, waiting for green",
                 speed=0.0, stop=True
             )
 

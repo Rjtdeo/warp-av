@@ -62,7 +62,7 @@ Vehicle doesn't know its allowed operating area. Safety supervisor should check 
 
 - **Sensor health not wired to the safety supervisor.** `CarlaSensorAdapter` tracks camera/lidar/gnss/imu staleness but `SafetySupervisor.update()` never receives it; in ground-truth perception mode a dead camera does not stop the vehicle. 50 `sensor_degradation` + 9 `cf_disable` scenarios are `not_implemented` for this reason.
 - **No geofence / ODD enforcement** (40 `odd_boundary` scenarios define the contract).
-- **Traffic lights / signs ignored** (30 `traffic_control` scenarios; will run a red).
+- ~~Traffic lights ignored~~ **Implemented (ground-truth mode)**: perception reports the light governing our lane (red/yellow/green), behavior stops for red AND yellow (no dilemma-zone judgement yet — without stop-line distance we cannot decide "proceed on yellow", so we always stop; revisit with map stop lines). Camera mode reports "none" until a light classifier exists → unchanged behavior there. Signs (stop/yield/speed) still ignored. CARLA validation of `tc_traffic_light` pending.
 - ~~No car-following~~ **Implemented (ground-truth mode)**: time-gap following (1.5 s + 8 m) behind moving vehicles — `behavior.FOLLOWING_VEHICLE`. In camera+LiDAR mode detections carry no speed (no tracking yet) so the van falls back to the old slow/stop behaviour; needs object tracking to enable following there. CARLA validation of `va_slow_lead` pending.
 - **No re-plan / mission-failure timeout on a persistent block.**
 - **Straight ego-frame in-path box** → late detection around curves (`so_after_curve`).

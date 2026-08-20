@@ -49,6 +49,7 @@ class PerceptionOutput:
     closest_obstacle_distance: float = 999.0
     closest_obstacle_type: ObjectType = ObjectType.UNKNOWN
     closest_obstacle_speed: float = 0.0     # m/s; 0.0 also means "unknown" (camera mode has no tracking yet)
+    traffic_light: str = "none"             # none | red | yellow | green (Troy #1; camera mode reports none until a classifier exists)
     path_blocked: bool = False
     timestamp: float = field(default_factory=time.time)
     healthy: bool = True
@@ -125,6 +126,17 @@ class PerceptionSystem:
                     objects.append(obj)
 
             # Find closest object in our path
+            # Traffic light governing our lane (CARLA ground truth — the same
+            # answer a camera classifier will produce later).
+            tl_state = "none"
+            try:
+                tl = self.vehicle.get_traffic_light()
+                if tl is not None:
+                    tl_state = {"Red": "red", "Yellow": "yellow", "Green": "green"}.get(
+                        str(tl.get_state()).split(".")[-1], "none")
+            except Exception:
+                tl_state = "none"
+
             closest_dist = 999.0
             closest_type = ObjectType.UNKNOWN
             closest_speed = 0.0
@@ -145,6 +157,7 @@ class PerceptionSystem:
                 closest_obstacle_distance=closest_dist,
                 closest_obstacle_type=closest_type,
                 closest_obstacle_speed=closest_speed,
+                traffic_light=tl_state,
                 path_blocked=path_blocked,
                 timestamp=time.time() - self._fault["stale_age_s"],
                 healthy=True,
