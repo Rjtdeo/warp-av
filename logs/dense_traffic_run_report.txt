@@ -1,0 +1,58 @@
+﻿========================================================================
+MISSION REPORT ù mission_0005.jsonl
+========================================================================
+duration  309.9 s | ticks 2641 | distance    463 m | max 7.7 m/s | moving avg 3.3 m/s
+start (-100.6, -10.8)  ->  end (7.0, 127.6)
+
+--- EVENTS ------------------------------------------------------------
+    0.0s  mission_started        Destination: (3.0, 130.2)
+  310.0s  mission_completed      Parked 1.43 m from the kerbside spot, heading off 3 deg
+
+--- BEHAVIOR TIMELINE -------------------------------------------------
+    0.1s  stopped_vehicle          v= 0.0  VEHICLE blocking path at 6.2m ù stopped
+    0.4s  following_vehicle        v= 0.0  Following vehicle: gap 8.1m (want 18.2m), lead 6.8 m/s ù target 3.8 m/
+    4.8s  following_route          v= 4.7  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 7.3 m/s
+    7.8s  following_vehicle        v= 7.1  Following vehicle: gap 29.8m (want 15.2m), lead 4.8 m/s ù target 8.0 m
+   10.0s  following_route          v= 5.5  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 6.2 m/s
+   14.6s  waiting_at_junction      v= 2.7  Approaching right turn ù rolling up to the crossing (12 m)
+   15.5s  stopped_vehicle          v= 2.8  VEHICLE blocking path at 7.9m ù stopped
+   39.9s  waiting_at_junction      v= 0.0  Approaching right turn ù rolling up to the crossing (10 m)
+   47.6s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 5.4 m/s
+   48.8s  stopped_red_light        v= 0.9  YELLOW traffic light ù holding at the stop line, waiting for green
+   83.8s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 5.4 m/s
+  102.9s  waiting_at_junction      v= 2.9  Approaching left turn ù rolling up to the crossing (6 m)
+  103.4s  following_route          v= 0.8  RED light ahead (4 m to stop line) ù rolling up
+  103.9s  stopped_red_light        v= 0.4  RED traffic light ù holding at the stop line, waiting for green
+  143.9s  waiting_at_junction      v= 0.0  Approaching left turn ù rolling up to the crossing (6 m)
+  153.7s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 2.5 m/s
+  153.9s  stopped_red_light        v= 0.0  YELLOW traffic light ù holding at the stop line, waiting for green
+  204.1s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 2.5 m/s
+  223.0s  waiting_at_junction      v= 5.0  Approaching right turn ù rolling up to the crossing (11 m)
+  228.6s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 2.9 m/s
+  238.1s  waiting_at_junction      v= 2.6  Approaching left turn ù rolling up to the crossing (11 m) | curve ahea
+  246.1s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 2.8 m/s
+  259.6s  waiting_at_junction      v= 6.7  Approaching right turn ù rolling up to the crossing (12 m)
+  271.0s  following_route          v= 0.0  Route clear ù cruising at 8.0 m/s | curve ahead ù slowing to 4.2 m/s
+  297.5s  approaching_destination  v= 5.5  Approaching destination (24.9m) ù slowing
+  301.2s  parking                  v= 2.7  Parking ù pulling over, 14.9 m to the spot
+
+--- STOPS (speed < 0.2 for >= 1 s) ------------------------------------
+   15.8s   24.6 s   VEHICLE blocking path at 7.3m ù stopped
+   45.4s    2.9 s   Approaching right turn ù pausing to check for traffic
+   48.9s   35.3 s   RED traffic light ù holding at the stop line, waiting for green
+  104.0s   40.4 s   RED traffic light ù holding at the stop line, waiting for green
+  149.3s   55.2 s   RED traffic light ù holding at the stop line, waiting for green
+  227.2s    2.1 s   Approaching right turn ù pausing to check for traffic
+  244.6s    2.2 s   Approaching left turn ù pausing to check for traffic
+  269.5s    2.1 s   Approaching right turn ù pausing to check for traffic
+
+--- VERIFICATION ------------------------------------------------------
+[OK ] mission completed                      Parked 1.43 m from the kerbside spot, heading off 3 deg
+[OK ] parked distance from spot              1.43 m (target <= 1.5)
+[OK ] parked heading vs road                 3 deg (target <= 15)
+[OK ] steering flips/sec while moving        0.14 (target <= 2.0)
+[OK ] unjustified brake ticks at speed       0 (5 justified excluded)
+[OK ] speed wobble at clean cruise           0.04 m/s (target <= 0.5)
+[OK ] safety supervisor                      ok the whole run
+
+behaviors this run: stopped_vehicle -> following_vehicle -> following_route -> waiting_at_junction -> stopped_red_light -> approaching_destination -> parking
