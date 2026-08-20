@@ -58,6 +58,10 @@ Vehicle doesn't know its allowed operating area. Safety supervisor should check 
 - Logger doesn't handle disk-full scenarios
 - No unit tests for individual components
 
+## Parking (Troy #7, implemented)
+
+Missions now finish PULLED OVER at the right kerb: at planning time the route's last ~15 m are bent to a kerbside spot (real Parking/Shoulder lane if the map has one, else the right edge of the rightmost driving lane); final approach tapers to walking pace (`parking` behavior) and completion requires being within 1.5 m of the spot AND nearly stopped (was: 5 m anywhere on the road at any speed). Precision is logged ("Parked 0.4 m from the kerbside spot, heading off 3 deg"). Limitations: forward pull-over only (no reverse/parallel manoeuvres); if the last stretch is a corner the pull-over is skipped and the van parks on the lane as before; box tolerance 1.5 m — tighten after CARLA validation.
+
 ## Gaps surfaced by the 1000-scenario catalog (see docs/SCENARIO_STRATEGY.md §3)
 
 - **Sensor health not wired to the safety supervisor.** `CarlaSensorAdapter` tracks camera/lidar/gnss/imu staleness but `SafetySupervisor.update()` never receives it; in ground-truth perception mode a dead camera does not stop the vehicle. 50 `sensor_degradation` + 9 `cf_disable` scenarios are `not_implemented` for this reason.

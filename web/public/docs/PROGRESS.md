@@ -16,7 +16,7 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 | 2 | Correct left turns | ✅ verified | curve-aware speed (slows before bends), arc-following aim point, corner-cut deviation 1.25 → **0.78 m** in the reference 90° corner |
 | 3 | Correct right turns | ✅ verified | same mechanism, left/right symmetric by construction (tested) |
 | 1 | Observe traffic lights | ✅ verified | operator watched the van stop at red and release on green; red/yellow stop, green auto-release; hazards outrank the light |
-| 7 | Park inside a parking box | ⏳ **not started** | the only remaining item |
+| 7 | Park inside a parking box | ✅ implemented (sim-verified) | finishes pulled over at the right kerb; closed-loop sim parks **0.93 m** from the spot, **8°** off road heading; completion needs ≤1.5 m AND nearly stopped. CARLA validation pending |
 
 ## 2. Operator-feedback fixes (found by driving it, fixed same day)
 
@@ -58,7 +58,7 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 
 ## 6. What's left
 
-1. **Parking (Troy #7)** — precise final approach into a parking box (last open request)
+1. **CARLA-validate parking** (implemented and sim-verified; needs the operator's drive)
 2. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
    no object tracking yet (so following/light detection run on ground truth), give-way uses a radius
    heuristic rather than true right-of-way, corridor check trusts localization (fine in sim)
