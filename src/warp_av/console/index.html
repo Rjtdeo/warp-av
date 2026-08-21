@@ -345,16 +345,13 @@ body {
    LIVE VIEW
    ============================================================ */
 
-/* ---------- SURROUND CROSS (front / left-map-right / rear) ---------- */
+/* ---------- SURROUND CLUSTER: camera wall left, tall map right ---------- */
 .surround-cross {
     display: grid;
-    grid-template-areas:
-        ". front ."
-        "left map right"
-        ". rear .";
-    grid-template-columns: minmax(150px, 1fr) minmax(0, 2.4fr) minmax(150px, 1fr);
+    grid-template-areas: "front map";
+    grid-template-columns: 1.55fr 1fr;
     gap: 10px;
-    align-items: center;
+    align-items: stretch;
 }
 .sc-cam {
     position: relative;
@@ -363,26 +360,58 @@ body {
     background: #0b0d11;
     border: 1px solid rgba(255,255,255,.06);
 }
-.sc-front { grid-area: front; justify-self: center; width: min(62%, 560px); }
+.sc-front { grid-area: front; }
 .sc-left  { grid-area: left; }
+.sc-rear  { grid-area: rear; }
 .sc-right { grid-area: right; }
-.sc-rear  { grid-area: rear; justify-self: center; width: min(52%, 460px); }
-.surround-cross .vehicle-map { grid-area: map; }
-.sc-cam img { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; }
+.surround-cross .vehicle-map {
+    grid-area: map;
+    height: 100%;
+    min-height: 0;
+    align-self: stretch;
+}
+.surround-cross .vehicle-map #mapCanvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+}
+.sc-front img { width: 100%; height: 100%; display: block; aspect-ratio: 4 / 3; object-fit: contain; background: #0b0d11; }
+.sc-left img, .sc-rear img, .sc-right img {
+    width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover;
+}
 .sc-cam .sc-tag {
-    position: absolute; top: 6px; left: 8px;
+    position: absolute; top: 6px; left: 8px; z-index: 2;
     font-size: 10px; letter-spacing: 1.5px; color: #cfd6df;
     background: rgba(0,0,0,.55); padding: 2px 7px; border-radius: 4px;
 }
 #sc-path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.sc-intent {
-    position: absolute; top: 6px; right: 8px;
-    font-size: 10px; letter-spacing: 1.5px; font-weight: 700;
-    padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,.55);
+.sc-intent { display: none; }
+.sc-hud {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 10px; padding: 26px 12px 8px 12px;
+    background: linear-gradient(180deg, rgba(5,10,16,0) 0%, rgba(5,10,16,.78) 78%);
+    pointer-events: none;
 }
-@media (max-width: 980px) {
-    .surround-cross { grid-template-columns: 1fr; grid-template-areas: "front" "map" "left" "right" "rear"; }
-    .sc-front, .sc-rear { width: 100%; }
+.sc-hud-speed { line-height: 1; }
+.sc-hud-speed b { font-size: 30px; font-weight: 800; color: #fff; letter-spacing: .5px; }
+.sc-hud-speed span { font-size: 10px; letter-spacing: 2px; color: #9aa4b2; margin-left: 4px; }
+.sc-hud-reason {
+    flex: 1; font-size: 11px; color: #cfd6df; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85;
+}
+.sc-hud-intent {
+    font-size: 11px; font-weight: 800; letter-spacing: 2px;
+    padding: 3px 10px; border-radius: 20px; border: 1px solid currentColor;
+}
+.sc-rear img { transform: scaleX(-1); }   /* mirrored, like a rear-view mirror */
+@media (max-width: 1100px) {
+    .surround-cross {
+        grid-template-columns: 1fr;
+        grid-template-areas: "front" "map";
+    }
+    .surround-cross .vehicle-map { min-height: 420px; }
 }
 
 .vehicle-map {
@@ -2514,11 +2543,11 @@ body.demo-mode .metric-value {
                     <canvas id="sc-path"></canvas>
                     <span class="sc-tag">FRONT</span>
                     <span class="sc-intent" id="sc-intent"></span>
-                </div>
-
-                <div class="sc-cam sc-left">
-                    <img id="sc-left" alt="left camera">
-                    <span class="sc-tag">LEFT</span>
+                    <div class="sc-hud">
+                        <div class="sc-hud-speed"><b id="sc-hud-mph">0</b><span>MPH</span></div>
+                        <div class="sc-hud-reason" id="sc-hud-reason"></div>
+                        <div class="sc-hud-intent" id="sc-hud-intent">STANDBY</div>
+                    </div>
                 </div>
 
                 <div class="vehicle-map">
@@ -2581,16 +2610,6 @@ body.demo-mode .metric-value {
                         <strong id="mapPosition">—</strong>
                     </div>
 
-                </div>
-
-                <div class="sc-cam sc-right">
-                    <img id="sc-right" alt="right camera">
-                    <span class="sc-tag">RIGHT</span>
-                </div>
-
-                <div class="sc-cam sc-rear">
-                    <img id="sc-rear" alt="rear camera">
-                    <span class="sc-tag">REAR</span>
                 </div>
 
                 </div>
@@ -3523,8 +3542,7 @@ async function faultAction(path, message) {
 
 (function initSurroundCross() {
 
-    const views = [["sc-front", "front", 300], ["sc-left", "left", 500],
-                   ["sc-right", "right", 500], ["sc-rear", "rear", 500]];
+    const views = [["sc-front", "front", 300]];
 
     views.forEach(function ([id, view, period], i) {
         const el = document.getElementById(id);
@@ -3543,20 +3561,24 @@ async function faultAction(path, message) {
     const CAM_F = 2.0, CAM_H = 1.8, PITCH = 10 * Math.PI / 180;
     const RIBBON_AHEAD_M = 25.0, HALF_W = 0.95;
 
-    function intent() {
+    function intent(missionOn) {
         const st = latestState || {};
         const b = st.behavior || '';
         const rs = st.behavior_reason || '';
         const brake = st.command ? Number(st.command.brake) : 0;
+        if (!missionOn) return ['160,170,185', 'STANDBY'];
         if (b.indexOf('stopped') === 0 || brake > 0.6)
             return ['255,82,82', 'STOPPING'];
-        if (b === 'waiting_at_junction' || b === 'parking'
+        if (b === 'parking') return ['79,195,247', 'PARKING'];
+        if (b === 'waiting_at_junction'
             || b === 'approaching_destination' || b === 'following_vehicle'
             || rs.indexOf('slowing') >= 0 || rs.indexOf('curve ahead') >= 0
             || rs.indexOf('rolling up') >= 0)
             return ['255,193,7', 'SLOWING'];
         return ['57,231,125', 'CRUISING'];
     }
+
+    const OBJ_COLORS = { pedestrian: '255,193,7', vehicle: '79,195,247' };
 
     function drawRibbon() {
         const cv = document.getElementById('sc-path');
@@ -3572,17 +3594,36 @@ async function faultAction(path, message) {
         const st = latestState;
         const route = (mapData && mapData.route) || [];
         const missionOn = st && st.mission && st.mission.state === 'executing';
-        if (chip) {
-            const [col, label] = intent();
-            chip.textContent = missionOn ? label : '';
-            chip.style.color = 'rgb(' + col + ')';
+
+        /* HUD + mode-colored frame (always live, even in standby) */
+        const [icol, ilabel] = intent(missionOn);
+        const hudMph = document.getElementById('sc-hud-mph');
+        const hudReason = document.getElementById('sc-hud-reason');
+        const hudIntent = document.getElementById('sc-hud-intent');
+        if (hudMph && st && st.pose) {
+            hudMph.textContent = Math.round(Number(st.pose.speed) * 2.23694);
         }
-        if (!st || !st.pose || route.length < 2 || !missionOn) { return; }
+        if (hudReason) {
+            hudReason.textContent = (st && missionOn && st.behavior_reason) ? st.behavior_reason : '';
+        }
+        if (hudIntent) {
+            hudIntent.textContent = ilabel;
+            hudIntent.style.color = 'rgb(' + icol + ')';
+        }
+        const frontBox = img.parentElement;
+        if (frontBox) {
+            frontBox.style.boxShadow = missionOn
+                ? 'inset 0 0 0 2px rgba(' + icol + ',.55)'
+                : 'none';
+        }
+
+        if (!st || !st.pose) { return; }
 
         const ex = Number(st.pose.x), ey = Number(st.pose.y);
         const yaw = Number(st.pose.yaw) * Math.PI / 180;
         const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
         const fx = W / 2, fy = W / 2, cx = W / 2, cyp = H / 2;
+        const drawRoute = route.length >= 2 && missionOn;
 
         function proj(wx, wy) {
             const dx = wx - ex, dy = wy - ey;
@@ -3595,6 +3636,7 @@ async function faultAction(path, message) {
             return [cx + fx * (r / Zc), cyp + fy * (Yc / Zc)];
         }
 
+        if (drawRoute) {
         // nearest route point, then collect ~25 m ahead
         let ni = 0, nd = 1e9;
         for (let i = 0; i < route.length; i++) {
@@ -3616,7 +3658,7 @@ async function faultAction(path, message) {
         }
         if (left.length < 2) { return; }
 
-        const [col] = intent();
+        const col = icol;
         const topY = Math.min(left[left.length - 1][1], right[right.length - 1][1]);
         const grad = ctx.createLinearGradient(0, H, 0, topY);
         grad.addColorStop(0, 'rgba(' + col + ',0.40)');
@@ -3635,6 +3677,67 @@ async function faultAction(path, message) {
             ctx.beginPath();
             edge.forEach(function (p, i) { i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]); });
             ctx.stroke();
+        });
+
+        }
+
+        /* parking boxes on the ground: green = chosen, red = occupied */
+        const slots = st.parking_slots || [];
+        slots.forEach(function (sl) {
+            if (!sl.corners) { return; }
+            const pts = sl.corners.map(function (c) { return proj(Number(c[0]), Number(c[1])); });
+            if (pts.some(function (p) { return !p; })) { return; }
+            ctx.beginPath();
+            pts.forEach(function (p, i) { i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]); });
+            ctx.closePath();
+            if (sl.chosen) {
+                ctx.fillStyle = 'rgba(57,231,125,0.22)';
+                ctx.strokeStyle = 'rgba(57,231,125,0.95)';
+                ctx.lineWidth = 2.5;
+            } else if (sl.occupied) {
+                ctx.fillStyle = 'rgba(255,82,82,0.12)';
+                ctx.strokeStyle = 'rgba(255,82,82,0.7)';
+                ctx.lineWidth = 1.5;
+            } else {
+                ctx.fillStyle = 'rgba(180,190,205,0.06)';
+                ctx.strokeStyle = 'rgba(180,190,205,0.45)';
+                ctx.lineWidth = 1.2;
+            }
+            ctx.fill();
+            ctx.stroke();
+        });
+
+        /* detected objects, drawn where the van sees them */
+        const objs = (st.perception && st.perception.objects) || [];
+        const sorted = objs.slice().sort(function (a, b) { return a.distance - b.distance; }).slice(0, 8);
+        sorted.forEach(function (o, rank) {
+            const p = proj(Number(o.x), Number(o.y));
+            if (!p) { return; }
+            const pR = proj(Number(o.x) + (-sinY), Number(o.y) + cosY);  // +1 m CARLA-right
+            const scale = pR ? Math.max(3, Math.hypot(pR[0] - p[0], pR[1] - p[1])) : 6;
+            const ocol = OBJ_COLORS[o.type] || '255,110,110';
+            const near = rank === 0;
+
+            ctx.beginPath();
+            ctx.ellipse(p[0], p[1], scale * 0.9, scale * 0.32, 0, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(' + ocol + ',' + (near ? 0.95 : 0.55) + ')';
+            ctx.lineWidth = near ? 2.2 : 1.3;
+            ctx.stroke();
+
+            const top = p[1] - scale * 1.8;
+            ctx.beginPath();
+            ctx.moveTo(p[0], p[1] - scale * 0.3);
+            ctx.lineTo(p[0], top);
+            ctx.stroke();
+
+            const label = (o.type === 'pedestrian' ? 'PERSON' : o.type.toUpperCase())
+                + ' ' + Math.round(o.distance) + 'm';
+            ctx.font = (near ? '700 ' : '') + '10px sans-serif';
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(5,10,16,' + (near ? 0.85 : 0.6) + ')';
+            ctx.fillRect(p[0] - tw / 2 - 5, top - 15, tw + 10, 14);
+            ctx.fillStyle = 'rgba(' + ocol + ',' + (near ? 1 : 0.8) + ')';
+            ctx.fillText(label, p[0] - tw / 2, top - 4);
         });
     }
 
@@ -5799,48 +5902,6 @@ function drawMap(s) {
         ctx.restore();
 
 
-        /* PARKING SLOTS (FIND PARKING result) */
-
-        const slots = s && s.parking_slots;
-
-        if (slots && slots.length) {
-
-            slots.forEach(function (sl) {
-
-                if (!sl.corners) { return; }
-
-                ctx.save();
-                ctx.beginPath();
-
-                sl.corners.forEach(function (c, i) {
-                    const [px, py] = project(Number(c[0]), Number(c[1]));
-                    if (i === 0) ctx.moveTo(px, py);
-                    else ctx.lineTo(px, py);
-                });
-
-                ctx.closePath();
-
-                if (sl.chosen) {
-                    ctx.fillStyle = 'rgba(57,231,125,.30)';
-                    ctx.strokeStyle = '#39e77d';
-                    ctx.lineWidth = 2.5;
-                } else if (sl.occupied) {
-                    ctx.fillStyle = 'rgba(255,82,82,.18)';
-                    ctx.strokeStyle = 'rgba(255,82,82,.8)';
-                    ctx.lineWidth = 1.5;
-                } else {
-                    ctx.fillStyle = 'rgba(160,170,185,.10)';
-                    ctx.strokeStyle = 'rgba(160,170,185,.7)';
-                    ctx.lineWidth = 1.5;
-                }
-
-                ctx.fill();
-                ctx.stroke();
-                ctx.restore();
-            });
-        }
-
-
         /* route start */
 
         const first =
@@ -5933,6 +5994,73 @@ function drawMap(s) {
         );
     }
 
+
+
+    /* --------------------------------------------------------
+       PARKING SLOT BOXES (FIND PARKING)
+       Drawn whenever slots exist — independent of the route, so
+       they never flicker with route refreshes. Boxes are inflated
+       to a minimum on-screen size so they stay visible at any zoom.
+       -------------------------------------------------------- */
+
+    const parkingSlots = s && s.parking_slots;
+
+    if (parkingSlots && parkingSlots.length) {
+
+        parkingSlots.forEach(function (sl) {
+
+            if (!sl.corners) { return; }
+
+            let pts = sl.corners.map(function (c) {
+                return project(Number(c[0]), Number(c[1]));
+            });
+
+            let cx0 = 0, cy0 = 0;
+            pts.forEach(function (pp) { cx0 += pp[0]; cy0 += pp[1]; });
+            cx0 /= pts.length; cy0 /= pts.length;
+
+            let maxd = 0;
+            pts.forEach(function (pp) {
+                maxd = Math.max(maxd, Math.hypot(pp[0] - cx0, pp[1] - cy0));
+            });
+            const MIN_HALF_DIAG = 11;
+            if (maxd > 0 && maxd < MIN_HALF_DIAG) {
+                const k = MIN_HALF_DIAG / maxd;
+                pts = pts.map(function (pp) {
+                    return [cx0 + (pp[0] - cx0) * k, cy0 + (pp[1] - cy0) * k];
+                });
+            }
+
+            ctx.save();
+            ctx.beginPath();
+            pts.forEach(function (pp, i) {
+                if (i === 0) { ctx.moveTo(pp[0], pp[1]); }
+                else { ctx.lineTo(pp[0], pp[1]); }
+            });
+            ctx.closePath();
+
+            if (sl.chosen) {
+                ctx.fillStyle = 'rgba(57,231,125,.4)';
+                ctx.strokeStyle = '#39e77d';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = 'rgba(57,231,125,.8)';
+                ctx.shadowBlur = 10;
+            } else if (sl.occupied) {
+                ctx.fillStyle = 'rgba(255,82,82,.28)';
+                ctx.strokeStyle = 'rgba(255,82,82,.95)';
+                ctx.lineWidth = 2;
+            } else {
+                ctx.fillStyle = 'rgba(180,190,205,.18)';
+                ctx.strokeStyle = 'rgba(180,190,205,.9)';
+                ctx.lineWidth = 2;
+            }
+
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.stroke();
+            ctx.restore();
+        });
+    }
 
 
     /* --------------------------------------------------------

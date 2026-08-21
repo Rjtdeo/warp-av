@@ -276,3 +276,21 @@ def test_overshoot_stops_instead_of_wandering():
     out = b.update(PerceptionOutput(), slow, 2.0, True, park_position_ok=False)  # moving away again
     assert out.behavior == DrivingBehavior.MISSION_COMPLETE
     assert "overshot" in out.reason
+
+
+def test_straddling_car_occupies_both_slots():
+    """A car parked across two slot boundaries must mark BOTH occupied
+    (corner-based occupancy, not centre-point)."""
+    P = RoutePlanner
+    slot_a = {"x": 10.0, "y": 2.8, "yaw": 0.0, "length": 7.0, "width": 2.5}
+    slot_b = {"x": 17.0, "y": 2.8, "yaw": 0.0, "length": 7.0, "width": 2.5}
+    # car centred exactly on the boundary (x=13.5): centre is on the edge,
+    # corners reach ~2.4 m into each slot
+    cx, cy, cyaw, hl, hw = 13.5, 2.8, 0.0, 2.4, 0.95
+    pts = [(cx, cy)]
+    for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
+        pts.append((cx + sx * math.cos(cyaw) * hl - sy * math.sin(cyaw) * hw,
+                    cy + sx * math.sin(cyaw) * hl + sy * math.cos(cyaw) * hw))
+    occ_a = any(P.point_in_slot(px, py, slot_a, inflate=0.25) for px, py in pts)
+    occ_b = any(P.point_in_slot(px, py, slot_b, inflate=0.25) for px, py in pts)
+    assert occ_a and occ_b
