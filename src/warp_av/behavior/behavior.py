@@ -84,7 +84,7 @@ class BehaviorSystem:
         # look for a moment, and only go when no moving vehicle is nearby.
         self.junction_stop_within_m = 12.0   # start handling the turn this close
         self.hold_line_m = 3.0               # give-way hold: centre this far from the crossing
-        self.light_hold_m = 3.5              # red light: centre 3.5 m from the JUNCTION ENTRY -> bumper ~0.6 m before the crosswalk
+        self.light_hold_m = 2.9              # red light fallback: centre 2.9 m from the JUNCTION ENTRY (stop-bar junctions without zebra data) -> bumper ~0.55 m from the boundary
         self.light_hold_line_m = 2.9         # centre 2.9 m from the PAINTED line -> bumper ~0.55 m before the paint
         self.junction_dwell_s = 1.5          # mandatory look time even if clear
         self.junction_conflict_radius_m = 25.0
