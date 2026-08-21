@@ -162,6 +162,9 @@ class WarpAV:
         """Begin a mission to the given destination."""
         pose = self.localization.update()
 
+        # Fresh mission — the parking approach re-scan may fire again.
+        self._parking_rechecked = False
+
         # Create mission
         mission = self.mission_manager.start_mission(
             dest_x, dest_y, pose.x, pose.y
@@ -408,8 +411,20 @@ class WarpAV:
             park_position_ok=park_position_ok,
         )
 
-        if (behavior_output.behavior == DrivingBehavior.PARKING
-                and not getattr(self, "_parking_rechecked", False)):
+        rescan_now = (behavior_output.behavior == DrivingBehavior.PARKING
+                      and not getattr(self, "_parking_rechecked", False))
+        # A car that grabbed OUR slot after selection can also BLOCK the
+        # approach before the parking phase ever begins (sweep finding:
+        # van held 7 m behind it until timeout). While blocked close to
+        # the destination, re-scan periodically so the van retargets.
+        if (not rescan_now
+                and behavior_output.behavior in (DrivingBehavior.STOPPED_VEHICLE,
+                                                 DrivingBehavior.STOPPED_OBSTACLE)
+                and dest_dist is not None and dest_dist < 45.0
+                and time.time() - getattr(self, "_last_blocked_rescan", 0.0) > 5.0):
+            self._last_blocked_rescan = time.time()
+            rescan_now = True
+        if rescan_now:
             self._parking_rechecked = True
             try:
                 self._recheck_parking_on_approach(pose)
