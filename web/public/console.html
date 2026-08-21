@@ -2962,6 +2962,22 @@ body.demo-mode .metric-value {
 
 
                         <button
+                            class="scenario-button"
+                            id="trafficBtn"
+                            onclick="toggleTraffic()">
+
+                            <span class="scenario-icon">
+                                🚗
+                            </span>
+
+                            <span id="trafficBtnLabel">
+                                DENSE TRAFFIC
+                            </span>
+
+                        </button>
+
+
+                        <button
                             class="scenario-button clear-scenario"
                             onclick="clearScenario()">
 
@@ -3405,6 +3421,32 @@ async function faultAction(path, message) {
     );
 }
 
+
+
+async function toggleTraffic() {
+    const label = document.getElementById('trafficBtnLabel');
+    const active = latestState
+        && latestState.traffic
+        && (latestState.traffic.vehicles > 0
+            || latestState.traffic.walkers > 0);
+    try {
+        if (active) {
+            const res = await fetch(API + '/api/traffic/clear', { method: 'POST' });
+            const d = await res.json();
+            addActivity('🚗 Traffic cleared (' + (d.removed || 0) + ' actors)', 'green');
+            if (label) label.textContent = 'DENSE TRAFFIC';
+        } else {
+            addActivity('🚗 Spawning traffic around the van…', 'yellow');
+            const res = await fetch(API + '/api/traffic/spawn', { method: 'POST' });
+            const d = await res.json();
+            addActivity('🚗 ' + (d.success ? d.message : ('Traffic: ' + d.reason)),
+                        d.success ? 'green' : 'yellow');
+            if (d.success && label) label.textContent = 'CLEAR TRAFFIC';
+        }
+    } catch (e) {
+        addActivity('🚗 Traffic request failed: ' + e, 'yellow');
+    }
+}
 
 
 async function findParking() {
@@ -3935,6 +3977,14 @@ async function pollState() {
         const s = await response.json();
 
         latestState = s;
+
+        const tl = document.getElementById('trafficBtnLabel');
+        if (tl && s && s.traffic) {
+            tl.textContent =
+                (s.traffic.vehicles > 0 || s.traffic.walkers > 0)
+                    ? 'CLEAR TRAFFIC'
+                    : 'DENSE TRAFFIC';
+        }
 
         setConnected();
 
