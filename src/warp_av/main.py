@@ -1177,7 +1177,7 @@ class WarpAV:
         """Get available destinations."""
         points = self.vehicle_adapter.get_spawn_points()
         return [{"x": round(p.location.x, 1), "y": round(p.location.y, 1), "idx": i}
-                for i, p in enumerate(points[:20])]  # first 20
+                for i, p in enumerate(points)]  # all spawn points — numbering matches tools/find_parking_bays.py
 
     # --- Test controls (for Scenario 6) ---
     def api_set_perception_mode(self, mode):
