@@ -18,18 +18,18 @@ the final referee behind every number below.
 
 ## Overall
 
-- Runs executed: **113** (planned 200, 78 trimmed by operator decision to finish sooner — trimmed runs are NOT counted anywhere)
-- Verdicts: **FAIL 22** · **GAP 12** · **PASS 78** · **SKIP 1**
-- Collisions (ground-truth contact sensor): **8**
-- Distance driven (sum of planned routes): **34.7 km** across 112 missions
+- Runs executed: **122** (planned 200, 78 trimmed by operator decision at 10:30 to finish sooner; every non-trimmed run executed — trimmed runs are NOT counted anywhere)
+- Verdicts: **FAIL 26** · **GAP 12** · **PASS 83** · **SKIP 1**
+- Collisions (ground-truth contact sensor): **11**
+- Distance driven (sum of planned routes): **37.6 km** across 121 missions
 
 ## By test kind
 
 | kind | runs | PASS | FAIL | GAP | notes |
 |---|---|---|---|---|---|
-| baseline | 45 | 35 | 8 | 1 |  |
-| red_light | 28 | 12 | 6 | 10 | hold at junction edge: mean 3.80 m · min 2.10 · max 6.10 |
-| jaywalker | 18 | 15 | 3 | 0 | stopped for the pedestrian in 4/17 triggered runs |
+| baseline | 46 | 36 | 8 | 1 |  |
+| red_light | 32 | 13 | 9 | 10 | hold at junction edge: mean 3.79 m · min 2.10 · max 6.10 |
+| jaywalker | 22 | 18 | 4 | 0 | stopped for the pedestrian in 6/20 triggered runs |
 | cutin | 17 | 13 | 3 | 1 | reacted (followed/held) in 4/16 triggered runs |
 | fault | 5 | 3 | 2 | 0 | safety reacted in mean 0.28 s · min 0.20 · max 0.30 |
 
@@ -43,13 +43,15 @@ the final referee behind every number below.
 | MidRainyNoon | 2 | 1 | 1 | 0 |
 | WetSunset | 2 | 2 | 0 | 0 |
 | ClearSunset | 2 | 0 | 2 | 0 |
-| ClearNight | 2 | 2 | 0 | 0 |
+| ClearNight | 4 | 3 | 1 | 0 |
+| WetNight | 2 | 2 | 0 | 0 |
+| HardRainNight | 5 | 2 | 3 | 0 |
 
 ## Parking (the flagship)
 
-- Slot boxes found & offered: **93/113** runs (chosen slot in 88) — the exact data feed the dashboard draws
-- Completed slot-parkings: **75**, fully inside the box: **65** (87%)
-- Margins front/back: mean 0.78 m · min 0.06 · max 0.93; side: mean -0.02 m · min -1.51 · max 0.21; heading offset: mean 4.28° · min 0.10 · max 155.80
+- Slot boxes found & offered: **99/122** runs (chosen slot in 94) — the exact data feed the dashboard draws
+- Completed slot-parkings: **78**, fully inside the box: **68** (87%)
+- Margins front/back: mean 0.78 m · min 0.06 · max 0.93; side: mean -0.02 m · min -1.51 · max 0.21; heading offset: mean 4.17° · min 0.10 · max 155.80
 - By stack version (fixes landed mid-sweep):
     - `ae48081`: 2/5 inside (side margin mean -0.13 m · min -0.22 · max -0.03)
     - `1621188`: 7/8 inside (side margin mean -0.21 m · min -1.51 · max 0.19)
@@ -57,8 +59,8 @@ the final referee behind every number below.
     - `198fa57`: 2/2 inside (side margin mean 0.08 m · min -0.02 · max 0.17)
     - `e9b8244`: 6/6 inside (side margin mean 0.05 m · min -0.05 · max 0.20)
     - `d6b5125`: 5/5 inside (side margin mean 0.05 m · min -0.07 · max 0.20)
-    - `55784d3`: 13/16 inside (side margin mean -0.03 m · min -0.17 · max 0.20)
-- Routes with no usable slot: parked at the kerb/bay instead in 18 runs (honest fallback)
+    - `55784d3`: 16/19 inside (side margin mean -0.02 m · min -0.17 · max 0.20)
+- Routes with no usable slot: parked at the kerb/bay instead in 20 runs (honest fallback)
 - Occupied-slot re-targeting observed: 1 runs
 
 ## Driving quality across all executed runs
@@ -66,7 +68,7 @@ the final referee behind every number below.
 - Steering flips/sec: mean 0.08 · min 0.00 · max 0.46 (alarm threshold 2.0)
 - Settled-cruise speed wobble: mean 0.36 m/s · min 0.19 · max 0.47
 - Unjustified-brake ticks: total 2 across all runs
-- Closest approach to any object while moving: mean 4.27 m · min 1.90 · max 9.80
+- Closest approach to any object while moving: mean 4.31 m · min 1.90 · max 10.80
 
 ## Every FAIL and ERROR, with cause
 
@@ -94,9 +96,10 @@ the final referee behind every number below.
 | 144 | jaywalker | MidRainyNoon | FAIL | collision with vehicle.carlamotors.firetruck; COLLISION: {'intensity': 11020.0, 'tick': 5570, 'time': 1787337981.44995, 'with': 'vehicle.carlamotors.firetruck'} |
 | 155 | baseline | ClearSunset | FAIL | collision with vehicle.mitsubishi.fusorosa; COLLISION: {'intensity': 698.5, 'tick': 3778, 'time': 1787338461.7170944, 'with': 'vehicle.mitsubishi.fusorosa'} |
 | 156 | cutin | ClearSunset | FAIL | collision with vehicle.tesla.cybertruck; COLLISION: {'intensity': 2.9, 'tick': 310, 'time': 1787338525.959078, 'with': 'vehicle.tesla.cybertruck'} |
-
-
-> Note: 9 remaining weather-sampler runs were cancelled at 12:40 when the operator called time — every feature and weather condition above had already been exercised.
+| 177 | red_light | ClearNight | FAIL | collision with vehicle.mercedes.coupe; COLLISION: {'intensity': 517.1, 'tick': 22521, 'time': 1787341117.024665, 'with': 'vehicle.mercedes.coupe'} |
+| 186 | red_light | HardRainNight | FAIL | STUCK 75s stationary — behavior 'following_route', reason: 'Route clear — cruising at 8.0 m/s \| curve ahead — slowing to 4.0 m/s' |
+| 187 | jaywalker | HardRainNight | FAIL | collision with vehicle.mitsubishi.fusorosa; COLLISION: {'intensity': 10148.4, 'tick': 5151, 'time': 1787341819.695599, 'with': 'vehicle.mitsubishi.fusorosa'} |
+| 188 | red_light | HardRainNight | FAIL | collision with vehicle.ford.mustang; COLLISION: {'intensity': 87.4, 'tick': 324, 'time': 1787341891.5654454, 'with': 'vehicle.ford.mustang'} |
 
 
 ---
@@ -180,7 +183,7 @@ Every contact the sensor recorded, attributed from its trace:
 |---|---|---|
 | Van at fault — invisible static cars | 2 | fixed (#1, #2) |
 | Van at fault — squeeze-past geometry | 2 | fixed (#5) |
-| Right-of-way conflict in dense traffic | 2+ | van finished its junction look, accelerated out, crossing vehicle appeared in-corridor with <0.3 s warning. **Known gap: no true right-of-way reasoning** — top recommendation |
+| Right-of-way conflict in dense traffic | 5 | van finished its junction look, accelerated out, crossing vehicle appeared in-corridor with <0.3 s warning. Three of the five happened in night/storm dense runs — the gap grows with conditions. **Known gap: no true right-of-way reasoning** — top recommendation |
 | Test-prop / environment faults | rest | scripted cut-in car struck the van's *side* mid-swerve (open-loop cut-in prop, documented limitation); a fire truck hit a *parked* (protruding) van; spawn-adjacency feather-taps (impulse < 30, excluded from failure counts) |
 
 The van **never hit a pedestrian** in any run, all night.
