@@ -1313,22 +1313,21 @@ class WarpAV:
             return {"success": False, "reason": f"traffic spawn failed: {e}"}
 
     def api_clear_traffic(self, all_actors=False):
+        # Destroy through ONE batched RPC: destroying dozens of TM-driven
+        # actors with individual destroy() calls can hard-crash the CARLA
+        # client mid-storm (observed: stack died with no traceback).
         n = 0
+        client = self.vehicle_adapter.client
+        batch = []
         for w, c in self._traffic_walkers:
-            for a in (c, w):
-                try:
-                    if a.type_id.startswith("controller"):
-                        a.stop()
-                    a.destroy()
-                    n += 1
-                except Exception:
-                    pass
-        for v in self._traffic_vehicles:
             try:
-                v.destroy()
-                n += 1
+                c.stop()
             except Exception:
                 pass
+            batch.append(carla.command.DestroyActor(c))
+            batch.append(carla.command.DestroyActor(w))
+        for v in self._traffic_vehicles:
+            batch.append(carla.command.DestroyActor(v))
         self._traffic_vehicles = []
         self._traffic_walkers = []
         if all_actors:
@@ -1337,24 +1336,31 @@ class WarpAV:
             try:
                 ego_id = self.vehicle_adapter.vehicle.id
                 world = self.vehicle_adapter.world
+                queued = {getattr(cmd, "actor_id", None) for cmd in batch}
                 for c in world.get_actors().filter("controller.ai.walker"):
-                    try:
-                        c.stop(); c.destroy(); n += 1
-                    except Exception:
-                        pass
-                for a in list(world.get_actors().filter("walker.pedestrian.*")) + \
-                         list(world.get_actors().filter("vehicle.*")):
-                    if a.id == ego_id:
+                    if c.id in queued:
                         continue
                     try:
-                        a.destroy(); n += 1
+                        c.stop()
                     except Exception:
                         pass
+                    batch.append(carla.command.DestroyActor(c))
+                for a in list(world.get_actors().filter("walker.pedestrian.*")) + \
+                         list(world.get_actors().filter("vehicle.*")):
+                    if a.id == ego_id or a.id in queued:
+                        continue
+                    batch.append(carla.command.DestroyActor(a))
             except Exception as e:
-                print(f"[Traffic] full clear failed: {e}")
+                print(f"[Traffic] full clear enumeration failed: {e}")
             self._parked_cars = []
             self._scenario_jaywalkers = []
             self._cutin = None
+        try:
+            if batch:
+                results = client.apply_batch_sync(batch, False)
+                n = sum(1 for r in results if not r.error)
+        except Exception as e:
+            print(f"[Traffic] batch destroy failed: {e}")
         try:
             self.logger.log_event("traffic_cleared", f"removed {n} traffic actors")
         except Exception:

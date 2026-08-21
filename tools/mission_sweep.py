@@ -284,6 +284,19 @@ def ang_diff_deg(a, b):
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
 
+def mission_ended_ok(mission_id):
+    """True + entry if this mission finished 'completed' in /api/history."""
+    try:
+        h = api_get("/api/history", timeout=5.0)
+        if isinstance(h, list):
+            for m in reversed(h):
+                if m.get("mission_id") == mission_id:
+                    return m.get("state") == "completed", m
+    except Exception:
+        pass
+    return False, None
+
+
 # ----------------------------------------------------------------------
 # One run
 # ----------------------------------------------------------------------
@@ -360,7 +373,7 @@ def execute_run(spec, rng, points, out_dir, log):
         return res
 
     # Slot data feed (what the dashboard draws) — settle a few seconds
-    slots_seen, chosen_seen, spot_kind = 0, False, None
+    slots_seen, chosen_seen, spot_kind, mission_id = 0, False, None, None
     for _ in range(12):
         time.sleep(0.5)
         st = api_get("/api/state")
@@ -369,11 +382,10 @@ def execute_run(spec, rng, points, out_dir, log):
         slots_seen = max(slots_seen, len(slots))
         chosen_seen = chosen_seen or any(s.get("chosen") for s in slots)
         spot_kind = sp.get("kind") or spot_kind
-        if chosen_seen:
+        mission_id = (st.get("mission") or {}).get("mission_id") or mission_id
+        if chosen_seen and mission_id:
             break
-    res["slots_found"] = slots_seen
-    res["slot_chosen"] = chosen_seen
-    res["park_target_kind"] = spot_kind
+    res["mission_id"] = mission_id
     res["chosen_slot_index_start"] = (api_get("/api/state").get("parking_spot") or {}).get("slot_index")
 
     if spec["parked"] or spec["fill_all"]:
@@ -394,6 +406,8 @@ def execute_run(spec, rng, points, out_dir, log):
     behaviors = set()
     min_clear = 1e9
     min_clear_moving = 1e9
+    min_any_object = 1e9
+    saw_executing = False
     stop_started = None
     settled_speeds = []
     steer_prev = 0.0
@@ -434,6 +448,8 @@ def execute_run(spec, rng, points, out_dir, log):
             mission_state = (st.get("mission") or {}).get("state", "?")
 
             behaviors.add(beh)
+            if mission_state == "executing":
+                saw_executing = True
             if reason != last_reason:
                 reasons.append([round(t, 1), reason])
                 last_reason = reason
@@ -441,6 +457,14 @@ def execute_run(spec, rng, points, out_dir, log):
                 min_clear = closest
             if speed > 0.5 and closest < min_clear_moving:
                 min_clear_moving = closest
+            objs = per.get("objects") or []
+            if objs and speed > 0.5:
+                min_any_object = min(min_any_object,
+                                     min(o.get("distance", 999.0) for o in objs))
+            cur_slots = st.get("parking_slots") or []
+            slots_seen = max(slots_seen, len(cur_slots))
+            chosen_seen = chosen_seen or any(s.get("chosen") for s in cur_slots)
+            spot_kind = (st.get("parking_spot") or {}).get("kind") or spot_kind
 
             # smoothness bookkeeping
             steer = cmd.get("steer", 0.0)
@@ -474,7 +498,8 @@ def execute_run(spec, rng, points, out_dir, log):
 
             # hazard state machines
             if hazard["armed"] and not hazard["fired"]:
-                if spec["kind"] == "red_light" and jm is not None and 25.0 < jm < 65.0 and speed > 3.0:
+                if spec["kind"] == "red_light" and jm is not None and 20.0 < jm < 70.0 \
+                        and speed > 3.0 and tl.get("state") in ("green", "yellow", "red"):
                     api_post("/api/scenario/spawn", {"type": "red_light"})
                     hazard.update(fired=True, t_fired=t)
                     hazard["result"]["trigger_junction_m"] = round(jm, 1)
@@ -557,8 +582,19 @@ def execute_run(spec, rng, points, out_dir, log):
             if mission_state == "completed" or beh == "mission_complete":
                 complete_at = t
                 break
-            if mission_state in ("failed", "cancelled", "idle"):
+            if mission_state in ("failed", "cancelled"):
                 fail = f"mission ended '{mission_state}' without completing"
+                break
+            if mission_state == "idle" and saw_executing:
+                # Completion clears current_mission within the same tick, so a
+                # finished mission reads 'idle' here — history has the truth.
+                hist_ok, hist = mission_ended_ok(mission_id)
+                if hist_ok:
+                    complete_at = t
+                    res["history_entry"] = hist
+                else:
+                    fail = ("mission ended 'idle' without a completed history entry "
+                            f"({(hist or {}).get('state')}: {(hist or {}).get('reason_ended')})")
                 break
             if t > timeout_s:
                 fail = (f"TIMEOUT after {timeout_s:.0f}s (route {dist:.0f} m) — "
@@ -584,7 +620,11 @@ def execute_run(spec, rng, points, out_dir, log):
     res["behaviors_seen"] = sorted(behaviors)
     res["reason_changes"] = len(reasons)
     res["reasons_tail"] = reasons[-6:]
+    res["slots_found"] = slots_seen
+    res["slot_chosen"] = chosen_seen
+    res["park_target_kind"] = spot_kind
     res["min_clearance_m"] = round(min_clear_moving, 1) if min_clear_moving < 1e9 else None
+    res["min_object_m"] = round(min_any_object, 1) if min_any_object < 1e9 else None
     res["collisions"] = (st.get("collision") or {}).get("count", 0) - res["collision_base"]
     res["collision_last"] = (st.get("collision") or {}).get("last") if res["collisions"] else None
     res["last_tick_error"] = st.get("last_tick_error") or ""
