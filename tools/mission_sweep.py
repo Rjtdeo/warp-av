@@ -485,6 +485,12 @@ def execute_run(spec, rng, points, out_dir, log):
             behaviors.add(beh)
             if mission_state == "executing":
                 saw_executing = True
+                # Track the LIVE id: a mid-run mission restart (fault
+                # re-engage) issues a new one and the old id never reaches
+                # the history — grading must follow the latest.
+                mid_now = (st.get("mission") or {}).get("mission_id")
+                if mid_now:
+                    mission_id = mid_now
             if reason != last_reason:
                 reasons.append([round(t, 1), reason])
                 last_reason = reason
@@ -694,6 +700,7 @@ def execute_run(spec, rng, points, out_dir, log):
     res["behaviors_seen"] = sorted(behaviors)
     res["reason_changes"] = len(reasons)
     res["reasons_tail"] = reasons[-6:]
+    res["mission_id"] = mission_id
     res["slots_found"] = slots_seen
     res["slot_chosen"] = chosen_seen
     res["park_target_kind"] = spot_kind
