@@ -111,21 +111,22 @@ class RoutePlanner:
         bend d metres away allows sqrt(v_turn^2 + 2*a_decel*d) now — so the cap
         tightens gradually as the corner approaches instead of braking late.
         """
-        if not route or len(route.waypoints) < 3:
+        wps = route.waypoints           # snapshot: writers swap, never mutate
+        if not route or len(wps) < 3:
             return cruise
 
         # locate ourselves on the route (same scan as get_next_waypoint)
         ci, cd = 0, float("inf")
-        for i, wp in enumerate(route.waypoints):
+        for i, wp in enumerate(wps):
             d = math.hypot(wp.x - current_x, wp.y - current_y)
             if d < cd:
                 cd, ci = d, i
 
         cap = cruise
         dist = 0.0
-        prev = route.waypoints[ci]
-        for i in range(ci + 1, len(route.waypoints) - 1):
-            a, b, c = route.waypoints[i - 1], route.waypoints[i], route.waypoints[i + 1]
+        prev = wps[ci]
+        for i in range(ci + 1, len(wps) - 1):
+            a, b, c = wps[i - 1], wps[i], wps[i + 1]
             seg = math.hypot(b.x - a.x, b.y - a.y)
             dist += seg
             if dist > self.CURVE_HORIZON_M:
@@ -320,7 +321,7 @@ class RoutePlanner:
         """Replace the route tail after index i0 with a smooth ramp to the
         target, finishing with a straight-in section so the vehicle arrives
         parallel (shared by kerbside pull-over and slot parking)."""
-        wps = route.waypoints
+        wps = list(route.waypoints)     # snapshot; writer swaps atomically at the end
         last = wps[-1]
         p0 = wps[i0]
         h = last.yaw
@@ -341,7 +342,8 @@ class RoutePlanner:
                 x=p0.x + fwd[0] * (a * along) + right[0] * (smooth * lat),
                 y=p0.y + fwd[1] * (a * along) + right[1] * (smooth * lat),
                 z=last.z, yaw=tyaw))
-        route.waypoints[i0 + 1:] = new_tail
+        # atomic swap: the 10 Hz tick thread may be iterating the old list
+        route.waypoints = wps[:i0 + 1] + new_tail
 
     # ---------------- FIND PARKING: explicit van-sized slots ----------------
     SLOT_LEN_M = 7.0
@@ -461,6 +463,19 @@ class RoutePlanner:
         m_side = slot["width"] / 2.0 - worst_ly
         return (m_along >= 0 and m_side >= 0, round(m_along, 2), round(m_side, 2))
 
+    @staticmethod
+    def choose_free_slot(slots):
+        """Best slot = nearest the destination that is FREE and whose
+        PREDECESSOR is also free (the approach ramp sweeps through it).
+        Fallback: any free slot. Returns an index or None."""
+        for i in range(len(slots) - 1, -1, -1):
+            if not slots[i]["occupied"] and (i == 0 or not slots[i - 1]["occupied"]):
+                return i
+        for i in range(len(slots) - 1, -1, -1):
+            if not slots[i]["occupied"]:
+                return i
+        return None
+
     def retarget_to_slot(self, route: Route, slot):
         """Trim the route beside the chosen slot and blend into it."""
         wps = route.waypoints
@@ -470,10 +485,11 @@ class RoutePlanner:
                  key=lambda i: math.hypot(wps[i].x - slot["x"], wps[i].y - slot["y"]))
         if ci < 4:
             return False
-        route.waypoints = wps[:ci + 1]
-        route.waypoints[-1] = Waypoint(x=route.waypoints[-1].x, y=route.waypoints[-1].y,
-                                       z=route.waypoints[-1].z, yaw=slot["yaw"])
-        i0 = max(0, len(route.waypoints) - 8)
+        trimmed = wps[:ci + 1]
+        trimmed[-1] = Waypoint(x=trimmed[-1].x, y=trimmed[-1].y,
+                               z=trimmed[-1].z, yaw=slot["yaw"])
+        route.waypoints = trimmed          # atomic swap
+        i0 = max(0, len(trimmed) - 8)
         self._blend_tail_to(route, i0, slot["x"], slot["y"], slot["yaw"], usable=14.0)
         return True
 
@@ -649,14 +665,15 @@ class RoutePlanner:
         This prevents steering back toward old waypoints.
         """
 
-        if not route or not route.waypoints:
+        wps = route.waypoints           # snapshot: writers swap, never mutate
+        if not route or not wps:
             return None
 
         # Find where we currently are on the route.
         closest_index = 0
         closest_distance = float("inf")
 
-        for i, wp in enumerate(route.waypoints):
+        for i, wp in enumerate(wps):
             dx = wp.x - current_x
             dy = wp.y - current_y
             distance = math.sqrt(dx ** 2 + dy ** 2)
@@ -671,9 +688,9 @@ class RoutePlanner:
         # distance >= lookahead — in a bend that point is much further around
         # the corner, so the van aimed across the inside and clipped kerbs.
         acc = 0.0
-        for i in range(closest_index + 1, len(route.waypoints)):
-            a = route.waypoints[i - 1]
-            b = route.waypoints[i]
+        for i in range(closest_index + 1, len(wps)):
+            a = wps[i - 1]
+            b = wps[i]
             seg = math.hypot(b.x - a.x, b.y - a.y)
             if seg <= 1e-6:
                 continue
@@ -691,13 +708,13 @@ class RoutePlanner:
         # a virtual point extended past the end along the final heading, so the
         # vehicle ALIGNS with the parking direction instead of beelining
         # diagonally at the endpoint.
-        last = route.waypoints[-1]
+        last = wps[-1]
         ext = max(0.0, lookahead - acc)
         if ext > 0.1:
             # direction from the last real segment (yaw fields can be unset/stale)
             hd = last.yaw
-            for j in range(len(route.waypoints) - 2, -1, -1):
-                pv = route.waypoints[j]
+            for j in range(len(wps) - 2, -1, -1):
+                pv = wps[j]
                 if math.hypot(last.x - pv.x, last.y - pv.y) > 0.3:
                     hd = math.atan2(last.y - pv.y, last.x - pv.x)
                     break

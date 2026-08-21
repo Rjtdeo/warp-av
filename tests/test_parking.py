@@ -294,3 +294,15 @@ def test_straddling_car_occupies_both_slots():
     occ_a = any(P.point_in_slot(px, py, slot_a, inflate=0.25) for px, py in pts)
     occ_b = any(P.point_in_slot(px, py, slot_b, inflate=0.25) for px, py in pts)
     assert occ_a and occ_b
+
+
+def test_choose_free_slot_prefers_clear_approach():
+    P = RoutePlanner
+    def mk(occ):
+        return [{"occupied": o} for o in occ]
+    # last slot free but its predecessor occupied -> prefer an earlier pair
+    assert P.choose_free_slot(mk([False, False, True, False])) == 1
+    # fallback: only isolated free slots exist -> still pick the latest free
+    assert P.choose_free_slot(mk([True, False, True])) == 1
+    assert P.choose_free_slot(mk([True, True])) is None
+    assert P.choose_free_slot(mk([False])) == 0
