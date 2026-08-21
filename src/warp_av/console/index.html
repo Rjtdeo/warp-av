@@ -345,6 +345,46 @@ body {
    LIVE VIEW
    ============================================================ */
 
+/* ---------- SURROUND CROSS (front / left-map-right / rear) ---------- */
+.surround-cross {
+    display: grid;
+    grid-template-areas:
+        ". front ."
+        "left map right"
+        ". rear .";
+    grid-template-columns: minmax(150px, 1fr) minmax(0, 2.4fr) minmax(150px, 1fr);
+    gap: 10px;
+    align-items: center;
+}
+.sc-cam {
+    position: relative;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #0b0d11;
+    border: 1px solid rgba(255,255,255,.06);
+}
+.sc-front { grid-area: front; justify-self: center; width: min(62%, 560px); }
+.sc-left  { grid-area: left; }
+.sc-right { grid-area: right; }
+.sc-rear  { grid-area: rear; justify-self: center; width: min(52%, 460px); }
+.surround-cross .vehicle-map { grid-area: map; }
+.sc-cam img { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; }
+.sc-cam .sc-tag {
+    position: absolute; top: 6px; left: 8px;
+    font-size: 10px; letter-spacing: 1.5px; color: #cfd6df;
+    background: rgba(0,0,0,.55); padding: 2px 7px; border-radius: 4px;
+}
+#sc-path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.sc-intent {
+    position: absolute; top: 6px; right: 8px;
+    font-size: 10px; letter-spacing: 1.5px; font-weight: 700;
+    padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,.55);
+}
+@media (max-width: 980px) {
+    .surround-cross { grid-template-columns: 1fr; grid-template-areas: "front" "map" "left" "right" "rear"; }
+    .sc-front, .sc-rear { width: 100%; }
+}
+
 .vehicle-map {
     position: relative;
     min-height: 320px;
@@ -2467,6 +2507,20 @@ body.demo-mode .metric-value {
                     <div class="panel-tag" id="mapCoordinates">x 0.0 · y 0.0</div>
                 </div>
 
+                <div class="surround-cross">
+
+                <div class="sc-cam sc-front">
+                    <img id="sc-front" alt="front camera">
+                    <canvas id="sc-path"></canvas>
+                    <span class="sc-tag">FRONT</span>
+                    <span class="sc-intent" id="sc-intent"></span>
+                </div>
+
+                <div class="sc-cam sc-left">
+                    <img id="sc-left" alt="left camera">
+                    <span class="sc-tag">LEFT</span>
+                </div>
+
                 <div class="vehicle-map">
 
                     <canvas id="mapCanvas"></canvas>
@@ -2526,6 +2580,18 @@ body.demo-mode .metric-value {
                         CURRENT POSITION
                         <strong id="mapPosition">—</strong>
                     </div>
+
+                </div>
+
+                <div class="sc-cam sc-right">
+                    <img id="sc-right" alt="right camera">
+                    <span class="sc-tag">RIGHT</span>
+                </div>
+
+                <div class="sc-cam sc-rear">
+                    <img id="sc-rear" alt="rear camera">
+                    <span class="sc-tag">REAR</span>
+                </div>
 
                 </div>
 
@@ -3451,6 +3517,129 @@ async function faultAction(path, message) {
     );
 }
 
+
+
+/* ---------- SURROUND CROSS: camera feeds + green path ribbon ---------- */
+
+(function initSurroundCross() {
+
+    const views = [["sc-front", "front", 300], ["sc-left", "left", 500],
+                   ["sc-right", "right", 500], ["sc-rear", "rear", 500]];
+
+    views.forEach(function ([id, view, period], i) {
+        const el = document.getElementById(id);
+        if (!el) { return; }
+        function tick() {
+            el.src = API + "/api/camera/frame?view=" + view + "&t=" + Date.now();
+        }
+        el.onload = function () { setTimeout(tick, period); };
+        el.onerror = function () { setTimeout(tick, 1500); };
+        setTimeout(tick, 350 + i * 120);
+    });
+
+    /* Perspective projection of the planned route onto the FRONT camera.
+       Camera model mirrors carla_sensor_adapter: mounted 2.0 m forward,
+       1.8 m up, pitched 10 deg down, 90 deg horizontal FOV. Flat ground. */
+    const CAM_F = 2.0, CAM_H = 1.8, PITCH = 10 * Math.PI / 180;
+    const RIBBON_AHEAD_M = 25.0, HALF_W = 0.95;
+
+    function intent() {
+        const st = latestState || {};
+        const b = st.behavior || '';
+        const rs = st.behavior_reason || '';
+        const brake = st.command ? Number(st.command.brake) : 0;
+        if (b.indexOf('stopped') === 0 || brake > 0.6)
+            return ['255,82,82', 'STOPPING'];
+        if (b === 'waiting_at_junction' || b === 'parking'
+            || b === 'approaching_destination' || b === 'following_vehicle'
+            || rs.indexOf('slowing') >= 0 || rs.indexOf('curve ahead') >= 0
+            || rs.indexOf('rolling up') >= 0)
+            return ['255,193,7', 'SLOWING'];
+        return ['57,231,125', 'CRUISING'];
+    }
+
+    function drawRibbon() {
+        const cv = document.getElementById('sc-path');
+        const img = document.getElementById('sc-front');
+        const chip = document.getElementById('sc-intent');
+        if (!cv || !img) { return; }
+        const W = img.clientWidth, H = img.clientHeight;
+        if (W < 20 || H < 20) { return; }
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d');
+        ctx.clearRect(0, 0, W, H);
+
+        const st = latestState;
+        const route = (mapData && mapData.route) || [];
+        const missionOn = st && st.mission && st.mission.state === 'executing';
+        if (chip) {
+            const [col, label] = intent();
+            chip.textContent = missionOn ? label : '';
+            chip.style.color = 'rgb(' + col + ')';
+        }
+        if (!st || !st.pose || route.length < 2 || !missionOn) { return; }
+
+        const ex = Number(st.pose.x), ey = Number(st.pose.y);
+        const yaw = Number(st.pose.yaw) * Math.PI / 180;
+        const cosY = Math.cos(yaw), sinY = Math.sin(yaw);
+        const fx = W / 2, fy = W / 2, cx = W / 2, cyp = H / 2;
+
+        function proj(wx, wy) {
+            const dx = wx - ex, dy = wy - ey;
+            const f = dx * cosY + dy * sinY;            // vehicle forward
+            const r = -dx * sinY + dy * cosY;           // vehicle right
+            const fwd = f - CAM_F, down = CAM_H;
+            const Zc = fwd * Math.cos(PITCH) + down * Math.sin(PITCH);
+            if (Zc < 0.8) { return null; }
+            const Yc = -fwd * Math.sin(PITCH) + down * Math.cos(PITCH);
+            return [cx + fx * (r / Zc), cyp + fy * (Yc / Zc)];
+        }
+
+        // nearest route point, then collect ~25 m ahead
+        let ni = 0, nd = 1e9;
+        for (let i = 0; i < route.length; i++) {
+            const d = Math.hypot(route[i].x - ex, route[i].y - ey);
+            if (d < nd) { nd = d; ni = i; }
+        }
+        const left = [], right = [];
+        let arc = 0;
+        for (let i = ni; i < route.length - 1 && arc < RIBBON_AHEAD_M; i++) {
+            const a = route[i], b = route[i + 1];
+            const seg = Math.hypot(b.x - a.x, b.y - a.y);
+            if (seg < 0.05) { continue; }
+            arc += seg;
+            const hx = (b.x - a.x) / seg, hy = (b.y - a.y) / seg;
+            const rx = -hy, ry = hx;                     // right of segment (CARLA frame)
+            const pl = proj(a.x - rx * HALF_W, a.y - ry * HALF_W);
+            const pr = proj(a.x + rx * HALF_W, a.y + ry * HALF_W);
+            if (pl && pr) { left.push(pl); right.push(pr); }
+        }
+        if (left.length < 2) { return; }
+
+        const [col] = intent();
+        const topY = Math.min(left[left.length - 1][1], right[right.length - 1][1]);
+        const grad = ctx.createLinearGradient(0, H, 0, topY);
+        grad.addColorStop(0, 'rgba(' + col + ',0.40)');
+        grad.addColorStop(1, 'rgba(' + col + ',0.04)');
+
+        ctx.beginPath();
+        left.forEach(function (p, i) { i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]); });
+        for (let i = right.length - 1; i >= 0; i--) { ctx.lineTo(right[i][0], right[i][1]); }
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(' + col + ',0.85)';
+        [left, right].forEach(function (edge) {
+            ctx.beginPath();
+            edge.forEach(function (p, i) { i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]); });
+            ctx.stroke();
+        });
+    }
+
+    setInterval(drawRibbon, 120);
+})();
 
 
 async function toggleTraffic() {
