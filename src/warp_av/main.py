@@ -1290,17 +1290,32 @@ class WarpAV:
         if not slots:
             return {"success": False, "reason": "No parking bays on the final stretch of this route"}
 
-        # occupancy: any other vehicle inside a slot marks it taken
+        # occupancy: a slot is taken if ANY PART of another vehicle overlaps it
+        # (centre + the four bounding-box corners — a car straddling a slot
+        # boundary must mark every slot it touches)
         try:
             ego_id = self.vehicle_adapter.vehicle.id
-            others = [(a.get_location().x, a.get_location().y)
-                      for a in self.vehicle_adapter.world.get_actors().filter("vehicle.*")
-                      if a.id != ego_id]
+            others = []
+            for a in self.vehicle_adapter.world.get_actors().filter("vehicle.*"):
+                if a.id == ego_id:
+                    continue
+                loc = a.get_location()
+                pts = [(loc.x, loc.y)]
+                try:
+                    ext = a.bounding_box.extent
+                    vyaw = math.radians(a.get_transform().rotation.yaw)
+                    c_, s_ = math.cos(vyaw), math.sin(vyaw)
+                    for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
+                        pts.append((loc.x + sx * c_ * ext.x - sy * s_ * ext.y,
+                                    loc.y + sx * s_ * ext.x + sy * c_ * ext.y))
+                except Exception:
+                    pass
+                others.append(pts)
         except Exception:
             others = []
         for sl in slots:
-            sl["occupied"] = any(self.planner.point_in_slot(vx, vy, sl, inflate=0.4)
-                                 for vx, vy in others)
+            sl["occupied"] = any(self.planner.point_in_slot(px, py, sl, inflate=0.25)
+                                 for pts in others for px, py in pts)
             sl["chosen"] = False
 
         # best = nearest to the destination (list is ordered far -> near) and free
