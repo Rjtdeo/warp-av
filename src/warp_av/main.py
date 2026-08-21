@@ -456,6 +456,13 @@ class WarpAV:
             # sliding diagonally between lanes for tens of metres.
             if abs(cross_track) > 1.0:
                 lookahead = min(lookahead, 6.0)
+            # Terminal parking precision: with the 5 m aim floor the van aims
+            # past the spot for the whole straight-in and carries ~0.2 m of
+            # lateral error into the box (sweep finding: parked 0.14-0.22 m
+            # over the side line). Aim short for the last metres of pull-in.
+            if (behavior_output.behavior == DrivingBehavior.PARKING
+                    and dest_dist is not None and dest_dist < 12.0):
+                lookahead = max(2.5, min(lookahead, 0.8 * dest_dist))
             next_wp = self.planner.get_next_waypoint(self._route, pose.x, pose.y, lookahead=lookahead)
             if next_wp:
                 target_x, target_y = next_wp.x, next_wp.y

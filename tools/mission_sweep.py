@@ -255,6 +255,13 @@ def build_plan():
     return runs
 
 
+def park_check_plan():
+    """Three plain slot-parkings — validates a parking change in ~6 min."""
+    return [{"run": i, "kind": "baseline", "weather": "ClearNoon", "dense": False,
+             "parked": 0, "take_chosen": False, "fill_all": False}
+            for i in (1, 2, 3)]
+
+
 def shakedown_plan():
     return [
         {"run": 1, "kind": "baseline", "weather": "ClearNoon", "dense": False,
@@ -811,14 +818,17 @@ def write_scoreboard(out_dir, results, plan_total, incidents):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shakedown", action="store_true")
+    ap.add_argument("--park-check", action="store_true")
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--expect-version", default=None)
     a = ap.parse_args()
 
-    plan = shakedown_plan() if a.shakedown else build_plan()
-    out_dir = a.out or ("sweep_out/shakedown" if a.shakedown else "sweep_out/full")
+    plan = (shakedown_plan() if a.shakedown
+            else park_check_plan() if a.park_check else build_plan())
+    out_dir = a.out or ("sweep_out/shakedown" if a.shakedown
+                        else "sweep_out/parkcheck" if a.park_check else "sweep_out/full")
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(os.path.join(out_dir, "frames"), exist_ok=True)
 

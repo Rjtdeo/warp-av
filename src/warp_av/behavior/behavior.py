@@ -179,7 +179,7 @@ class BehaviorSystem:
                 and destination_distance < self.destination_threshold
                 and pose.speed < self.parked_max_speed
                 and (park_heading_ok or destination_distance < 0.5)
-                and (park_position_ok or destination_distance < 0.45)):
+                and (park_position_ok or destination_distance < 0.30)):
             self.mission_complete = True
             self.has_mission = False
             return self._decide(
