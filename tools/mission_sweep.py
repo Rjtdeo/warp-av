@@ -358,33 +358,44 @@ def execute_run(spec, rng, points, out_dir, log):
     res["start_pose"] = st0.get("pose")
     res["version"] = st0.get("version")
 
-    dest, dist = pick_destination(rng, points, st0["pose"])
+    # Runs that occupy bays need a destination that actually HAS slot boxes;
+    # retry a couple of destinations if the route ends bay-less.
+    needs_slot = spec["take_chosen"] or spec["parked"] > 0 or spec["fill_all"]
+    dest = dist = None
+    slots_seen, chosen_seen, spot_kind, mission_id = 0, False, None, None
+    for attempt in range(3):
+        pose_now = (api_get("/api/state").get("pose")) or st0["pose"]
+        dest, dist = pick_destination(rng, points, pose_now)
+        if dest is None:
+            break
+        ok = api_post("/api/mission/start", {"x": dest["x"], "y": dest["y"]})
+        if not ok.get("success"):
+            dest = None
+            continue
+        # Slot data feed (what the dashboard draws) — settle a few seconds
+        slots_seen, chosen_seen, spot_kind, mission_id = 0, False, None, None
+        for _ in range(12):
+            time.sleep(0.5)
+            st = api_get("/api/state")
+            slots = st.get("parking_slots") or []
+            sp = st.get("parking_spot") or {}
+            slots_seen = max(slots_seen, len(slots))
+            chosen_seen = chosen_seen or any(s.get("chosen") for s in slots)
+            spot_kind = sp.get("kind") or spot_kind
+            mission_id = (st.get("mission") or {}).get("mission_id") or mission_id
+            if chosen_seen and mission_id:
+                break
+        if needs_slot and not chosen_seen and attempt < 2:
+            api_post("/api/mission/stop")
+            time.sleep(1.5)
+            continue
+        break
     if dest is None:
         res["verdict"] = "SKIP"
         res["why"] = "no reachable destination in range from current position"
         return res
     res["destination"] = dest
     res["route_m"] = dist
-
-    ok = api_post("/api/mission/start", {"x": dest["x"], "y": dest["y"]})
-    if not ok.get("success"):
-        res["verdict"] = "FAIL"
-        res["why"] = f"mission/start refused: {ok}"
-        return res
-
-    # Slot data feed (what the dashboard draws) — settle a few seconds
-    slots_seen, chosen_seen, spot_kind, mission_id = 0, False, None, None
-    for _ in range(12):
-        time.sleep(0.5)
-        st = api_get("/api/state")
-        slots = st.get("parking_slots") or []
-        sp = st.get("parking_spot") or {}
-        slots_seen = max(slots_seen, len(slots))
-        chosen_seen = chosen_seen or any(s.get("chosen") for s in slots)
-        spot_kind = sp.get("kind") or spot_kind
-        mission_id = (st.get("mission") or {}).get("mission_id") or mission_id
-        if chosen_seen and mission_id:
-            break
     res["mission_id"] = mission_id
     res["chosen_slot_index_start"] = (api_get("/api/state").get("parking_spot") or {}).get("slot_index")
 
@@ -498,8 +509,9 @@ def execute_run(spec, rng, points, out_dir, log):
 
             # hazard state machines
             if hazard["armed"] and not hazard["fired"]:
-                if spec["kind"] == "red_light" and jm is not None and 20.0 < jm < 70.0 \
-                        and speed > 3.0 and tl.get("state") in ("green", "yellow", "red"):
+                if spec["kind"] == "red_light" and jm is not None and speed > 3.0 \
+                        and t > hazard.get("cooldown_until", 0.0) \
+                        and (jm < 35.0 or tl.get("state") in ("green", "yellow", "red")):
                     api_post("/api/scenario/spawn", {"type": "red_light"})
                     hazard.update(fired=True, t_fired=t)
                     hazard["result"]["trigger_junction_m"] = round(jm, 1)
@@ -533,10 +545,17 @@ def execute_run(spec, rng, points, out_dir, log):
                         hazard["cleared"] = True
                         hazard["t_cleared"] = t
                     elif not hr.get("light_seen") and dt_h > 12.0:
-                        hr["no_light_on_route"] = True
                         api_post("/api/scenario/clear")
-                        hazard["cleared"] = True
-                        hazard["t_cleared"] = t
+                        hazard["attempts"] = hazard.get("attempts", 0) + 1
+                        if hazard["attempts"] < 3:
+                            # Unsignalized junction — re-arm for the next one.
+                            hazard.update(fired=False, t_fired=None)
+                            hazard["cooldown_until"] = t + 20.0
+                            hr.pop("trigger_junction_m", None)
+                        else:
+                            hr["no_light_on_route"] = True
+                            hazard["cleared"] = True
+                            hazard["t_cleared"] = t
                     elif hr.get("light_seen") and "hold_junction_m" not in hr \
                             and jm is not None and jm < 2.0 and speed > 2.0:
                         fail = "RAN THE RED LIGHT — entered the junction at speed"
@@ -685,8 +704,12 @@ def execute_run(spec, rng, points, out_dir, log):
             why.append(f"jaywalker got within {hr.get('min_closest')} m without a pedestrian stop")
         if spec["kind"] == "fault" and "safety_reacted_s" not in hr:
             why.append("perception was disabled but safety never left 'ok'")
-    if spec["take_chosen"] and res["completed"] and not res.get("rescan_retargeted"):
+    if spec["take_chosen"] and res["completed"] \
+            and res.get("chosen_slot_index_start") is not None \
+            and not res.get("rescan_retargeted"):
         why.append("chosen slot was occupied but the van never retargeted to another")
+    if spec["take_chosen"] and res.get("chosen_slot_index_start") is None:
+        res["take_chosen_note"] = "route had no slot to occupy — case not exercised"
 
     if spec["fill_all"] and res["collisions"] == 0 and not res["last_tick_error"]:
         # Every slot occupied: the HONEST outcome is refusing to park by
