@@ -328,7 +328,7 @@ class WarpAV:
         park_heading_ok = True
         if getattr(self, "_parking_spot", None):
             herr = abs((pose.yaw - self._parking_spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
-            park_heading_ok = herr < math.radians(15)
+            park_heading_ok = herr < math.radians(6)   # parallel to the lane line, visibly straight
         behavior_output = self.behavior.update(
             perception=perception,
             pose=pose,

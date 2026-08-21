@@ -83,7 +83,7 @@ def test_closed_loop_parks_in_the_box():
         pose.speed = van.speed
         herr_now = abs((van.yaw - spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
         out = b.update(PerceptionOutput(), pose, dest_d, True,
-                       park_heading_ok=herr_now < math.radians(15))
+                       park_heading_ok=herr_now < math.radians(6))
         if out.behavior == DrivingBehavior.MISSION_COMPLETE:
             done_reason = out.reason
             break
@@ -101,7 +101,7 @@ def test_closed_loop_parks_in_the_box():
     err = math.hypot(van.x - spot["x"], van.y - spot["y"])
     herr = abs((van.yaw - spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
     assert err < 1.5, f"stopped {err:.2f} m from the spot"
-    assert herr < math.radians(10), f"parked {math.degrees(herr):.0f} deg off the road direction"
+    assert herr < math.radians(6), f"parked {math.degrees(herr):.0f} deg off the road direction"
     assert van.y > 0.4, "did not actually pull over to the right"
 
 
