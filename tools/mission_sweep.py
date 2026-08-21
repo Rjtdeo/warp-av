@@ -621,10 +621,15 @@ def execute_run(spec, rng, points, out_dir, log):
                         hr["safety_reacted_s"] = hr.get("safety_reacted_s", round(dt_h, 1))
                     if dt_h > 6.0:
                         api_post("/api/test/inject", {"component": "perception", "action": "enable"})
-                        # After a safety stop the van (correctly) waits for an
-                        # operator re-engage — play the operator's part.
-                        api_post("/api/estop/clear")
+                        # Operator re-engage. NO estop/clear here: clearing a
+                        # non-existent e-stop drops the adapter to MANUAL and
+                        # resume does not always re-engage (run 56 froze).
                         api_post("/api/mission/resume")
+                        time.sleep(2.5)
+                        st2 = api_get("/api/state")
+                        if st2.get("autonomy_state") != "autonomous":
+                            api_post("/api/mission/start", {"x": dest["x"], "y": dest["y"]})
+                            hr["reengaged_via_restart"] = True
                         hr["operator_resume_sent"] = True
                         hazard["cleared"] = True
                         hazard["t_cleared"] = t
