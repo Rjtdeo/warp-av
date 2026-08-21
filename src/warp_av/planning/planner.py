@@ -358,14 +358,23 @@ class RoutePlanner:
         for i in range(len(wps) - 2, -1, -1):
             arc_from_end[i] = arc_from_end[i + 1] + math.hypot(
                 wps[i + 1].x - wps[i].x, wps[i + 1].y - wps[i].y)
+        # bay points near junctions are unusable (crossings, building access,
+        # curved corner sections) — mask them out so no slot can exist there
+        near_junction = set()
+        for i, wp in enumerate(wps):
+            if wp.is_junction:
+                for j in range(max(0, i - 3), min(len(wps), i + 4)):
+                    near_junction.add(j)
         bay_pts = []
         for i, wp in enumerate(wps):
             if arc_from_end[i] > search_back_m:
                 continue
-            try:
-                bay = self._right_bay(wp.x, wp.y, wp.z)
-            except Exception:
-                bay = None
+            bay = None
+            if i not in near_junction:
+                try:
+                    bay = self._right_bay(wp.x, wp.y, wp.z)
+                except Exception:
+                    bay = None
             bay_pts.append(bay)      # None marks gaps
 
         slots = []
@@ -379,16 +388,29 @@ class RoutePlanner:
             run = []
         return slots
 
+    SLOT_MAX_CURVE_RAD = 0.14   # ~8 deg heading spread across a slot = too curved
+
     def _slice_run_into_slots(self, run):
         """run = consecutive (x, y, yaw, width) bay points along the road."""
         arcs = [0.0]
         for a, b in zip(run, run[1:]):
             arcs.append(arcs[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        seg_yaws = [math.atan2(b[1] - a[1], b[0] - a[0]) for a, b in zip(run, run[1:])]
         total = arcs[-1]
         n = int(total // self.SLOT_LEN_M)
         out = []
         for k in range(n):
             mid = (k + 0.5) * self.SLOT_LEN_M
+            # a slot must sit on a STRAIGHT piece of bay: parking tilted on a
+            # curved corner section is exactly what a driver would never do
+            lo, hi = mid - self.SLOT_LEN_M / 2.0, mid + self.SLOT_LEN_M / 2.0
+            span = [y_ for y_, a0, a1 in zip(seg_yaws, arcs, arcs[1:])
+                    if a1 >= lo and a0 <= hi]
+            if span:
+                ref = span[0]
+                spread = max(abs((y_ - ref + math.pi) % (2 * math.pi) - math.pi) for y_ in span)
+                if spread > self.SLOT_MAX_CURVE_RAD:
+                    continue
             # interpolate centre + heading at arc position `mid`
             for i in range(len(arcs) - 1):
                 if arcs[i + 1] >= mid:
