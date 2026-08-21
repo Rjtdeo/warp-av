@@ -750,14 +750,17 @@ class WarpAV:
         self._scenario_jaywalkers = []
         self._cutin = None
 
-        if getattr(self, "_scenario_lights_frozen", False):
-            try:
-                for tl in self.vehicle_adapter.world.get_actors().filter("traffic.traffic_light"):
-                    tl.freeze(False)
+        # ALWAYS release the lights, not only when this process froze them:
+        # CARLA keeps frozen lights across a stack restart, but the flag dies
+        # with the old process — a whole town stuck red (sweep run 67).
+        try:
+            for tl in self.vehicle_adapter.world.get_actors().filter("traffic.traffic_light"):
+                tl.freeze(False)
+            if getattr(self, "_scenario_lights_frozen", False):
                 print("[Scenario] Traffic lights released to automatic cycling")
-            except Exception as e:
-                print(f"[Scenario] Could not release traffic lights: {e}")
-            self._scenario_lights_frozen = False
+        except Exception as e:
+            print(f"[Scenario] Could not release traffic lights: {e}")
+        self._scenario_lights_frozen = False
 
         print("[Scenario] Test objects cleared")
 
