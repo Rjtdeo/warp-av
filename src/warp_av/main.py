@@ -64,6 +64,32 @@ class WarpAV:
         )
         self.sensor_adapter.setup_sensors()
 
+        # Ground-truth contact sensor: the final referee for every test run.
+        # Consecutive events against the same actor within 1 s count once.
+        self._collision_count = 0
+        self._last_collision = None
+        self._collision_sensor = None
+        try:
+            col_bp = self.vehicle_adapter.world.get_blueprint_library().find("sensor.other.collision")
+            self._collision_sensor = self.vehicle_adapter.world.spawn_actor(
+                col_bp, carla.Transform(), attach_to=self.vehicle_adapter.vehicle)
+            self._collision_sensor.listen(self._on_collision)
+            print("[Init] Collision sensor attached")
+        except Exception as e:
+            print(f"[Init] Collision sensor unavailable: {e}")
+
+        # Which code is running (shown in /api/state so remote testing can
+        # verify a deploy actually took effect).
+        self._start_time = time.time()
+        try:
+            import os as _os, subprocess as _sp
+            self._git_rev = _sp.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                text=True, stderr=_sp.DEVNULL).strip()
+        except Exception:
+            self._git_rev = "unknown"
+
         print("[Init] Starting perception...")
 
         # Stable original perception.
@@ -124,6 +150,8 @@ class WarpAV:
         self._traffic_walkers = []      # (walker, controller) pairs
         self._scenario_jaywalkers = []  # (walker, start_location)
         self._cutin = None              # state machine for the cut-in car
+        self._parked_cars = []          # cars parked in bays via /api/test/park_cars
+        self._weather_preset = "default"
 
         self._running = False
 
@@ -594,9 +622,14 @@ class WarpAV:
             "junction_ahead_m": junction_ahead,
             "parking_spot": getattr(self, "_parking_spot", None),
             "parking_slots": getattr(self, "_parking_slots", None),
-            "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers)},
+            "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers),
+                        "parked_cars": len(getattr(self, "_parked_cars", []))},
             "traffic_light": {"state": perception.traffic_light,
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None)},
+            "collision": {"count": self._collision_count, "last": self._last_collision},
+            "weather": getattr(self, "_weather_preset", "default"),
+            "version": getattr(self, "_git_rev", "unknown"),
+            "uptime_s": round(time.time() - self._start_time, 1),
 
             "localization": {"confidence": round(pose.confidence, 2), "quality": pose.quality.value, "healthy": pose.healthy},
             "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
@@ -1279,7 +1312,7 @@ class WarpAV:
             self.api_clear_traffic()
             return {"success": False, "reason": f"traffic spawn failed: {e}"}
 
-    def api_clear_traffic(self):
+    def api_clear_traffic(self, all_actors=False):
         n = 0
         for w, c in self._traffic_walkers:
             for a in (c, w):
@@ -1298,12 +1331,188 @@ class WarpAV:
                 pass
         self._traffic_vehicles = []
         self._traffic_walkers = []
+        if all_actors:
+            # Sweep-mode reset: remove EVERY vehicle/walker that is not the
+            # van, whoever spawned it (leftover tools, dead runners, ...).
+            try:
+                ego_id = self.vehicle_adapter.vehicle.id
+                world = self.vehicle_adapter.world
+                for c in world.get_actors().filter("controller.ai.walker"):
+                    try:
+                        c.stop(); c.destroy(); n += 1
+                    except Exception:
+                        pass
+                for a in list(world.get_actors().filter("walker.pedestrian.*")) + \
+                         list(world.get_actors().filter("vehicle.*")):
+                    if a.id == ego_id:
+                        continue
+                    try:
+                        a.destroy(); n += 1
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"[Traffic] full clear failed: {e}")
+            self._parked_cars = []
+            self._scenario_jaywalkers = []
+            self._cutin = None
         try:
             self.logger.log_event("traffic_cleared", f"removed {n} traffic actors")
         except Exception:
             pass
         print(f"[Traffic] cleared {n} actors")
         return {"success": True, "removed": n}
+
+    def _on_collision(self, event):
+        """CARLA collision sensor callback (fires from the sensor thread)."""
+        try:
+            other = event.other_actor.type_id if event.other_actor else "unknown"
+        except Exception:
+            other = "unknown"
+        try:
+            imp = event.normal_impulse
+            intensity = round(math.sqrt(imp.x ** 2 + imp.y ** 2 + imp.z ** 2), 1)
+        except Exception:
+            intensity = 0.0
+        now = time.time()
+        last = self._last_collision
+        # A scrape produces a burst of events — count contact once per second.
+        if not (last and last["with"] == other and now - last["time"] < 1.0):
+            self._collision_count += 1
+            try:
+                self.logger.log_event("collision", f"COLLISION with {other} (impulse {intensity})")
+            except Exception:
+                pass
+            print(f"[COLLISION] with {other} (impulse {intensity})")
+        self._last_collision = {"with": other, "intensity": intensity,
+                                "tick": getattr(self, "_tick_count", 0), "time": now}
+
+    def api_set_weather(self, preset):
+        """Set a CARLA weather preset by name (e.g. HardRainNight)."""
+        if not preset or not isinstance(preset, str) or not hasattr(carla.WeatherParameters, preset):
+            return {"success": False, "reason": f"Unknown weather preset '{preset}'"}
+        try:
+            self.vehicle_adapter.world.set_weather(getattr(carla.WeatherParameters, preset))
+            self._weather_preset = preset
+            try:
+                ls = carla.VehicleLightState
+                if "Night" in preset or "Rain" in preset or "Storm" in preset or "Sunset" in preset:
+                    self.vehicle_adapter.vehicle.set_light_state(ls(ls.LowBeam | ls.Position))
+                else:
+                    self.vehicle_adapter.vehicle.set_light_state(ls.NONE)
+            except Exception:
+                pass
+            try:
+                self.logger.log_event("weather", f"weather set to {preset}")
+            except Exception:
+                pass
+            print(f"[Weather] {preset}")
+            return {"success": True, "preset": preset}
+        except Exception as e:
+            return {"success": False, "reason": f"weather set failed: {e}"}
+
+    def api_park_cars(self, count=4, spacing=14.0, fill_all=False, clear=False,
+                      take_chosen=False):
+        """Park stationary cars in the bay along the final stretch of the
+        active route, so occupied-slot handling can be tested remotely.
+        take_chosen additionally drops a car into the CHOSEN slot to force
+        the approach re-scan to retarget."""
+        world = self.vehicle_adapter.world
+        if clear:
+            n = 0
+            for v in list(world.get_actors().filter("vehicle.*")):
+                if v.attributes.get("role_name") == "warp_parked":
+                    try:
+                        v.destroy(); n += 1
+                    except Exception:
+                        pass
+            self._parked_cars = []
+            print(f"[Parking test] removed {n} parked cars")
+            return {"success": True, "removed": n}
+
+        route = self._route
+        if not route or len(route.waypoints) < 5:
+            return {"success": False, "reason": "Start a mission first — cars are parked near its destination"}
+
+        cmap = self.vehicle_adapter.get_map()
+
+        def right_bay(x, y):
+            wp = cmap.get_waypoint(carla.Location(x=x, y=y, z=0.3),
+                                   project_to_road=True, lane_type=carla.LaneType.Driving)
+            if wp is None:
+                return None
+            for _ in range(3):
+                r = wp.get_right_lane()
+                if (r is not None and r.lane_type == carla.LaneType.Driving
+                        and abs((r.transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180) < 60):
+                    wp = r
+                else:
+                    break
+            bay = wp.get_right_lane()
+            if (bay is not None and bay.lane_type in (carla.LaneType.Parking, carla.LaneType.Shoulder)
+                    and bay.lane_width >= 1.8):
+                t = bay.transform
+                return (t.location.x, t.location.y, t.rotation.yaw)
+            return None
+
+        wps = route.waypoints
+        pts = [(w.x, w.y) for w in wps]
+        arc_back, tail = 0.0, [pts[-1]]
+        for p, q in zip(reversed(pts[:-1]), reversed(pts)):
+            arc_back += math.hypot(q[0] - p[0], q[1] - p[1])
+            tail.append(p)
+            if arc_back > 70.0:
+                break
+        tail.reverse()
+
+        bays = []
+        for x, y in tail:
+            b = right_bay(x, y)
+            if b is not None:
+                bays.append(b)
+        if len(bays) < 3 and not take_chosen:
+            return {"success": False, "reason": "No parking bay on the final stretch of this route"}
+
+        bp_lib = world.get_blueprint_library()
+        models = ["vehicle.tesla.model3", "vehicle.audi.tt", "vehicle.nissan.patrol", "vehicle.mini.cooper_s"]
+
+        def park_at(x, y, yaw, i):
+            bp = bp_lib.filter(models[i % len(models)])[0]
+            bp.set_attribute("role_name", "warp_parked")
+            car = world.try_spawn_actor(
+                bp, carla.Transform(carla.Location(x=x, y=y, z=0.3), carla.Rotation(yaw=yaw)))
+            if car is not None:
+                car.apply_control(carla.VehicleControl(hand_brake=True))
+                self._parked_cars.append(car)
+            return car is not None
+
+        spawned = 0
+        if take_chosen:
+            sp = getattr(self, "_parking_spot", None)
+            if sp and sp.get("kind") == "slot":
+                if park_at(sp["x"], sp["y"], math.degrees(sp["yaw"]), 0):
+                    spawned += 1
+
+        use_spacing = 8.0 if fill_all else spacing
+        want = 999 if fill_all else count
+        usable = bays if fill_all else bays[:max(1, len(bays) - 5)]
+        next_at, arc = 0.0, 0.0
+        prev = usable[0] if usable else None
+        for b in usable:
+            arc += math.hypot(b[0] - prev[0], b[1] - prev[1])
+            prev = b
+            if arc < next_at or spawned >= want:
+                continue
+            if park_at(b[0], b[1], b[2], spawned):
+                spawned += 1
+                next_at = arc + use_spacing
+
+        try:
+            self.logger.log_event("parked_cars", f"parked {spawned} test cars in the destination bay")
+        except Exception:
+            pass
+        print(f"[Parking test] parked {spawned} cars near the destination")
+        return {"success": spawned > 0, "parked": spawned,
+                "take_chosen": bool(take_chosen)}
 
     def _mark_slot_occupancy(self, slots):
         """A slot is taken if ANY PART of another vehicle overlaps it
@@ -2058,7 +2267,25 @@ def spawn_traffic_api():
 
 @app.route('/api/traffic/clear', methods=['POST'])
 def clear_traffic_api():
-    return jsonify(av_system.api_clear_traffic())
+    data = request.get_json(silent=True) or {}
+    return jsonify(av_system.api_clear_traffic(all_actors=bool(data.get('all', False))))
+
+@app.route('/api/weather', methods=['GET', 'POST'])
+def weather_api():
+    if request.method == 'GET':
+        return jsonify({"preset": getattr(av_system, "_weather_preset", "default")})
+    data = request.get_json(silent=True) or {}
+    return jsonify(av_system.api_set_weather(data.get('preset')))
+
+@app.route('/api/test/park_cars', methods=['POST'])
+def park_cars_api():
+    data = request.get_json(silent=True) or {}
+    return jsonify(av_system.api_park_cars(
+        count=int(data.get('count', 4)),
+        spacing=float(data.get('spacing', 14.0)),
+        fill_all=bool(data.get('fill_all', False)),
+        clear=bool(data.get('clear', False)),
+        take_chosen=bool(data.get('take_chosen', False))))
 
 @app.route('/api/parking/find', methods=['POST'])
 def find_parking():
