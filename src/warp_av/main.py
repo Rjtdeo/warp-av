@@ -1620,10 +1620,26 @@ class WarpAV:
         idx = sp.get("slot_index")
         if idx is None or idx >= len(slots) or not slots[idx]["occupied"]:
             return
-        new_idx = self.planner.choose_free_slot(slots)
+        # Only slots the van can still reach driving FORWARD count (no
+        # reverse gear): a slot behind the van caused an instant overshoot
+        # "parked" at 156° in sweep testing.
+        fwd = (math.cos(pose.yaw), math.sin(pose.yaw))
+        ahead = [i for i, s in enumerate(slots)
+                 if (s["x"] - pose.x) * fwd[0] + (s["y"] - pose.y) * fwd[1] > 4.0]
+        new_idx = None
+        for i in reversed(ahead):               # prefer nearest the destination
+            if not slots[i]["occupied"] and (i == 0 or not slots[i - 1]["occupied"]):
+                new_idx = i
+                break
         if new_idx is None:
-            self.logger.log_event("parking_rescan", f"chosen slot #{idx} now occupied and NO free slot remains")
-            print("[Parking] chosen slot taken and no free slot left — obstacle logic will hold")
+            for i in reversed(ahead):
+                if not slots[i]["occupied"]:
+                    new_idx = i
+                    break
+        if new_idx is None:
+            self.logger.log_event("parking_rescan",
+                                  f"chosen slot #{idx} now occupied and NO free slot remains AHEAD")
+            print("[Parking] chosen slot taken, no free slot ahead — obstacle logic will hold")
             return
         slots[idx]["chosen"] = False
         slots[new_idx]["chosen"] = True
@@ -1632,6 +1648,9 @@ class WarpAV:
             self._parking_spot = {"x": sl["x"], "y": sl["y"], "yaw": sl["yaw"],
                                   "offset_m": None, "moved_back_m": 0, "kind": "slot",
                                   "slot_index": new_idx}
+            # Fresh spot — forget the old approach or the overshoot escape
+            # fires instantly against the previous slot's closest-distance.
+            self.behavior._park_best_d = None
             self.logger.log_event("parking_rescan", f"slot #{idx} was taken — re-targeted to slot #{new_idx}")
             print(f"[Parking] slot #{idx} taken — switching to slot #{new_idx}")
 

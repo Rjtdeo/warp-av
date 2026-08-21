@@ -256,10 +256,15 @@ def build_plan():
 
 
 def park_check_plan():
-    """Three plain slot-parkings — validates a parking change in ~6 min."""
-    return [{"run": i, "kind": "baseline", "weather": "ClearNoon", "dense": False,
-             "parked": 0, "take_chosen": False, "fill_all": False}
-            for i in (1, 2, 3)]
+    """Three slot-parkings (one with a stolen slot) — validates a parking
+    change in ~7 min."""
+    base = {"kind": "baseline", "weather": "ClearNoon", "dense": False,
+            "parked": 0, "take_chosen": False, "fill_all": False}
+    return [
+        {**base, "run": 1},
+        {**base, "run": 2, "parked": 2, "take_chosen": True},
+        {**base, "run": 3},
+    ]
 
 
 def shakedown_plan():
