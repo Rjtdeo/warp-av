@@ -91,3 +91,26 @@ def test_committed_crossing_never_stops_inside_the_junction():
     o = b.update(PerceptionOutput(traffic_light="red"), pose, 500, True,
                  junction_ahead_m=0.0)
     assert o.behavior != DrivingBehavior.STOPPED_RED_LIGHT, "must clear the junction, not freeze in it"
+
+
+def test_white_line_outranks_junction_edge_reference():
+    """Operator/Troy: hold at the PAINTED line, not the (earlier) junction
+    edge polygon. When the crosswalk paint is known, it wins."""
+    b = BehaviorSystem(); b.set_mission()
+    far = b.update(PerceptionOutput(traffic_light="red"), Pose(healthy=True), 500, True,
+                   junction_ahead_m=4.0, white_line_m=20.0)
+    assert far.behavior == DrivingBehavior.FOLLOWING_ROUTE, \
+        "junction edge says 4 m but the paint is 20 m ahead — keep rolling"
+    assert "white line" in far.reason
+    near = b.update(PerceptionOutput(traffic_light="red"), Pose(healthy=True), 500, True,
+                    junction_ahead_m=9.0, white_line_m=3.1)
+    assert near.behavior == DrivingBehavior.STOPPED_RED_LIGHT and near.should_stop
+    assert "white line" in near.reason
+
+
+def test_no_paint_falls_back_to_junction_edge():
+    b = BehaviorSystem(); b.set_mission()
+    r = b.update(PerceptionOutput(traffic_light="red"), Pose(healthy=True), 500, True,
+                 junction_ahead_m=3.6, white_line_m=None)
+    assert r.behavior == DrivingBehavior.STOPPED_RED_LIGHT
+    assert "junction edge" in r.reason

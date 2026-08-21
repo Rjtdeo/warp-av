@@ -410,6 +410,14 @@ class WarpAV:
                     half_len, half_wid = 2.9, 1.0
                 park_position_ok, _, _ = self.planner.van_in_slot(
                     pose.x, pose.y, pose.yaw, half_len, half_wid, slot)
+        white_line = None
+        if perception.traffic_light in ("red", "yellow", "green"):
+            try:
+                white_line = self._white_line_ahead(pose, junction_ahead)
+            except Exception:
+                white_line = None
+        self._white_line_m = white_line
+
         behavior_output = self.behavior.update(
             perception=perception,
             pose=pose,
@@ -419,6 +427,7 @@ class WarpAV:
             junction_ahead_m=junction_ahead,
             park_heading_ok=park_heading_ok,
             park_position_ok=park_position_ok,
+            white_line_m=white_line,
         )
 
         rescan_now = (behavior_output.behavior == DrivingBehavior.PARKING
@@ -657,7 +666,8 @@ class WarpAV:
             "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers),
                         "parked_cars": len(getattr(self, "_parked_cars", []))},
             "traffic_light": {"state": perception.traffic_light,
-                              "stop_line_m": getattr(perception, "traffic_light_distance_m", None)},
+                              "stop_line_m": getattr(perception, "traffic_light_distance_m", None),
+                              "white_line_m": getattr(self, "_white_line_m", None)},
             "collision": {"count": self._collision_count, "last": self._last_collision},
             "weather": getattr(self, "_weather_preset", "default"),
             "version": getattr(self, "_git_rev", "unknown"),
@@ -1591,6 +1601,84 @@ class WarpAV:
         self._static_vehicle_pts = pts
         print(f"[Parking] static-layer parked vehicles known: {len(pts)}")
         return pts
+
+    def _crosswalk_polygons(self):
+        """2D polygons of every PAINTED crosswalk. CARLA returns all corner
+        points in one list; each zone is closed by repeating its first
+        point. Cached — paint never moves."""
+        polys = getattr(self, "_crosswalk_polys", None)
+        if polys is not None:
+            return polys
+        polys = []
+        try:
+            pts = self.vehicle_adapter.get_map().get_crosswalks()
+            cur = []
+            for p in pts:
+                if cur and abs(cur[0][0] - p.x) < 1e-3 and abs(cur[0][1] - p.y) < 1e-3:
+                    if len(cur) >= 3:
+                        polys.append(cur)
+                    cur = []
+                else:
+                    cur.append((p.x, p.y))
+        except Exception as e:
+            print(f"[Lights] crosswalk scan failed: {e}")
+        self._crosswalk_polys = polys
+        self._crosswalk_centroids = [
+            (sum(x for x, _ in poly) / len(poly), sum(y for _, y in poly) / len(poly))
+            for poly in polys]
+        print(f"[Lights] painted crosswalks known: {len(polys)}")
+        return polys
+
+    @staticmethod
+    def _point_in_poly(x, y, poly):
+        inside = False
+        j = len(poly) - 1
+        for i in range(len(poly)):
+            xi, yi = poly[i]
+            xj, yj = poly[j]
+            if (yi > y) != (yj > y) and \
+                    x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi:
+                inside = not inside
+            j = i
+        return inside
+
+    def _white_line_ahead(self, pose, junction_ahead):
+        """Along-route distance to the first PAINTED crosswalk this route
+        enters on the approach to the upcoming junction (the visual white
+        line the operator judges stops by). None when the approach has no
+        zebra — callers fall back to the junction edge."""
+        if not self._route or junction_ahead is None:
+            return None
+        polys = self._crosswalk_polygons()
+        if not polys:
+            return None
+        cents = self._crosswalk_centroids
+        wps = self._route.waypoints
+        n = len(wps)
+        if n < 2:
+            return None
+        ci = min(range(n), key=lambda i: (wps[i].x - pose.x) ** 2 + (wps[i].y - pose.y) ** 2)
+        arc = 0.0
+        prev_inside = False
+        limit = junction_ahead + 8.0
+        for i in range(ci, n - 1):
+            wp = wps[i]
+            step = math.hypot(wps[i + 1].x - wp.x, wps[i + 1].y - wp.y)
+            inside = False
+            for k, (cx, cy) in enumerate(cents):
+                if (wp.x - cx) ** 2 + (wp.y - cy) ** 2 < 15.0 ** 2 and \
+                        self._point_in_poly(wp.x, wp.y, polys[k]):
+                    inside = True
+                    break
+            if inside and not prev_inside:
+                # Only the zebra belonging to THIS junction's approach.
+                if junction_ahead - 12.0 <= arc <= junction_ahead + 6.0:
+                    return max(0.0, arc - step * 0.5)
+            prev_inside = inside
+            arc += step
+            if arc > limit:
+                break
+        return None
 
     def _static_vehicle_objects(self, pose):
         """Nearby static-layer parked cars as pseudo-detections (VEHICLE,

@@ -85,6 +85,7 @@ class BehaviorSystem:
         self.junction_stop_within_m = 12.0   # start handling the turn this close
         self.hold_line_m = 3.0               # give-way hold: centre this far from the crossing
         self.light_hold_m = 3.5              # red light: centre 3.5 m from the JUNCTION ENTRY -> bumper ~0.6 m before the crosswalk
+        self.light_hold_line_m = 2.9         # centre 2.9 m from the PAINTED line -> bumper ~0.55 m before the paint
         self.junction_dwell_s = 1.5          # mandatory look time even if clear
         self.junction_conflict_radius_m = 25.0
         self.junction_wait_timeout_s = 12.0  # then creep instead of deadlocking
@@ -110,7 +111,8 @@ class BehaviorSystem:
         junction: Optional[dict] = None,
         junction_ahead_m: Optional[float] = None,
         park_heading_ok: bool = True,
-        park_position_ok: bool = True
+        park_position_ok: bool = True,
+        white_line_m: Optional[float] = None
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -256,16 +258,19 @@ class BehaviorSystem:
             if junction_ahead_m is not None and junction_ahead_m < 1.0:
                 pass
             else:
-                # Primary reference: the JUNCTION ENTRY measured along our own
-                # route (that is where the crosswalk actually is). CARLA's
-                # stop waypoints sit 1-7 m early (probe median 6 m) and are
-                # only the fallback when no junction is on the route.
-                if junction_ahead_m is not None:
-                    d, line = junction_ahead_m, "junction edge"
+                # Best reference first: the PAINTED white line (crosswalk
+                # polygon on our route) — hold with the bumper just before
+                # the paint. Then the junction entry (edge polygons sit
+                # metres before the paint at some junctions — operator/Troy
+                # complaint), then CARLA's early stop waypoints.
+                if white_line_m is not None:
+                    d, line, hold = white_line_m, "white line", self.light_hold_line_m
+                elif junction_ahead_m is not None:
+                    d, line, hold = junction_ahead_m, "junction edge", self.light_hold_m
                 else:
-                    d, line = perception.traffic_light_distance_m, "stop line"
-                if d is not None and d > self.light_hold_m + 0.5:
-                    creep = max(0.8, min(4.0, 0.5 * (d - self.light_hold_m)))
+                    d, line, hold = perception.traffic_light_distance_m, "stop line", self.light_hold_m
+                if d is not None and d > hold + 0.5:
+                    creep = max(0.6, min(3.0, 0.45 * (d - hold)))
                     return self._decide(
                         DrivingBehavior.FOLLOWING_ROUTE,
                         f"{perception.traffic_light.upper()} light ahead ({d:.0f} m to {line}) — rolling up",
