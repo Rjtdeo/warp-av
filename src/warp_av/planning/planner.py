@@ -329,7 +329,7 @@ class RoutePlanner:
         dx, dy = tx - p0.x, ty - p0.y
         along = dx * fwd[0] + dy * fwd[1]
         lat = dx * right[0] + dy * right[1]
-        straight_in = min(5.0, max(0.0, along - 6.0))
+        straight_in = min(7.0, max(0.0, along - 6.0))
         cut = max(0.5, along - straight_in)
         K = max(6, int(usable / 2.0))
         new_tail = []
