@@ -188,6 +188,7 @@ class WarpAV:
             self.mission_manager.fail_mission("Route planning failed")
             return False
 
+        self._parking_slots = None
         # Bend the end of the route to a kerbside parking spot (Troy #7):
         # finish pulled over on the right, not dead-centre on the road.
         try:
@@ -390,6 +391,17 @@ class WarpAV:
                 d = math.hypot(pose.x - sp["x"], pose.y - sp["y"])
                 herr = abs((pose.yaw - sp["yaw"] + math.pi) % (2 * math.pi) - math.pi)
                 detail = f"Parked {d:.2f} m from the kerbside spot, heading off {math.degrees(herr):.0f} deg"
+                if sp.get("kind") == "slot" and getattr(self, "_parking_slots", None):
+                    slot = self._parking_slots[sp["slot_index"]]
+                    try:
+                        ext = self.vehicle_adapter.vehicle.bounding_box.extent
+                        half_len, half_wid = float(ext.x), float(ext.y)
+                    except Exception:
+                        half_len, half_wid = 2.9, 1.0
+                    inside, m_along, m_side = self.planner.van_in_slot(
+                        pose.x, pose.y, pose.yaw, half_len, half_wid, slot)
+                    detail += (f" | INSIDE slot #{sp['slot_index']}: {'YES' if inside else 'NO'}"
+                               f" (margins {m_along} m front/back, {m_side} m side)")
             self.logger.log_event("mission_completed", detail)
             print(f"[Mission] {detail}")
             self.logger.stop_mission_log()
@@ -530,6 +542,7 @@ class WarpAV:
             "junction": junction,   # {"distance_m", "direction"} when a turn at a junction is within 20 m, else null
             "junction_ahead_m": junction_ahead,
             "parking_spot": getattr(self, "_parking_spot", None),
+            "parking_slots": getattr(self, "_parking_slots", None),
             "traffic_light": {"state": perception.traffic_light,
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None)},
 
@@ -1036,6 +1049,53 @@ class WarpAV:
         )
 
         return True
+
+    def api_find_parking(self):
+        """FIND PARKING: slice the bays near the destination into van-sized
+        slots, skip occupied ones, retarget the mission to the best free slot."""
+        if not self._route or not self.mission_manager.current_mission:
+            return {"success": False, "reason": "Start a mission first — parking is searched near its destination"}
+        slots = self.planner.find_parking_slots(self._route)
+        if not slots:
+            return {"success": False, "reason": "No parking bays on the final stretch of this route"}
+
+        # occupancy: any other vehicle inside a slot marks it taken
+        try:
+            ego_id = self.vehicle_adapter.vehicle.id
+            others = [(a.get_location().x, a.get_location().y)
+                      for a in self.vehicle_adapter.world.get_actors().filter("vehicle.*")
+                      if a.id != ego_id]
+        except Exception:
+            others = []
+        for sl in slots:
+            sl["occupied"] = any(self.planner.point_in_slot(vx, vy, sl, inflate=0.4)
+                                 for vx, vy in others)
+            sl["chosen"] = False
+
+        # best = nearest to the destination (list is ordered far -> near) and free
+        chosen_idx = None
+        for i in range(len(slots) - 1, -1, -1):
+            if not slots[i]["occupied"]:
+                chosen_idx = i
+                break
+        if chosen_idx is None:
+            self._parking_slots = slots
+            self.logger.log_event("parking_slots", f"{len(slots)} slots found — ALL OCCUPIED")
+            return {"success": False, "reason": f"All {len(slots)} slots are occupied", "slots": slots}
+
+        sl = slots[chosen_idx]
+        if not self.planner.retarget_to_slot(self._route, sl):
+            return {"success": False, "reason": "Could not retarget the route to the slot"}
+        sl["chosen"] = True
+        self._parking_slots = slots
+        self._parking_spot = {"x": sl["x"], "y": sl["y"], "yaw": sl["yaw"],
+                              "offset_m": None, "moved_back_m": 0, "kind": "slot",
+                              "slot_index": chosen_idx}
+        occ = sum(1 for x in slots if x["occupied"])
+        msg = f"{len(slots)} slots on the bay, {occ} occupied — parking in slot #{chosen_idx}"
+        self.logger.log_event("parking_slots", msg)
+        print(f"[Parking] {msg}")
+        return {"success": True, "slots": slots, "chosen": chosen_idx, "message": msg}
 
     def api_get_route(self):
         if not self._route:
@@ -1692,6 +1752,10 @@ def clear_estop():
 @app.route('/api/history')
 def get_history():
     return jsonify(av_system.api_get_history())
+
+@app.route('/api/parking/find', methods=['POST'])
+def find_parking():
+    return jsonify(av_system.api_find_parking())
 
 @app.route('/api/route')
 def get_route():

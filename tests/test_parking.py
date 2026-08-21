@@ -182,3 +182,49 @@ def test_completion_waits_for_straight_heading():
     b2 = BehaviorSystem(); b2.set_mission()
     out = b2.update(PerceptionOutput(), slow, 1.2, True, park_heading_ok=True)
     assert out.behavior == DrivingBehavior.MISSION_COMPLETE
+
+
+# ---------------- FIND PARKING: slots, occupancy geometry, retarget ----------------
+
+def _mock_bays(p, y=2.8, width=2.5, span=(100.0, 150.0)):
+    def fake_bay(x, _y, _z):
+        if span[0] <= x <= span[1]:
+            return (x, y, 0.0, width)
+        return None
+    p._right_bay = fake_bay
+
+
+def test_slots_are_sliced_along_the_bay():
+    p = planner()
+    r = straight_route(80)          # 158 m route along x
+    _mock_bays(p)                   # 50 m of bay inside the 70 m search window -> ~7 slots
+    slots = p.find_parking_slots(r)
+    assert 5 <= len(slots) <= 7
+    assert all(abs(s["y"] - 2.8) < 0.01 and s["width"] == 2.5 for s in slots)
+    xs = [s["x"] for s in slots]
+    assert xs == sorted(xs), "slots must be ordered along the route (far -> near destination)"
+    c = slots[0]["corners"]
+    assert len(c) == 4 and abs(max(p_[0] for p_ in c) - min(p_[0] for p_ in c) - 7.0) < 0.1
+
+
+def test_point_in_slot_and_van_in_slot():
+    slot = {"x": 10.0, "y": 2.8, "yaw": 0.0, "length": 7.0, "width": 2.5, "corners": []}
+    P = RoutePlanner
+    assert P.point_in_slot(11.0, 3.0, slot)
+    assert not P.point_in_slot(15.0, 3.0, slot)
+    inside, m_along, m_side = P.van_in_slot(10.0, 2.8, 0.0, 2.9, 1.0, slot)
+    assert inside and abs(m_along - 0.6) < 0.01 and abs(m_side - 0.25) < 0.01
+    inside, m_along, _ = P.van_in_slot(13.0, 2.8, 0.0, 2.9, 1.0, slot)
+    assert not inside and m_along < 0
+
+
+def test_retarget_to_slot_ends_route_in_the_slot():
+    p = planner()
+    r = straight_route(80)
+    slot = {"x": 100.0, "y": 2.8, "yaw": 0.0, "length": 7.0, "width": 2.5}
+    assert p.retarget_to_slot(r, slot)
+    last = r.waypoints[-1]
+    assert abs(last.x - 100.0) < 0.2 and abs(last.y - 2.8) < 0.05
+    assert abs(last.yaw) < 0.01
+    ys = [w.y for w in r.waypoints[-4:]]
+    assert max(ys) - min(ys) < 0.15, "must arrive straight into the slot"
