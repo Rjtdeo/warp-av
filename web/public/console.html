@@ -348,11 +348,8 @@ body {
 /* ---------- SURROUND CLUSTER: camera wall left, tall map right ---------- */
 .surround-cross {
     display: grid;
-    grid-template-areas:
-        "front front front map"
-        "left  rear  right map";
-    grid-template-columns: 1fr 1fr 1fr 1.45fr;
-    grid-template-rows: auto auto;
+    grid-template-areas: "front map";
+    grid-template-columns: 1.55fr 1fr;
     gap: 10px;
     align-items: stretch;
 }
@@ -411,8 +408,8 @@ body {
 .sc-rear img { transform: scaleX(-1); }   /* mirrored, like a rear-view mirror */
 @media (max-width: 1100px) {
     .surround-cross {
-        grid-template-columns: 1fr 1fr 1fr;
-        grid-template-areas: "front front front" "left rear right" "map map map";
+        grid-template-columns: 1fr;
+        grid-template-areas: "front" "map";
     }
     .surround-cross .vehicle-map { min-height: 420px; }
 }
@@ -2553,21 +2550,6 @@ body.demo-mode .metric-value {
                     </div>
                 </div>
 
-                <div class="sc-cam sc-left">
-                    <img id="sc-left" alt="left camera">
-                    <span class="sc-tag">LEFT</span>
-                </div>
-
-                <div class="sc-cam sc-rear">
-                    <img id="sc-rear" alt="rear camera">
-                    <span class="sc-tag">REAR</span>
-                </div>
-
-                <div class="sc-cam sc-right">
-                    <img id="sc-right" alt="right camera">
-                    <span class="sc-tag">RIGHT</span>
-                </div>
-
                 <div class="vehicle-map">
 
                     <canvas id="mapCanvas"></canvas>
@@ -3560,8 +3542,7 @@ async function faultAction(path, message) {
 
 (function initSurroundCross() {
 
-    const views = [["sc-front", "front", 300], ["sc-left", "left", 500],
-                   ["sc-right", "right", 500], ["sc-rear", "rear", 500]];
+    const views = [["sc-front", "front", 300]];
 
     views.forEach(function ([id, view, period], i) {
         const el = document.getElementById(id);
@@ -5943,23 +5924,46 @@ function drawMap(s) {
                 ctx.closePath();
 
                 if (sl.chosen) {
-                    ctx.fillStyle = 'rgba(57,231,125,.30)';
+                    ctx.fillStyle = 'rgba(57,231,125,.35)';
                     ctx.strokeStyle = '#39e77d';
-                    ctx.lineWidth = 2.5;
+                    ctx.lineWidth = 3;
                 } else if (sl.occupied) {
-                    ctx.fillStyle = 'rgba(255,82,82,.18)';
-                    ctx.strokeStyle = 'rgba(255,82,82,.8)';
-                    ctx.lineWidth = 1.5;
+                    ctx.fillStyle = 'rgba(255,82,82,.25)';
+                    ctx.strokeStyle = 'rgba(255,82,82,.95)';
+                    ctx.lineWidth = 2;
                 } else {
-                    ctx.fillStyle = 'rgba(160,170,185,.10)';
-                    ctx.strokeStyle = 'rgba(160,170,185,.7)';
-                    ctx.lineWidth = 1.5;
+                    ctx.fillStyle = 'rgba(180,190,205,.16)';
+                    ctx.strokeStyle = 'rgba(180,190,205,.9)';
+                    ctx.lineWidth = 2;
                 }
 
                 ctx.fill();
                 ctx.stroke();
                 ctx.restore();
             });
+
+            /* fixed-size P badge on the chosen slot — visible at any zoom */
+            const chosen = slots.find(function (sl) { return sl.chosen; });
+            if (chosen) {
+                const [px, py] = project(Number(chosen.x), Number(chosen.y));
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(px, py, 10, 0, Math.PI * 2);
+                ctx.fillStyle = '#39e77d';
+                ctx.shadowColor = 'rgba(57,231,125,.8)';
+                ctx.shadowBlur = 12;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = '#0c1722';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = '#0c1722';
+                ctx.font = '800 12px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('P', px, py + 0.5);
+                ctx.restore();
+            }
         }
 
 
