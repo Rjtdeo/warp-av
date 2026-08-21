@@ -566,8 +566,9 @@ class RoutePlanner:
         n = len(wps)
 
         def arc_pos(px, py):
-            """(arc-length along route of nearest point, lateral distance)."""
-            best_d2, best_arc = float("inf"), 0.0
+            """(arc-length along route of nearest point, lateral distance,
+            nearest segment index)."""
+            best_d2, best_arc, best_i = float("inf"), 0.0, 0
             arc = 0.0
             for i in range(n - 1):
                 ax, ay, bx, by = wps[i].x, wps[i].y, wps[i + 1].x, wps[i + 1].y
@@ -579,11 +580,11 @@ class RoutePlanner:
                     cx, cy = ax + t * dx, ay + t * dy
                     d2 = (px - cx) ** 2 + (py - cy) ** 2
                     if d2 < best_d2:
-                        best_d2, best_arc = d2, arc + t * seg
+                        best_d2, best_arc, best_i = d2, arc + t * seg, i
                 arc += seg
-            return best_arc, math.sqrt(best_d2)
+            return best_arc, math.sqrt(best_d2), best_i
 
-        ego_arc, _ = arc_pos(ego_x, ego_y)
+        ego_arc, _, _ = arc_pos(ego_x, ego_y)
         cos_y, sin_y = math.cos(ego_yaw), math.sin(ego_yaw)
 
         closest = 999.0
@@ -596,22 +597,46 @@ class RoutePlanner:
             # ego frame (x fwd, y left) -> world
             wx = ego_x + cos_y * obj.x - sin_y * obj.y
             wy = ego_y + sin_y * obj.x + cos_y * obj.y
-            oarc, lat = arc_pos(wx, wy)
+            oarc, lat, oseg = arc_pos(wx, wy)
             along = oarc - ego_arc
-            if lat > corridor_halfwidth_m or along < -1.0 or along > max_ahead_m:
+            # Wide-body check needs objects slightly beyond the slow corridor
+            # too (centre at 1.75-2.05 m still overlaps the van's swept width).
+            if lat > 2.05 or along < -1.0 or along > max_ahead_m:
                 continue
-            found = True
-            dist = max(0.0, along)
-            if dist < closest:
-                closest = dist
-                closest_type = obj.object_type
-                closest_speed = obj.speed
-                closest_lat = round(lat, 2)
-            # Two-tier: only an object near the path CENTRE can stop us (a real
-            # lead vehicle sits at 0-0.8 m). The 1.4-1.75 m band — e.g. a car
-            # waiting at the cross-street stop line just around the corner —
-            # slows us (via closest_distance) but must not freeze the mission.
-            if dist < danger_m and lat <= block_halfwidth_m:
+            near_junction = (wps[oseg].is_junction
+                             or wps[min(oseg + 1, n - 1)].is_junction)
+            if lat <= corridor_halfwidth_m:
+                found = True
+                dist = max(0.0, along)
+                if dist < closest:
+                    closest = dist
+                    closest_type = obj.object_type
+                    closest_speed = obj.speed
+                    closest_lat = round(lat, 2)
+                # Two-tier: only an object near the path CENTRE can stop us (a
+                # real lead vehicle sits at 0-0.8 m). The 1.4-1.75 m band —
+                # e.g. a car waiting at the cross-street stop line just around
+                # the corner — slows us but must not freeze the mission.
+                if dist < danger_m and lat <= block_halfwidth_m:
+                    blocked = True
+            # Physical-width conflict: centre-line thresholds ignore that the
+            # van (~2.0 m) plus a parked car (~1.8 m) cannot share 2×1.75 m.
+            # A STATIONARY body whose centre sits in the 1.40-2.05 m band
+            # close ahead on a straight would be scraped — stop instead of
+            # squeezing (a parked mini in a narrow bay was hit at 2.8 m/s in
+            # sweep run 62). Moving traffic and the central corridor keep the
+            # existing rules (following/lead logic), and junction-adjacent
+            # objects stay exempt: cross-street geometry is the give-way
+            # logic's job (re-blocking it was the original false-stop bug).
+            if (lat > block_halfwidth_m and getattr(obj, "speed", 0.0) < 0.5
+                    and max(0.0, along) < 12.0 and not near_junction):
+                found = True
+                dist = max(0.0, along)
+                if dist < closest:
+                    closest = dist
+                    closest_type = obj.object_type
+                    closest_speed = obj.speed
+                    closest_lat = round(lat, 2)
                 blocked = True
 
         perception.closest_obstacle_distance = closest

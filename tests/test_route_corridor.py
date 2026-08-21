@@ -16,6 +16,13 @@ def straight_route():
     return Route(waypoints=[Waypoint(x=i * 2.0, y=0.0) for i in range(60)])
 
 
+def route_with_junction(x_from=14.0, x_to=20.0):
+    """Straight route whose waypoints in [x_from, x_to] are junction-tagged."""
+    wps = [Waypoint(x=i * 2.0, y=0.0, is_junction=(x_from <= i * 2.0 <= x_to))
+           for i in range(60)]
+    return Route(waypoints=wps)
+
+
 def ego_frame(obj_wx, obj_wy, ego_x, ego_y, ego_yaw):
     """World -> ego frame, same math as perception._actor_to_object."""
     dx, dy = obj_wx - ego_x, obj_wy - ego_y
@@ -85,12 +92,31 @@ def test_no_route_keeps_ego_box_verdict():
 
 def test_cross_street_waiter_slows_but_does_not_block():
     """The junction-deadlock bug: a car waiting at the cross-street stop line,
-    1.6 m off our (curving) path, must slow us — never freeze the mission."""
+    1.6 m off our path AT A JUNCTION, must slow us — never freeze the
+    mission. (Junction-tagged: cross-street geometry is give-way's job.)"""
     ego = (10.0, 0.0, 0.0)
-    out = run_filter(straight_route(), ego, [obj_at_world(16.0, 1.6, ego)])
+    out = run_filter(route_with_junction(), ego, [obj_at_world(16.0, 1.6, ego)])
     assert out.path_blocked is False, "off-centre waiter must not hard-block"
     assert out.closest_obstacle_distance < 8.0      # still seen -> slow zone
     assert out.closest_obstacle_lateral_m == 1.6    # and the evidence is visible
+
+
+def test_parked_car_in_narrow_bay_blocks_instead_of_scraping():
+    """Sweep run 62: a STATIONARY car 1.6 m off-centre on a plain straight
+    is a physical-width conflict (van 2.0 m + car 1.8 m > 2×1.6 m) — the van
+    must stop, not squeeze past and scrape."""
+    ego = (10.0, 0.0, 0.0)
+    out = run_filter(straight_route(), ego, [obj_at_world(16.0, 1.6, ego)])
+    assert out.path_blocked is True, "narrow-gap parked car must hard-block"
+
+
+def test_moving_car_in_band_does_not_wide_block():
+    """A MOVING car drifting through the 1.4-2.05 m band (overtake, merge)
+    must not phantom-brake the van via the wide-body rule."""
+    ego = (10.0, 0.0, 0.0)
+    out = run_filter(straight_route(), ego,
+                     [obj_at_world(16.0, 1.6, ego, speed=6.0)])
+    assert out.path_blocked is False
 
 
 def test_true_lead_car_still_blocks():
