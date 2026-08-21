@@ -33,7 +33,7 @@ from flask_socketio import SocketIO
 # Our modules
 from .adapters.carla_vehicle_adapter import CarlaVehicleAdapter
 from .adapters.carla_sensor_adapter import CarlaSensorAdapter
-from .perception.perception import PerceptionSystem
+from .perception.perception import PerceptionSystem, DetectedObject, ObjectType
 from .perception.camera_lidar_perception import CameraLidarPerception
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
@@ -298,6 +298,16 @@ class WarpAV:
         # actually drive, not the direction the nose points (mid-turn the nose
         # sweeps neighbouring lanes -> false "vehicle ahead" stops).
         if self._route and perception.healthy and pose.healthy:
+            # The map's DECORATIVE parked cars are not actors, so perception
+            # cannot see them — the van slammed one at full parking-approach
+            # speed (sweep: impulse 9281). Feed them in as stationary
+            # pseudo-vehicles so the corridor width logic refuses to drive
+            # through them like any other parked car.
+            try:
+                perception.objects = list(perception.objects) + \
+                    self._static_vehicle_objects(pose)
+            except Exception:
+                pass
             perception = self.planner.filter_to_route_corridor(
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
@@ -1581,6 +1591,26 @@ class WarpAV:
         self._static_vehicle_pts = pts
         print(f"[Parking] static-layer parked vehicles known: {len(pts)}")
         return pts
+
+    def _static_vehicle_objects(self, pose):
+        """Nearby static-layer parked cars as pseudo-detections (VEHICLE,
+        speed 0) in the ego frame, for the route-corridor check."""
+        out = []
+        c, s = math.cos(pose.yaw), math.sin(pose.yaw)
+        for i, pts in enumerate(self._static_vehicle_points()):
+            cx, cy = pts[0]
+            dx, dy = cx - pose.x, cy - pose.y
+            d2 = dx * dx + dy * dy
+            if d2 > 45.0 ** 2:
+                continue
+            ex = dx * c + dy * s          # forward
+            ey = -dx * s + dy * c         # matches the corridor's inverse
+            if ex < -5.0:
+                continue
+            out.append(DetectedObject(object_type=ObjectType.VEHICLE,
+                                      x=ex, y=ey, distance=math.sqrt(d2),
+                                      speed=0.0, id=900000 + i))
+        return out
 
     def _mark_slot_occupancy(self, slots):
         """A slot is taken if ANY PART of another vehicle overlaps it
