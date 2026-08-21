@@ -69,3 +69,25 @@ def test_red_light_without_stop_line_uses_junction_edge():
     # no data at all: stop immediately (early is the safe direction)
     o = b.update(PerceptionOutput(traffic_light="red"), pose, 500, True, junction_ahead_m=None)
     assert o.behavior == DrivingBehavior.STOPPED_RED_LIGHT and o.should_stop
+
+
+def test_red_light_holds_relative_to_junction_entry_not_carla_stop_wp():
+    b = BehaviorSystem(); b.set_mission()
+    pose = Pose(healthy=True)
+    # CARLA says the stop line is 2 m away (early data) but the junction is
+    # actually 10 m ahead: keep rolling — junction entry wins
+    o = b.update(PerceptionOutput(traffic_light="red", traffic_light_distance_m=2.0),
+                 pose, 500, True, junction_ahead_m=10.0)
+    assert not o.should_stop and "junction edge" in o.reason
+    # at 3.4 m from the junction entry: hold
+    o = b.update(PerceptionOutput(traffic_light="red", traffic_light_distance_m=2.0),
+                 pose, 500, True, junction_ahead_m=3.4)
+    assert o.behavior == DrivingBehavior.STOPPED_RED_LIGHT
+
+
+def test_committed_crossing_never_stops_inside_the_junction():
+    b = BehaviorSystem(); b.set_mission()
+    pose = Pose(healthy=True)
+    o = b.update(PerceptionOutput(traffic_light="red"), pose, 500, True,
+                 junction_ahead_m=0.0)
+    assert o.behavior != DrivingBehavior.STOPPED_RED_LIGHT, "must clear the junction, not freeze in it"
