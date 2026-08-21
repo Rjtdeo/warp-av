@@ -136,12 +136,15 @@ def start_carla():
 
 
 def kill_stack():
-    ssh('Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like "*warp_av.main*"} '
+    # NB: the Name filter keeps this from matching (and killing) the SSH
+    # shell that carries this very command line.
+    ssh('Get-CimInstance Win32_Process | Where-Object {($_.Name -eq "python.exe") -and '
+        '(($_.CommandLine -like "*warp_av.main*") -or ($_.CommandLine -like "*run.py*"))} '
         '| ForEach-Object {Stop-Process -Id $_.ProcessId -Force}')
 
 
 def start_stack():
-    ssh(f"Start-Process -FilePath '{WIN_PY}' -ArgumentList '-m','warp_av.main' "
+    ssh(f"Start-Process -FilePath '{WIN_PY}' -ArgumentList 'run.py' "
         f"-WorkingDirectory '{WIN_REPO}' -WindowStyle Hidden "
         f"-RedirectStandardOutput '{WIN_REPO}\\logs\\stack_out.log' "
         f"-RedirectStandardError '{WIN_REPO}\\logs\\stack_err.log'")
@@ -748,7 +751,8 @@ def main():
         log(f"WARNING: expected version {a.expect_version}, stack runs {st.get('version')}")
 
     # kill any leftover traffic-spawner scripts holding actors
-    ssh('Get-CimInstance Win32_Process | Where-Object {$_.CommandLine -like "*spawn_traffic*"} '
+    ssh('Get-CimInstance Win32_Process | Where-Object {($_.Name -eq "python.exe") -and '
+        '($_.CommandLine -like "*spawn_traffic*")} '
         '| ForEach-Object {Stop-Process -Id $_.ProcessId -Force}')
     api_post("/api/traffic/clear", {"all": True})
 
