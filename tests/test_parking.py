@@ -228,3 +228,30 @@ def test_retarget_to_slot_ends_route_in_the_slot():
     assert abs(last.yaw) < 0.01
     ys = [w.y for w in r.waypoints[-4:]]
     assert max(ys) - min(ys) < 0.15, "must arrive straight into the slot"
+
+
+def test_no_slots_on_curved_bay_sections():
+    p = planner()
+    # bay following a bend: quarter-circle R=20 -> every slot spans >8 deg -> none allowed
+    def curved_bay(x, y, z):
+        return None
+    p._right_bay = curved_bay
+    run = [(20 * math.sin(t / 20), 20 - 20 * math.cos(t / 20), 0.0, 2.5)
+           for t in range(0, 30, 2)]
+    assert p._slice_run_into_slots(run) == []
+    # and a straight run of the same length still yields slots
+    straight = [(float(t), 2.8, 0.0, 2.5) for t in range(0, 30, 2)]
+    assert len(p._slice_run_into_slots(straight)) == 4
+
+
+def test_no_slots_near_junctions():
+    p = planner()
+    _mock_bays(p, span=(100.0, 150.0))
+    r = straight_route(80)
+    for i, w in enumerate(r.waypoints):
+        if 118.0 <= w.x <= 126.0:          # junction in the middle of the bay
+            w.is_junction = True
+    slots = p.find_parking_slots(r)
+    assert slots, "straight sections should still produce slots"
+    for sl in slots:
+        assert not (112.0 <= sl["x"] <= 132.0), f"slot at {sl['x']} too close to the junction"
