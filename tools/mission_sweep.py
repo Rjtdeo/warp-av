@@ -583,9 +583,13 @@ def execute_run(spec, rng, points, out_dir, log):
                 if spec["kind"] == "red_light":
                     if tl.get("state") in ("red", "yellow"):
                         hr["light_seen"] = True
-                    if beh == "stopped_red_light" and speed < 0.3 and "hold_junction_m" not in hr:
+                    # Full stop under a red counts as the hold whatever the
+                    # behavior label says (the roll-up keeps 'following_route').
+                    if tl.get("state") in ("red", "yellow") and speed < 0.3 \
+                            and "hold_junction_m" not in hr:
                         hr["hold_junction_m"] = jm
                         hr["hold_stop_line_m"] = tl.get("stop_line_m")
+                        hr["hold_behavior"] = beh
                         fetch_frame(os.path.join(frames_dir, f"run_{rid:03d}_hold.jpg"))
                     if "hold_junction_m" in hr and dt_h > 10.0:
                         api_post("/api/scenario/clear")
@@ -604,7 +608,10 @@ def execute_run(spec, rng, points, out_dir, log):
                             hazard["cleared"] = True
                             hazard["t_cleared"] = t
                     elif hr.get("light_seen") and "hold_junction_m" not in hr \
-                            and jm is not None and jm < 2.0 and speed > 2.0:
+                            and jm is not None and jm < 2.0 and speed > 2.0 \
+                            and tl.get("state") in ("red", "yellow"):
+                        # Only a junction entered while the light is STILL
+                        # red counts — a released light + proceed is correct.
                         fail = "RAN THE RED LIGHT — entered the junction at speed"
                         break
                 elif spec["kind"] == "jaywalker":
