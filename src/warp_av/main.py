@@ -1869,7 +1869,7 @@ def get_history():
 
 @app.route('/api/traffic/spawn', methods=['POST'])
 def spawn_traffic_api():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}   # body is optional (bare button press)
     return jsonify(av_system.api_spawn_traffic(
         cars=int(data.get('cars', 15)), walkers=int(data.get('walkers', 12)),
         cyclists=int(data.get('cyclists', 4))))
