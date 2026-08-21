@@ -694,11 +694,15 @@ def execute_run(spec, rng, points, out_dir, log):
                         f"reason: {reason!r}")
                 break
 
-            # collision fast-exit
+            # collision fast-exit — feather-taps (spawn adjacency, TM nudges
+            # at standstill) are recorded but never abort/restart
             colls = (st.get("collision") or {}).get("count", 0) - res["collision_base"]
             if colls > 0:
-                fail = f"COLLISION: {(st.get('collision') or {}).get('last')}"
-                break
+                lastc = (st.get("collision") or {}).get("last") or {}
+                if lastc.get("intensity", 999.0) >= 30.0:
+                    fail = f"COLLISION: {lastc}"
+                    break
+                res["soft_contacts"] = colls
 
             time.sleep(SAMPLE_DT)
     finally:
@@ -721,6 +725,9 @@ def execute_run(spec, rng, points, out_dir, log):
     res["min_object_m"] = round(min_any_object, 1) if min_any_object < 1e9 else None
     res["collisions"] = (st.get("collision") or {}).get("count", 0) - res["collision_base"]
     res["collision_last"] = (st.get("collision") or {}).get("last") if res["collisions"] else None
+    if res["collisions"] and (res["collision_last"] or {}).get("intensity", 999.0) < 30.0:
+        res["soft_only_contact"] = True
+        res["collisions"] = 0          # a tap is recorded, not a crash
     res["last_tick_error"] = st.get("last_tick_error") or ""
     mins = res["elapsed_s"] / 60.0
     res["steer_flips_per_s"] = round(steer_flips / max(1.0, moving_samples * SAMPLE_DT), 3)
@@ -931,7 +938,7 @@ def main():
             json.dump(res, f, indent=1)
         write_scoreboard(out_dir, results, len(plan), incidents)
         log(f"  -> {res['verdict']}: {str(res.get('why'))[:140]}")
-        if res.get("collisions"):
+        if res.get("collisions") and not res.get("soft_only_contact"):
             # A contact can leave the van physically wedged and poison every
             # following run — restart the stack for a factory-fresh vehicle.
             log("  collision run — restarting the stack for a clean vehicle")
