@@ -313,7 +313,7 @@ def pick_destination(rng, points, pose):
             pv = api_post("/api/route/preview", {"x": p["x"], "y": p["y"]})
         except Exception:
             continue
-        if pv.get("success") and 100.0 <= pv.get("distance_m", 0) <= 750.0:
+        if pv.get("success") and 100.0 <= pv.get("distance_m", 0) <= 450.0:
             return p, pv["distance_m"]
     return None, None
 
@@ -408,7 +408,9 @@ def execute_run(spec, rng, points, out_dir, log):
             + (" (chosen slot taken)" if spec["take_chosen"] else ""))
 
     timeout_s = min(480.0 if spec["dense"] else 420.0,
-                    max(160.0, dist / (3.0 if spec["dense"] else 4.5) + 120.0))
+                    max(180.0, dist / (3.0 if spec["dense"] else 4.0) + 140.0))
+    if spec["kind"] in ("red_light", "fault"):
+        timeout_s += 60.0        # forced holds eat clock a natural run doesn't
 
     # ---- poll loop ----
     hazard = {"armed": spec["kind"] in ("red_light", "jaywalker", "cutin", "fault"),
@@ -420,6 +422,7 @@ def execute_run(spec, rng, points, out_dir, log):
     min_any_object = 1e9
     saw_executing = False
     stop_started = None
+    park_prog = None
     settled_speeds = []
     steer_prev = 0.0
     steer_flips = 0
@@ -493,6 +496,22 @@ def execute_run(spec, rng, points, out_dir, log):
             if (beh == "following_route" and abs(speed - CRUISE) < 1.5
                     and not (hazard["fired"] and not hazard["cleared"])):
                 settled_speeds.append(speed)
+
+            # parking end-game stall: "N m to the spot" not shrinking
+            if beh == "parking" and "m to the spot" in reason:
+                try:
+                    d_spot = float(reason.split(",")[-1].split("m to the spot")[0])
+                except Exception:
+                    d_spot = None
+                if d_spot is not None:
+                    if park_prog is None or abs(park_prog[1] - d_spot) > 0.15:
+                        park_prog = (t, d_spot)
+                    elif t - park_prog[0] > 75.0:
+                        fail = (f"PARKING STALL: {d_spot:.1f} m from the spot with no "
+                                f"progress for {t - park_prog[0]:.0f}s")
+                        break
+            else:
+                park_prog = None
 
             # stuck detection
             if speed < 0.15 and mission_state == "executing":
