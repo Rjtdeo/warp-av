@@ -312,7 +312,16 @@ class RoutePlanner:
         if off <= 0.1:
             return None      # nowhere to pull over (very narrow lane)
 
-        # Replace the tail with a smooth ramp P0 -> spot (heading = road heading).
+        self._blend_tail_to(route, i0, tx, ty, tyaw, usable)
+        return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3),
+                "offset_m": round(off, 2), "moved_back_m": round(moved_back, 1), "kind": kind}
+
+    def _blend_tail_to(self, route: Route, i0: int, tx, ty, tyaw, usable):
+        """Replace the route tail after index i0 with a smooth ramp to the
+        target, finishing with a straight-in section so the vehicle arrives
+        parallel (shared by kerbside pull-over and slot parking)."""
+        wps = route.waypoints
+        last = wps[-1]
         p0 = wps[i0]
         h = last.yaw
         fwd = (math.cos(h), math.sin(h))
@@ -320,8 +329,6 @@ class RoutePlanner:
         dx, dy = tx - p0.x, ty - p0.y
         along = dx * fwd[0] + dy * fwd[1]
         lat = dx * right[0] + dy * right[1]
-        # Finish the sideways move early: the last few metres run STRAIGHT
-        # inside the bay so the van arrives parallel to the lane line.
         straight_in = min(5.0, max(0.0, along - 6.0))
         cut = max(0.5, along - straight_in)
         K = max(6, int(usable / 2.0))
@@ -335,8 +342,118 @@ class RoutePlanner:
                 y=p0.y + fwd[1] * (a * along) + right[1] * (smooth * lat),
                 z=last.z, yaw=tyaw))
         route.waypoints[i0 + 1:] = new_tail
-        return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3),
-                "offset_m": round(off, 2), "moved_back_m": round(moved_back, 1), "kind": kind}
+
+    # ---------------- FIND PARKING: explicit van-sized slots ----------------
+    SLOT_LEN_M = 7.0
+
+    def find_parking_slots(self, route: Route, search_back_m=70.0):
+        """Slice the parking bays along the final stretch of the route into
+        van-sized slot rectangles. Returns a list ordered far -> near the
+        destination: {x, y, yaw, length, width, corners: [[x,y]*4]}."""
+        if not route or len(route.waypoints) < 4:
+            return []
+        wps = route.waypoints
+        # collect bay centreline points alongside the route tail (route order)
+        arc_from_end = [0.0] * len(wps)
+        for i in range(len(wps) - 2, -1, -1):
+            arc_from_end[i] = arc_from_end[i + 1] + math.hypot(
+                wps[i + 1].x - wps[i].x, wps[i + 1].y - wps[i].y)
+        bay_pts = []
+        for i, wp in enumerate(wps):
+            if arc_from_end[i] > search_back_m:
+                continue
+            try:
+                bay = self._right_bay(wp.x, wp.y, wp.z)
+            except Exception:
+                bay = None
+            bay_pts.append(bay)      # None marks gaps
+
+        slots = []
+        run = []
+        for b in bay_pts + [None]:
+            if b is not None:
+                run.append(b)
+                continue
+            if len(run) >= 2:
+                slots.extend(self._slice_run_into_slots(run))
+            run = []
+        return slots
+
+    def _slice_run_into_slots(self, run):
+        """run = consecutive (x, y, yaw, width) bay points along the road."""
+        arcs = [0.0]
+        for a, b in zip(run, run[1:]):
+            arcs.append(arcs[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        total = arcs[-1]
+        n = int(total // self.SLOT_LEN_M)
+        out = []
+        for k in range(n):
+            mid = (k + 0.5) * self.SLOT_LEN_M
+            # interpolate centre + heading at arc position `mid`
+            for i in range(len(arcs) - 1):
+                if arcs[i + 1] >= mid:
+                    seg = max(1e-6, arcs[i + 1] - arcs[i])
+                    t = (mid - arcs[i]) / seg
+                    x = run[i][0] + (run[i + 1][0] - run[i][0]) * t
+                    y = run[i][1] + (run[i + 1][1] - run[i][1]) * t
+                    yaw = math.atan2(run[i + 1][1] - run[i][1], run[i + 1][0] - run[i][0])
+                    width = run[i][3]
+                    break
+            else:
+                continue
+            fwd = (math.cos(yaw), math.sin(yaw))
+            right = (-math.sin(yaw), math.cos(yaw))
+            hl, hw = self.SLOT_LEN_M / 2.0, width / 2.0
+            corners = [[round(x + sx * fwd[0] * hl + sy * right[0] * hw, 2),
+                        round(y + sx * fwd[1] * hl + sy * right[1] * hw, 2)]
+                       for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1))]
+            out.append({"x": round(x, 2), "y": round(y, 2), "yaw": round(yaw, 3),
+                        "length": self.SLOT_LEN_M, "width": round(width, 2),
+                        "corners": corners})
+        return out
+
+    @staticmethod
+    def point_in_slot(px, py, slot, inflate=0.0):
+        dx, dy = px - slot["x"], py - slot["y"]
+        c, s_ = math.cos(-slot["yaw"]), math.sin(-slot["yaw"])
+        lx = dx * c - dy * s_
+        ly = dx * s_ + dy * c
+        return (abs(lx) <= slot["length"] / 2.0 + inflate
+                and abs(ly) <= slot["width"] / 2.0 + inflate)
+
+    @staticmethod
+    def van_in_slot(vx, vy, vyaw, half_len, half_wid, slot):
+        """(inside, margin_along_m, margin_side_m) for the van's rectangle."""
+        c, s_ = math.cos(vyaw), math.sin(vyaw)
+        worst_lx = worst_ly = 0.0
+        for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
+            px = vx + sx * c * half_len - sy * s_ * half_wid
+            py = vy + sx * s_ * half_len + sy * c * half_wid
+            dx, dy = px - slot["x"], py - slot["y"]
+            cs, ss = math.cos(-slot["yaw"]), math.sin(-slot["yaw"])
+            lx = abs(dx * cs - dy * ss)
+            ly = abs(dx * ss + dy * cs)
+            worst_lx = max(worst_lx, lx)
+            worst_ly = max(worst_ly, ly)
+        m_along = slot["length"] / 2.0 - worst_lx
+        m_side = slot["width"] / 2.0 - worst_ly
+        return (m_along >= 0 and m_side >= 0, round(m_along, 2), round(m_side, 2))
+
+    def retarget_to_slot(self, route: Route, slot):
+        """Trim the route beside the chosen slot and blend into it."""
+        wps = route.waypoints
+        if len(wps) < 6:
+            return False
+        ci = min(range(len(wps)),
+                 key=lambda i: math.hypot(wps[i].x - slot["x"], wps[i].y - slot["y"]))
+        if ci < 4:
+            return False
+        route.waypoints = wps[:ci + 1]
+        route.waypoints[-1] = Waypoint(x=route.waypoints[-1].x, y=route.waypoints[-1].y,
+                                       z=route.waypoints[-1].z, yaw=slot["yaw"])
+        i0 = max(0, len(route.waypoints) - 8)
+        self._blend_tail_to(route, i0, slot["x"], slot["y"], slot["yaw"], usable=14.0)
+        return True
 
     def _pullover_target(self, last: Waypoint):
         """Kerb-side point for the final stop. Uses the CARLA map when

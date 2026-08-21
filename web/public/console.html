@@ -2814,6 +2814,11 @@ body.demo-mode .metric-value {
                         ■ STOP MISSION
                     </button>
 
+                    <button style="width:100%;margin-top:8px;border:1px solid #39e77d;color:#39e77d;background:transparent;"
+                            onclick="findParking()">
+                        🅿 FIND PARKING
+                    </button>
+
                 </div>
 
             </section>
@@ -3400,6 +3405,21 @@ async function faultAction(path, message) {
     );
 }
 
+
+
+async function findParking() {
+    try {
+        const res = await fetch(API + '/api/parking/find', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            addActivity('🅿 ' + data.message, 'green');
+        } else {
+            addActivity('🅿 Parking: ' + (data.reason || 'failed'), 'yellow');
+        }
+    } catch (e) {
+        addActivity('🅿 Parking search failed: ' + e, 'yellow');
+    }
+}
 
 
 async function spawnScenario(type) {
@@ -5508,6 +5528,48 @@ function drawMap(s) {
         ctx.stroke();
 
         ctx.restore();
+
+
+        /* PARKING SLOTS (FIND PARKING result) */
+
+        const slots = s && s.parking_slots;
+
+        if (slots && slots.length) {
+
+            slots.forEach(function (sl) {
+
+                if (!sl.corners) { return; }
+
+                ctx.save();
+                ctx.beginPath();
+
+                sl.corners.forEach(function (c, i) {
+                    const [px, py] = project(Number(c[0]), Number(c[1]));
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                });
+
+                ctx.closePath();
+
+                if (sl.chosen) {
+                    ctx.fillStyle = 'rgba(57,231,125,.30)';
+                    ctx.strokeStyle = '#39e77d';
+                    ctx.lineWidth = 2.5;
+                } else if (sl.occupied) {
+                    ctx.fillStyle = 'rgba(255,82,82,.18)';
+                    ctx.strokeStyle = 'rgba(255,82,82,.8)';
+                    ctx.lineWidth = 1.5;
+                } else {
+                    ctx.fillStyle = 'rgba(160,170,185,.10)';
+                    ctx.strokeStyle = 'rgba(160,170,185,.7)';
+                    ctx.lineWidth = 1.5;
+                }
+
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            });
+        }
 
 
         /* route start */
