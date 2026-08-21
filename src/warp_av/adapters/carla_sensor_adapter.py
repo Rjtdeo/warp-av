@@ -114,11 +114,11 @@ class CarlaSensorAdapter:
         # --- Surround view cameras (operator situational awareness) ---
         # Lower resolution + slower tick: cheap on the GPU, plenty for the dashboard.
         views = [
-            ("left",  400, 300, 100, carla.Transform(carla.Location(x=0.0, y=-1.1, z=1.7),
+            ("left",  480, 360, 100, carla.Transform(carla.Location(x=0.0, y=-1.1, z=1.7),
                                                      carla.Rotation(yaw=-90, pitch=-15))),
-            ("right", 400, 300, 100, carla.Transform(carla.Location(x=0.0, y=1.1, z=1.7),
+            ("right", 480, 360, 100, carla.Transform(carla.Location(x=0.0, y=1.1, z=1.7),
                                                      carla.Rotation(yaw=90, pitch=-15))),
-            ("rear",  400, 300, 90,  carla.Transform(carla.Location(x=-2.6, z=1.8),
+            ("rear",  480, 360, 90,  carla.Transform(carla.Location(x=-2.6, z=1.8),
                                                      carla.Rotation(yaw=180, pitch=-12))),
             # bird's-eye: floats above the van looking straight down (~45 m square)
             ("top",   420, 420, 90,  carla.Transform(carla.Location(x=0.0, z=22.0),

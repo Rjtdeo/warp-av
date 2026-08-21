@@ -78,9 +78,20 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 - Finish: **"Parked 1.43 m from the kerbside spot, heading off 3°"**
 - Verification all [OK]: flips 0.14/sec, 0 unjustified brakes, settled-cruise wobble 0.04 m/s, safety `ok` throughout
 
-## 6b. What's left
+## 7. Day 2 — operator features & parking box system (Aug 20)
 
-1. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
+**Surround view:** 5 cameras on the dashboard (front + left/right/rear + bird's-eye TOP at 22 m).
+
+**One-click hazards (Road Scenarios panel):** RED LIGHT (freeze/release all lights), 🚶 JAYWALKER (crosses mid-block 18 m ahead), 🚙 CUT-IN (adjacent-lane car swerves in and brakes), 🚗 DENSE TRAFFIC toggle (15 cars + 4 cyclists + 12 road-crossing walkers around the van, managed in-stack, one button on/off). The whole 7-scenario demo now runs from the dashboard with zero terminals.
+
+**FIND PARKING (slot system):** slices real map bays near the destination into 7 m van-sized boxes (straight sections only, ≥6 m from junctions), checks occupancy, retargets the mission to the best free slot, draws all boxes on the map (green chosen / red occupied / grey free). **Completion = the whole van inside the box** (checked against its real bounding box every tick), parallel to the lane within **6°**, with margins reported: "INSIDE slot #N: YES (…)". Overshoot stops honestly instead of wandering. Support tools: `find_parking_bays.py` (town survey: Town10 has 65 bays), `spawn_parked_cars.py` (occupy slots for testing), `clear_traffic.py`.
+
+**Bugs found by operating, fixed same day:** junction false-block (a car waiting at the CROSS street counted as "vehicle ahead 3.8 m" → two-tier corridor: hard-block only within 1.40 m of the path, 1.40–1.75 m slows; lateral offset now exposed in state); destination dropdown limited to 20 points (now all 155, numbering matches the bay survey); parking_spot log event dropped before the log opened; Flask HTML error on body-less button POSTs.
+
+## 8. What's left
+
+1. Push the Windows-side reference logs (needs the one-time `gh auth login` on the CARLA machine)
+2. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
    no object tracking yet (so following/light detection run on ground truth), give-way uses a radius
    heuristic rather than true right-of-way, corridor check trusts localization (fine in sim)
-3. Run the full 1000-scenario catalog on the CARLA machine and commit the first `REPORT.md` scoreboard
+4. Run the full 1000-scenario catalog on the CARLA machine and commit the first `REPORT.md` scoreboard
