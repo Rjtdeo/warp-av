@@ -122,6 +122,8 @@ class WarpAV:
         self._parking_spot = None
         self._traffic_vehicles = []
         self._traffic_walkers = []      # (walker, controller) pairs
+        self._scenario_jaywalkers = []  # (walker, start_location)
+        self._cutin = None              # state machine for the cut-in car
 
         self._running = False
 
@@ -230,6 +232,7 @@ class WarpAV:
         """
 
         self._tick_count += 1
+        self._step_scenario_hazards()
         if self._traffic_walkers and self._tick_count % 300 == 0:
             try:
                 world = self.vehicle_adapter.world
@@ -606,6 +609,39 @@ class WarpAV:
     # Dashboard road-scenario tests
     # ========================================================
 
+    def _step_scenario_hazards(self):
+        """Advance the jaywalker / cut-in mini state machines each tick."""
+        for walker, start in list(self._scenario_jaywalkers):
+            try:
+                loc = walker.get_location()
+                if math.hypot(loc.x - start.x, loc.y - start.y) > 12.0:
+                    walker.apply_control(carla.WalkerControl(speed=0.0))
+                    self._scenario_jaywalkers.remove((walker, start))
+            except Exception:
+                self._scenario_jaywalkers.remove((walker, start))
+        if self._cutin is not None:
+            c = self._cutin
+            try:
+                car = c["actor"]
+                age = time.time() - c["t0"]
+                ego = self.vehicle_adapter.vehicle.get_location()
+                gap = math.hypot(car.get_location().x - ego.x, car.get_location().y - ego.y)
+                if c["phase"] == 0 and (gap < 16.0 or age > 3.0):
+                    try:
+                        car.disable_constant_velocity()
+                    except Exception:
+                        pass
+                    car.apply_control(carla.VehicleControl(throttle=0.55, steer=0.35 * c["steer"]))
+                    c["phase"], c["t0"] = 1, time.time()
+                elif c["phase"] == 1 and age > 0.8:
+                    car.apply_control(carla.VehicleControl(throttle=0.5, steer=-0.35 * c["steer"]))
+                    c["phase"], c["t0"] = 2, time.time()
+                elif c["phase"] == 2 and age > 0.8:
+                    car.apply_control(carla.VehicleControl(brake=1.0))
+                    self._cutin = None      # done; car stays until CLEAR
+            except Exception:
+                self._cutin = None
+
     def clear_scenario(self):
         """Remove temporary pedestrian / vehicle / barrier actors."""
 
@@ -619,6 +655,8 @@ class WarpAV:
 
         self._scenario_actors.clear()
         self._scenario_type = None
+        self._scenario_jaywalkers = []
+        self._cutin = None
 
         if getattr(self, "_scenario_lights_frozen", False):
             try:
@@ -710,6 +748,8 @@ class WarpAV:
         vehicle
         barrier
         red_light   (freezes every traffic light red; cleared by clear_scenario)
+        jaywalker   (pedestrian crosses mid-block right in front of the van)
+        cutin       (car in the next lane swerves into ours and brakes)
         """
 
         allowed = {
@@ -717,6 +757,8 @@ class WarpAV:
             "vehicle",
             "barrier",
             "red_light",
+            "jaywalker",
+            "cutin",
         }
 
         if scenario_type not in allowed:
@@ -759,6 +801,68 @@ class WarpAV:
                 pass
             return {"success": True,
                     "reason": f"{len(lights)} traffic lights frozen RED — the van must stop at the next junction. CLEAR releases them."}
+
+
+        # Jaywalker: pedestrian steps off the right sidewalk ~18 m ahead and
+        # crosses mid-block. Managed in tick(); stops on the far side.
+        if scenario_type == "jaywalker":
+            wp = self._get_scenario_waypoint(distance_m=18.0)
+            if not wp:
+                return {"success": False, "reason": "Could not find a road position ahead"}
+            world = self.vehicle_adapter.world
+            t = wp.transform
+            rv = t.get_right_vector()
+            side = wp.lane_width / 2.0 + 2.0
+            spawn = carla.Transform(
+                carla.Location(x=t.location.x + rv.x * side,
+                               y=t.location.y + rv.y * side,
+                               z=t.location.z + 1.0),
+                carla.Rotation(yaw=t.rotation.yaw + 180.0))
+            bp = world.get_blueprint_library().filter("walker.pedestrian.0001")[0]
+            walker = world.try_spawn_actor(bp, spawn)
+            if walker is None:
+                return {"success": False, "reason": "Sidewalk spawn was blocked — try again in a second"}
+            walker.apply_control(carla.WalkerControl(
+                direction=carla.Vector3D(-rv.x, -rv.y, 0.0), speed=2.2))
+            self._scenario_actors.append(walker)
+            self._scenario_jaywalkers.append((walker, walker.get_location()))
+            self._scenario_type = scenario_type
+            self.logger.log_event("scenario_spawned", "jaywalker crossing mid-block 18 m ahead")
+            return {"success": True, "reason": "Jaywalker crossing 18 m ahead — the van must stop for them"}
+
+
+        # Cut-in: car in the adjacent lane ahead swerves into ours and brakes.
+        if scenario_type == "cutin":
+            wp = self._get_scenario_waypoint(distance_m=14.0)
+            if not wp:
+                return {"success": False, "reason": "Could not find a road position ahead"}
+            lane = wp.get_left_lane()
+            if (lane is None or lane.lane_type != carla.LaneType.Driving
+                    or abs((lane.transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180) > 60):
+                lane = wp.get_right_lane()
+                steer_sign = -1.0     # merging leftwards into us
+            else:
+                steer_sign = 1.0      # merging rightwards into us
+            if (lane is None or lane.lane_type != carla.LaneType.Driving):
+                return {"success": False, "reason": "No adjacent same-direction lane here for a cut-in"}
+            world = self.vehicle_adapter.world
+            t = lane.transform
+            bp = world.get_blueprint_library().filter("vehicle.audi.tt")[0]
+            car = world.try_spawn_actor(
+                bp, carla.Transform(carla.Location(x=t.location.x, y=t.location.y,
+                                                   z=t.location.z + 0.4), t.rotation))
+            if car is None:
+                return {"success": False, "reason": "Adjacent lane occupied — try again in a second"}
+            try:
+                fwd = t.get_forward_vector()
+                car.enable_constant_velocity(carla.Vector3D(6.5, 0.0, 0.0))
+            except Exception:
+                pass
+            self._scenario_actors.append(car)
+            self._cutin = {"actor": car, "phase": 0, "t0": time.time(), "steer": steer_sign}
+            self._scenario_type = scenario_type
+            self.logger.log_event("scenario_spawned", "cut-in car launched in the adjacent lane")
+            return {"success": True, "reason": "Cut-in car launched — it will swerve into your lane and brake"}
 
 
         target_wp = self._get_scenario_waypoint(
