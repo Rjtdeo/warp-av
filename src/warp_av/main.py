@@ -193,6 +193,7 @@ class WarpAV:
             return False
 
         self._parking_slots = None
+        self._parking_rechecked = False
         # Bend the end of the route to a kerbside parking spot (Troy #7):
         # finish pulled over on the right, not dead-centre on the road.
         try:
@@ -356,9 +357,11 @@ class WarpAV:
             herr = abs((pose.yaw - self._parking_spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
             park_heading_ok = herr < math.radians(6)   # parallel to the lane line, visibly straight
             sp = self._parking_spot
-            if sp.get("kind") == "slot" and getattr(self, "_parking_slots", None):
+            _slots_now = getattr(self, "_parking_slots", None)
+            if (sp.get("kind") == "slot" and _slots_now
+                    and sp.get("slot_index", 1 << 30) < len(_slots_now)):
                 # slot parking is only done when the WHOLE van is inside the box
-                slot = self._parking_slots[sp["slot_index"]]
+                slot = _slots_now[sp["slot_index"]]
                 try:
                     ext = self.vehicle_adapter.vehicle.bounding_box.extent
                     half_len, half_wid = float(ext.x), float(ext.y)
@@ -376,6 +379,14 @@ class WarpAV:
             park_heading_ok=park_heading_ok,
             park_position_ok=park_position_ok,
         )
+
+        if (behavior_output.behavior == DrivingBehavior.PARKING
+                and not getattr(self, "_parking_rechecked", False)):
+            self._parking_rechecked = True
+            try:
+                self._recheck_parking_on_approach(pose)
+            except Exception as e:
+                print(f"[Parking] approach re-scan failed: {e}")
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         # Never overrides stops; only lowers a positive desired speed.
@@ -429,8 +440,10 @@ class WarpAV:
                 d = math.hypot(pose.x - sp["x"], pose.y - sp["y"])
                 herr = abs((pose.yaw - sp["yaw"] + math.pi) % (2 * math.pi) - math.pi)
                 detail = f"Parked {d:.2f} m from the kerbside spot, heading off {math.degrees(herr):.0f} deg"
-                if sp.get("kind") == "slot" and getattr(self, "_parking_slots", None):
-                    slot = self._parking_slots[sp["slot_index"]]
+                _sl_list = getattr(self, "_parking_slots", None)
+                if (sp.get("kind") == "slot" and _sl_list
+                        and sp.get("slot_index", 1 << 30) < len(_sl_list)):
+                    slot = _sl_list[sp["slot_index"]]
                     try:
                         ext = self.vehicle_adapter.vehicle.bounding_box.extent
                         half_len, half_wid = float(ext.x), float(ext.y)
@@ -1292,18 +1305,10 @@ class WarpAV:
         print(f"[Traffic] cleared {n} actors")
         return {"success": True, "removed": n}
 
-    def api_find_parking(self):
-        """FIND PARKING: slice the bays near the destination into van-sized
-        slots, skip occupied ones, retarget the mission to the best free slot."""
-        if not self._route or not self.mission_manager.current_mission:
-            return {"success": False, "reason": "Start a mission first — parking is searched near its destination"}
-        slots = self.planner.find_parking_slots(self._route)
-        if not slots:
-            return {"success": False, "reason": "No parking bays on the final stretch of this route"}
-
-        # occupancy: a slot is taken if ANY PART of another vehicle overlaps it
-        # (centre + the four bounding-box corners — a car straddling a slot
-        # boundary must mark every slot it touches)
+    def _mark_slot_occupancy(self, slots):
+        """A slot is taken if ANY PART of another vehicle overlaps it
+        (centre + four bounding-box corners: straddlers claim every slot
+        they touch)."""
         try:
             ego_id = self.vehicle_adapter.vehicle.id
             others = []
@@ -1327,14 +1332,48 @@ class WarpAV:
         for sl in slots:
             sl["occupied"] = any(self.planner.point_in_slot(px, py, sl, inflate=0.25)
                                  for pts in others for px, py in pts)
+
+    def _recheck_parking_on_approach(self, pose):
+        """Entering the parking phase: occupancy may be stale (cars parked
+        after the mission started). Re-scan; if the chosen slot got taken,
+        re-choose and retarget."""
+        sp = getattr(self, "_parking_spot", None)
+        slots = getattr(self, "_parking_slots", None)
+        if not sp or sp.get("kind") != "slot" or not slots:
+            return
+        self._mark_slot_occupancy(slots)
+        idx = sp.get("slot_index")
+        if idx is None or idx >= len(slots) or not slots[idx]["occupied"]:
+            return
+        new_idx = self.planner.choose_free_slot(slots)
+        if new_idx is None:
+            self.logger.log_event("parking_rescan", f"chosen slot #{idx} now occupied and NO free slot remains")
+            print("[Parking] chosen slot taken and no free slot left — obstacle logic will hold")
+            return
+        slots[idx]["chosen"] = False
+        slots[new_idx]["chosen"] = True
+        sl = slots[new_idx]
+        if self.planner.retarget_to_slot(self._route, sl):
+            self._parking_spot = {"x": sl["x"], "y": sl["y"], "yaw": sl["yaw"],
+                                  "offset_m": None, "moved_back_m": 0, "kind": "slot",
+                                  "slot_index": new_idx}
+            self.logger.log_event("parking_rescan", f"slot #{idx} was taken — re-targeted to slot #{new_idx}")
+            print(f"[Parking] slot #{idx} taken — switching to slot #{new_idx}")
+
+    def api_find_parking(self):
+        """FIND PARKING: slice the bays near the destination into van-sized
+        slots, skip occupied ones, retarget the mission to the best free slot."""
+        if not self._route or not self.mission_manager.current_mission:
+            return {"success": False, "reason": "Start a mission first — parking is searched near its destination"}
+        slots = self.planner.find_parking_slots(self._route)
+        if not slots:
+            return {"success": False, "reason": "No parking bays on the final stretch of this route"}
+
+        self._mark_slot_occupancy(slots)
+        for sl in slots:
             sl["chosen"] = False
 
-        # best = nearest to the destination (list is ordered far -> near) and free
-        chosen_idx = None
-        for i in range(len(slots) - 1, -1, -1):
-            if not slots[i]["occupied"]:
-                chosen_idx = i
-                break
+        chosen_idx = self.planner.choose_free_slot(slots)
         if chosen_idx is None:
             self._parking_slots = slots
             self.logger.log_event("parking_slots", f"{len(slots)} slots found — ALL OCCUPIED")
