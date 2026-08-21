@@ -345,15 +345,14 @@ body {
    LIVE VIEW
    ============================================================ */
 
-/* ---------- COCKPIT: side windows around FRONT, map+instrument right, rear strip below ---------- */
+/* ---------- SURROUND CLUSTER: camera wall left, tall map right ---------- */
 .surround-cross {
     display: grid;
     grid-template-areas:
-        "left front right map"
-        "left front right dir"
-        "rear rear  rear  rear";
-    grid-template-columns: 0.52fr 1.75fr 0.52fr 1.05fr;
-    grid-template-rows: 1.35fr 1fr auto;
+        "front front front map"
+        "left  rear  right map";
+    grid-template-columns: 1fr 1fr 1fr 1.45fr;
+    grid-template-rows: auto auto;
     gap: 10px;
     align-items: stretch;
 }
@@ -368,23 +367,6 @@ body {
 .sc-left  { grid-area: left; }
 .sc-rear  { grid-area: rear; }
 .sc-right { grid-area: right; }
-.sc-left img, .sc-right img { width: 100%; height: 100%; object-fit: cover; aspect-ratio: auto; }
-.sc-rear img { width: 100%; height: 160px; object-fit: cover; aspect-ratio: auto; }
-.sc-dir {
-    grid-area: dir;
-    border-radius: 10px;
-    border: 1px solid rgba(255,255,255,.06);
-    background: linear-gradient(160deg, rgba(23,38,53,.9), rgba(12,23,34,.95));
-    display: flex; flex-direction: column; justify-content: center;
-    gap: 8px; padding: 14px 16px;
-}
-.sc-dir-label { font-size: 10px; letter-spacing: 2px; color: #9aa4b2; }
-.sc-dir-speed { line-height: 1; }
-.sc-dir-speed b { font-size: 42px; font-weight: 800; color: #fff; }
-.sc-dir-speed span { font-size: 11px; letter-spacing: 2px; color: #9aa4b2; margin-left: 6px; }
-.sc-dir-turn { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 700; color: #e6ecf2; }
-.sc-dir-arrow { display: inline-block; font-size: 22px; transition: transform .3s; color: #39e77d; }
-.sc-dir-intent { font-size: 11px; font-weight: 800; letter-spacing: 2px; }
 .surround-cross .vehicle-map {
     grid-area: map;
     height: 100%;
@@ -429,11 +411,10 @@ body {
 .sc-rear img { transform: scaleX(-1); }   /* mirrored, like a rear-view mirror */
 @media (max-width: 1100px) {
     .surround-cross {
-        grid-template-columns: 1fr 1fr;
-        grid-template-areas: "front front" "left right" "rear rear" "map map" "dir dir";
+        grid-template-columns: 1fr 1fr 1fr;
+        grid-template-areas: "front front front" "left rear right" "map map map";
     }
-    .surround-cross .vehicle-map { min-height: 380px; }
-    .sc-left img, .sc-right img { aspect-ratio: 4 / 3; height: auto; }
+    .surround-cross .vehicle-map { min-height: 420px; }
 }
 
 .vehicle-map {
@@ -2649,21 +2630,6 @@ body.demo-mode .metric-value {
 
                 </div>
 
-                <div class="sc-dir">
-                    <div class="sc-dir-label">DIRECTION &amp; SPEED</div>
-                    <div class="sc-dir-speed"><b id="sc-dir-mph">0</b><span>MPH</span></div>
-                    <div class="sc-dir-turn">
-                        <span class="sc-dir-arrow" id="sc-dir-arrow">➤</span>
-                        <span id="sc-dir-turn">—</span>
-                    </div>
-                    <div class="sc-dir-intent" id="sc-dir-intent">STANDBY</div>
-                </div>
-
-                <div class="sc-cam sc-rear">
-                    <img id="sc-rear" alt="rear camera">
-                    <span class="sc-tag">REAR</span>
-                </div>
-
                 </div>
 
             </section>
@@ -3668,36 +3634,6 @@ async function faultAction(path, message) {
             frontBox.style.boxShadow = missionOn
                 ? 'inset 0 0 0 2px rgba(' + icol + ',.55)'
                 : 'none';
-        }
-
-        /* DIRECTION & SPEED instrument */
-        const dMph = document.getElementById('sc-dir-mph');
-        const dArrow = document.getElementById('sc-dir-arrow');
-        const dTurn = document.getElementById('sc-dir-turn');
-        const dIntent = document.getElementById('sc-dir-intent');
-        if (dMph && st && st.pose) {
-            dMph.textContent = Math.round(Number(st.pose.speed) * 2.23694);
-            if (dArrow) {
-                dArrow.style.transform = 'rotate(' + (-Number(st.pose.yaw)) + 'deg)';
-                dArrow.style.color = 'rgb(' + icol + ')';
-            }
-            if (dTurn) {
-                const j = st.junction;
-                if (st.behavior === 'parking') {
-                    dTurn.textContent = 'PARKING';
-                } else if (missionOn && j && j.distance_m != null) {
-                    dTurn.textContent = (j.direction === 'left' ? 'LEFT' : 'RIGHT')
-                        + ' TURN · ' + Math.round(j.distance_m) + ' m';
-                } else if (missionOn) {
-                    dTurn.textContent = 'STRAIGHT';
-                } else {
-                    dTurn.textContent = '—';
-                }
-            }
-            if (dIntent) {
-                dIntent.textContent = ilabel;
-                dIntent.style.color = 'rgb(' + icol + ')';
-            }
         }
 
         if (!st || !st.pose) { return; }
