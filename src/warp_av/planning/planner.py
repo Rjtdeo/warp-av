@@ -600,8 +600,10 @@ class RoutePlanner:
             oarc, lat, oseg = arc_pos(wx, wy)
             along = oarc - ego_arc
             # Wide-body check needs objects slightly beyond the slow corridor
-            # too (centre at 1.75-2.05 m still overlaps the van's swept width).
-            if lat > 2.05 or along < -1.0 or along > max_ahead_m:
+            # too (centre at 1.75-2.20 m still overlaps the van's swept width —
+            # 2.20 covers SUV-class half-widths; run 77 clipped a parked
+            # Patrol at ~2.1 m while sweeping through a bend).
+            if lat > 2.20 or along < -1.0 or along > max_ahead_m:
                 continue
             near_junction = (wps[oseg].is_junction
                              or wps[min(oseg + 1, n - 1)].is_junction)
@@ -628,7 +630,8 @@ class RoutePlanner:
             # existing rules (following/lead logic), and junction-adjacent
             # objects stay exempt: cross-street geometry is the give-way
             # logic's job (re-blocking it was the original false-stop bug).
-            if (lat > block_halfwidth_m and getattr(obj, "speed", 0.0) < 0.5
+            if (lat > block_halfwidth_m and lat <= 2.20
+                    and getattr(obj, "speed", 0.0) < 0.5
                     and max(0.0, along) < 12.0 and not near_junction):
                 found = True
                 dist = max(0.0, along)
