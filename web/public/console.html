@@ -3093,6 +3093,41 @@ body.demo-mode .metric-value {
 
 
                         <button
+                            class="scenario-button"
+                            onclick="setWeather('ClearNoon')">
+                            <span class="scenario-icon">☀️</span>
+                            <span>DAY</span>
+                        </button>
+
+                        <button
+                            class="scenario-button"
+                            onclick="setWeather('ClearSunset')">
+                            <span class="scenario-icon">🌅</span>
+                            <span>SUNSET</span>
+                        </button>
+
+                        <button
+                            class="scenario-button"
+                            onclick="setWeather('ClearNight')">
+                            <span class="scenario-icon">🌙</span>
+                            <span>NIGHT</span>
+                        </button>
+
+                        <button
+                            class="scenario-button"
+                            onclick="setWeather('HardRainNoon')">
+                            <span class="scenario-icon">🌧️</span>
+                            <span>RAIN</span>
+                        </button>
+
+                        <button
+                            class="scenario-button"
+                            onclick="setWeather('HardRainNight')">
+                            <span class="scenario-icon">⛈️</span>
+                            <span>NIGHT STORM</span>
+                        </button>
+
+                        <button
                             class="scenario-button clear-scenario"
                             onclick="clearScenario()">
 
@@ -3785,6 +3820,46 @@ async function findParking() {
     }
 }
 
+
+async function setWeather(preset) {
+    const status = document.querySelector('.scenario-status');
+    const names = {
+        ClearNoon: 'clear day', ClearSunset: 'sunset',
+        ClearNight: 'night', HardRainNoon: 'heavy rain',
+        HardRainNight: 'night storm'
+    };
+    if (status) {
+        status.textContent = `Setting weather: ${names[preset] || preset}...`;
+        status.className = 'scenario-status';
+    }
+    try {
+        const r = await fetch(API + '/api/weather', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preset: preset })
+        });
+        const result = await r.json();
+        if (!result.success) {
+            if (status) {
+                status.textContent = result.reason || 'Weather change failed.';
+                status.className = 'scenario-status error';
+            }
+            return;
+        }
+        if (status) {
+            status.textContent = `Weather: ${names[preset] || preset} — headlights handled automatically.`;
+            status.className = 'scenario-status success';
+        }
+        if (typeof addActivity === 'function') {
+            addActivity(`Weather set to ${names[preset] || preset}`, '#4fc3f7');
+        }
+    } catch (e) {
+        if (status) {
+            status.textContent = 'Weather change failed: ' + e.message;
+            status.className = 'scenario-status error';
+        }
+    }
+}
 
 async function spawnScenario(type) {
 
