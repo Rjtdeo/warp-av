@@ -83,7 +83,8 @@ class BehaviorSystem:
         # Junction give-way (Troy request): before turning at a junction, stop,
         # look for a moment, and only go when no moving vehicle is nearby.
         self.junction_stop_within_m = 12.0   # start handling the turn this close
-        self.hold_line_m = 3.0               # hold ~this far from the line/crossing (roll up first, like a driver)
+        self.hold_line_m = 3.0               # give-way hold: centre this far from the crossing
+        self.light_hold_m = 3.5              # red light: centre 3.5 m from the JUNCTION ENTRY -> bumper ~0.6 m before the crosswalk
         self.junction_dwell_s = 1.5          # mandatory look time even if clear
         self.junction_conflict_radius_m = 25.0
         self.junction_wait_timeout_s = 12.0  # then creep instead of deadlocking
@@ -250,25 +251,31 @@ class BehaviorSystem:
         # hazard always wins) and above following/cruising. Green releases it
         # automatically on the next tick.
         if perception.traffic_light in ("red", "yellow"):
-            d = perception.traffic_light_distance_m
-            line = "stop line"
-            if d is None and junction_ahead_m is not None:
-                # No stop-line data for this light: roll up to where the
-                # junction itself begins on our route (map fallback).
-                d = junction_ahead_m
-                line = "junction edge"
-            if d is not None and d > self.hold_line_m + 0.5:
-                creep = max(0.8, min(4.0, 0.5 * (d - self.hold_line_m)))
+            # Committed: already entering/inside the junction when the light
+            # changed — clear it, never freeze inside the box.
+            if junction_ahead_m is not None and junction_ahead_m < 1.0:
+                pass
+            else:
+                # Primary reference: the JUNCTION ENTRY measured along our own
+                # route (that is where the crosswalk actually is). CARLA's
+                # stop waypoints sit 1-7 m early (probe median 6 m) and are
+                # only the fallback when no junction is on the route.
+                if junction_ahead_m is not None:
+                    d, line = junction_ahead_m, "junction edge"
+                else:
+                    d, line = perception.traffic_light_distance_m, "stop line"
+                if d is not None and d > self.light_hold_m + 0.5:
+                    creep = max(0.8, min(4.0, 0.5 * (d - self.light_hold_m)))
+                    return self._decide(
+                        DrivingBehavior.FOLLOWING_ROUTE,
+                        f"{perception.traffic_light.upper()} light ahead ({d:.0f} m to {line}) — rolling up",
+                        speed=creep, stop=False
+                    )
                 return self._decide(
-                    DrivingBehavior.FOLLOWING_ROUTE,
-                    f"{perception.traffic_light.upper()} light ahead ({d:.0f} m to {line}) — rolling up",
-                    speed=creep, stop=False
+                    DrivingBehavior.STOPPED_RED_LIGHT,
+                    f"{perception.traffic_light.upper()} traffic light — holding at the {line}, waiting for green",
+                    speed=0.0, stop=True
                 )
-            return self._decide(
-                DrivingBehavior.STOPPED_RED_LIGHT,
-                f"{perception.traffic_light.upper()} traffic light — holding at the {line}, waiting for green",
-                speed=0.0, stop=True
-            )
 
         # --- Give way before turning at a junction ---
         if junction is None or junction.get("distance_m", 99) > 15.0:
