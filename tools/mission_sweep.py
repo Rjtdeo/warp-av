@@ -132,7 +132,7 @@ def carla_running():
 
 
 def start_carla():
-    ssh(f"Start-Process -FilePath '{CARLA_EXE}'")
+    ssh(f"powershell -NoProfile -ExecutionPolicy Bypass -File {WIN_REPO}\\tools\\win\\start_carla.ps1")
 
 
 def kill_stack():
@@ -144,10 +144,7 @@ def kill_stack():
 
 
 def start_stack():
-    ssh(f"Start-Process -FilePath '{WIN_PY}' -ArgumentList 'run.py' "
-        f"-WorkingDirectory '{WIN_REPO}' -WindowStyle Hidden "
-        f"-RedirectStandardOutput '{WIN_REPO}\\logs\\stack_out.log' "
-        f"-RedirectStandardError '{WIN_REPO}\\logs\\stack_err.log'")
+    ssh(f"powershell -NoProfile -ExecutionPolicy Bypass -File {WIN_REPO}\\tools\\win\\start_stack.ps1")
 
 
 def api_alive(timeout=4.0):
