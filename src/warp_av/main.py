@@ -218,6 +218,17 @@ class WarpAV:
         if getattr(self, "_parking_note", None):
             self.logger.log_event("parking_spot", self._parking_note)
 
+        # Slot parking is the DEFAULT: find the boxes near the destination now,
+        # skip occupied ones, and aim the mission into the best free box. The
+        # dashboard shows them from the first metre. Falls back to the kerbside
+        # spot when the street has no usable slots (or all are taken).
+        try:
+            auto = self.api_find_parking()
+            if not auto.get("success"):
+                print(f"[Parking] no slot targeted ({auto.get('reason')}) — using the kerbside spot")
+        except Exception as e:
+            print(f"[Parking] auto slot search failed ({e}) — using the kerbside spot")
+
         # Engage autonomy
         self.vehicle_adapter.engage_autonomy()
         self.behavior.set_mission()
