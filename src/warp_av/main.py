@@ -1520,10 +1520,47 @@ class WarpAV:
         return {"success": spawned > 0, "parked": spawned,
                 "take_chosen": bool(take_chosen)}
 
+    def _static_vehicle_points(self):
+        """2D outline points (centre + box corners) of DECORATIVE parked cars
+        baked into the map's static layer. They are not actors, so neither
+        occupancy nor perception saw them — discovered when the collision
+        sensor caught the van parking into one. Cached: the layer never
+        changes."""
+        pts = getattr(self, "_static_vehicle_pts", None)
+        if pts is not None:
+            return pts
+        pts = []
+        try:
+            world = self.vehicle_adapter.world
+            seen = set()
+            for name in ("Vehicles", "Car", "Truck", "Bus", "Motorcycle", "Bicycle"):
+                lbl = getattr(carla.CityObjectLabel, name, None)
+                if lbl is None:
+                    continue
+                for obj in world.get_environment_objects(lbl):
+                    if obj.id in seen:
+                        continue
+                    seen.add(obj.id)
+                    bb = obj.bounding_box
+                    cx, cy = bb.location.x, bb.location.y
+                    ext = bb.extent
+                    vyaw = math.radians(bb.rotation.yaw)
+                    c_, s_ = math.cos(vyaw), math.sin(vyaw)
+                    p = [(cx, cy)]
+                    for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
+                        p.append((cx + sx * c_ * ext.x - sy * s_ * ext.y,
+                                  cy + sx * s_ * ext.x + sy * c_ * ext.y))
+                    pts.append(p)
+        except Exception as e:
+            print(f"[Parking] static vehicle scan failed: {e}")
+        self._static_vehicle_pts = pts
+        print(f"[Parking] static-layer parked vehicles known: {len(pts)}")
+        return pts
+
     def _mark_slot_occupancy(self, slots):
         """A slot is taken if ANY PART of another vehicle overlaps it
         (centre + four bounding-box corners: straddlers claim every slot
-        they touch)."""
+        they touch). Covers live actors AND the map's baked-in parked cars."""
         try:
             ego_id = self.vehicle_adapter.vehicle.id
             others = []
@@ -1544,6 +1581,7 @@ class WarpAV:
                 others.append(pts)
         except Exception:
             others = []
+        others = others + self._static_vehicle_points()
         for sl in slots:
             sl["occupied"] = any(self.planner.point_in_slot(px, py, sl, inflate=0.25)
                                  for pts in others for px, py in pts)

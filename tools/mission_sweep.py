@@ -845,6 +845,15 @@ def main():
             json.dump(res, f, indent=1)
         write_scoreboard(out_dir, results, len(plan), incidents)
         log(f"  -> {res['verdict']}: {str(res.get('why'))[:140]}")
+        if res.get("collisions"):
+            # A contact can leave the van physically wedged and poison every
+            # following run — restart the stack for a factory-fresh vehicle.
+            log("  collision run — restarting the stack for a clean vehicle")
+            incidents.append(f"run {spec['run']}: collision — stack restarted")
+            kill_stack()
+            time.sleep(3)
+            start_stack()
+            ensure_stack_up(log)
         time.sleep(2.0)
 
     # leave the world tidy
