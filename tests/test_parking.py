@@ -255,3 +255,24 @@ def test_no_slots_near_junctions():
     assert slots, "straight sections should still produce slots"
     for sl in slots:
         assert not (112.0 <= sl["x"] <= 132.0), f"slot at {sl['x']} too close to the junction"
+
+
+def test_slot_completion_requires_being_inside_the_box():
+    b = BehaviorSystem(); b.set_mission()
+    slow = Pose(healthy=True); slow.speed = 0.3
+    # near the spot but body outside the box: keep parking
+    out = b.update(PerceptionOutput(), slow, 1.2, True, park_position_ok=False)
+    assert out.behavior == DrivingBehavior.PARKING
+    # inside the box: done
+    out = b.update(PerceptionOutput(), slow, 1.2, True, park_position_ok=True)
+    assert out.behavior == DrivingBehavior.MISSION_COMPLETE
+
+
+def test_overshoot_stops_instead_of_wandering():
+    b = BehaviorSystem(); b.set_mission()
+    slow = Pose(healthy=True); slow.speed = 0.4
+    b.update(PerceptionOutput(), slow, 3.0, True, park_position_ok=False)
+    b.update(PerceptionOutput(), slow, 0.9, True, park_position_ok=False)   # closest approach
+    out = b.update(PerceptionOutput(), slow, 2.0, True, park_position_ok=False)  # moving away again
+    assert out.behavior == DrivingBehavior.MISSION_COMPLETE
+    assert "overshot" in out.reason
