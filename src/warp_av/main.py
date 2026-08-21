@@ -120,6 +120,8 @@ class WarpAV:
         self._scenario_type = None
         self._scenario_lights_frozen = False
         self._parking_spot = None
+        self._traffic_vehicles = []
+        self._traffic_walkers = []      # (walker, controller) pairs
 
         self._running = False
 
@@ -228,6 +230,15 @@ class WarpAV:
         """
 
         self._tick_count += 1
+        if self._traffic_walkers and self._tick_count % 300 == 0:
+            try:
+                world = self.vehicle_adapter.world
+                for _, c in self._traffic_walkers:
+                    dest = world.get_random_location_from_navigation()
+                    if dest:
+                        c.go_to_location(dest)
+            except Exception:
+                pass
         extra_delay = self.fault_injector.extra_tick_delay()
         if extra_delay > 0:
             time.sleep(extra_delay)
@@ -543,6 +554,7 @@ class WarpAV:
             "junction_ahead_m": junction_ahead,
             "parking_spot": getattr(self, "_parking_spot", None),
             "parking_slots": getattr(self, "_parking_slots", None),
+            "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers)},
             "traffic_light": {"state": perception.traffic_light,
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None)},
 
@@ -582,6 +594,7 @@ class WarpAV:
 
         # Remove temporary scenario actors before destroying vehicle.
         self.clear_scenario()
+        self.api_clear_traffic()
 
         self.vehicle_adapter.disengage_autonomy()
         self.sensor_adapter.destroy()
@@ -1049,6 +1062,107 @@ class WarpAV:
         )
 
         return True
+
+    def api_spawn_traffic(self, cars=15, walkers=12, cyclists=4, near=120.0):
+        """Dashboard traffic: autopilot cars + cyclists and road-crossing
+        walkers concentrated around the van. Managed by this process, so it
+        lives as long as the stack does."""
+        import random as _r
+        if self._traffic_vehicles or self._traffic_walkers:
+            return {"success": False, "reason": "Traffic already active — clear it first"}
+        try:
+            world = self.vehicle_adapter.world
+            tm = self.vehicle_adapter.client.get_trafficmanager()
+            tm.set_global_distance_to_leading_vehicle(2.5)
+            bp_lib = world.get_blueprint_library()
+            pose = self.localization.get_last_pose()
+
+            points = world.get_map().get_spawn_points()
+            _r.shuffle(points)
+            if pose.healthy:
+                points.sort(key=lambda p: math.hypot(p.location.x - pose.x, p.location.y - pose.y) > near)
+
+            car_bps = [bp for bp in bp_lib.filter("vehicle.*")
+                       if int(bp.get_attribute("number_of_wheels").as_int()) == 4]
+            bike_bps = (list(bp_lib.filter("vehicle.bh.crossbike"))
+                        + list(bp_lib.filter("vehicle.diamondback.century"))
+                        + list(bp_lib.filter("vehicle.gazelle.omafiets")))
+            n_cars = n_bikes = 0
+            for sp in points:
+                if n_cars >= cars and n_bikes >= cyclists:
+                    break
+                if n_cars < cars:
+                    v = world.try_spawn_actor(_r.choice(car_bps), sp)
+                    if v is not None:
+                        v.set_autopilot(True, tm.get_port())
+                        self._traffic_vehicles.append(v)
+                        n_cars += 1
+                        continue
+                if n_bikes < cyclists and bike_bps:
+                    b = world.try_spawn_actor(_r.choice(bike_bps), sp)
+                    if b is not None:
+                        b.set_autopilot(True, tm.get_port())
+                        tm.vehicle_percentage_speed_difference(b, 55)
+                        self._traffic_vehicles.append(b)
+                        n_bikes += 1
+
+            world.set_pedestrians_cross_factor(0.35)
+            walker_bps = list(bp_lib.filter("walker.pedestrian.*"))
+            ctrl_bp = bp_lib.find("controller.ai.walker")
+            tries = 0
+            while len(self._traffic_walkers) < walkers and tries < walkers * 6:
+                tries += 1
+                loc = world.get_random_location_from_navigation()
+                if loc is None:
+                    continue
+                if pose.healthy and math.hypot(loc.x - pose.x, loc.y - pose.y) > near:
+                    continue
+                w = world.try_spawn_actor(_r.choice(walker_bps), carla.Transform(loc))
+                if w is None:
+                    continue
+                c = world.spawn_actor(ctrl_bp, carla.Transform(), attach_to=w)
+                c.start()
+                dest = world.get_random_location_from_navigation()
+                if dest:
+                    c.go_to_location(dest)
+                c.set_max_speed(_r.uniform(1.0, 1.8))
+                self._traffic_walkers.append((w, c))
+
+            msg = (f"traffic ON: {n_cars} cars, {n_bikes} cyclists, "
+                   f"{len(self._traffic_walkers)} walkers around the van")
+            self.logger.log_event("traffic_spawned", msg)
+            print(f"[Traffic] {msg}")
+            return {"success": True, "message": msg,
+                    "vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers)}
+        except Exception as e:
+            self.api_clear_traffic()
+            return {"success": False, "reason": f"traffic spawn failed: {e}"}
+
+    def api_clear_traffic(self):
+        n = 0
+        for w, c in self._traffic_walkers:
+            for a in (c, w):
+                try:
+                    if a.type_id.startswith("controller"):
+                        a.stop()
+                    a.destroy()
+                    n += 1
+                except Exception:
+                    pass
+        for v in self._traffic_vehicles:
+            try:
+                v.destroy()
+                n += 1
+            except Exception:
+                pass
+        self._traffic_vehicles = []
+        self._traffic_walkers = []
+        try:
+            self.logger.log_event("traffic_cleared", f"removed {n} traffic actors")
+        except Exception:
+            pass
+        print(f"[Traffic] cleared {n} actors")
+        return {"success": True, "removed": n}
 
     def api_find_parking(self):
         """FIND PARKING: slice the bays near the destination into van-sized
@@ -1752,6 +1866,17 @@ def clear_estop():
 @app.route('/api/history')
 def get_history():
     return jsonify(av_system.api_get_history())
+
+@app.route('/api/traffic/spawn', methods=['POST'])
+def spawn_traffic_api():
+    data = request.json or {}
+    return jsonify(av_system.api_spawn_traffic(
+        cars=int(data.get('cars', 15)), walkers=int(data.get('walkers', 12)),
+        cyclists=int(data.get('cyclists', 4))))
+
+@app.route('/api/traffic/clear', methods=['POST'])
+def clear_traffic_api():
+    return jsonify(av_system.api_clear_traffic())
 
 @app.route('/api/parking/find', methods=['POST'])
 def find_parking():
