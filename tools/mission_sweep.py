@@ -351,15 +351,20 @@ def reset_world(spec, log):
     st = api_get("/api/state")
     have_traffic = st.get("traffic", {}).get("vehicles", 0)
     if spec["dense"] and have_traffic < 8:
-        api_post("/api/traffic/clear", {"all": True})
+        api_post("/api/traffic/clear", {"all": True}, timeout=20)
         time.sleep(1.5)
         r = api_post("/api/traffic/spawn", {"cars": 15, "walkers": 12, "cyclists": 4},
                      timeout=60)
         log(f"  traffic ON: {r.get('vehicles', '?')} vehicles")
         time.sleep(2)
-    elif not spec["dense"] and have_traffic > 0:
-        api_post("/api/traffic/clear", {"all": True})
-        time.sleep(1.5)
+    elif not spec["dense"]:
+        # ALWAYS full-clear on quiet runs: strays accumulate from restarts
+        # and dead scenario props (7 found at one 10:35 sweep), and a dead
+        # car mid-lane became a collision on a 'quiet' run (run 86).
+        removed = api_post("/api/traffic/clear", {"all": True}, timeout=20)
+        if removed.get("removed"):
+            log(f"  cleared {removed['removed']} stray actors")
+        time.sleep(1.0)
     w = api_post("/api/weather", {"preset": spec["weather"]})
     if not w.get("success"):
         log(f"  WARNING weather '{spec['weather']}' rejected: {w.get('reason')}")
