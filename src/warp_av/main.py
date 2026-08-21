@@ -340,9 +340,21 @@ class WarpAV:
         junction = self.planner.upcoming_turn(self._route, pose.x, pose.y) if self._route else None
         junction_ahead = self.planner.distance_to_next_junction(self._route, pose.x, pose.y) if self._route else None
         park_heading_ok = True
+        park_position_ok = True
         if getattr(self, "_parking_spot", None):
             herr = abs((pose.yaw - self._parking_spot["yaw"] + math.pi) % (2 * math.pi) - math.pi)
             park_heading_ok = herr < math.radians(6)   # parallel to the lane line, visibly straight
+            sp = self._parking_spot
+            if sp.get("kind") == "slot" and getattr(self, "_parking_slots", None):
+                # slot parking is only done when the WHOLE van is inside the box
+                slot = self._parking_slots[sp["slot_index"]]
+                try:
+                    ext = self.vehicle_adapter.vehicle.bounding_box.extent
+                    half_len, half_wid = float(ext.x), float(ext.y)
+                except Exception:
+                    half_len, half_wid = 2.9, 1.0
+                park_position_ok, _, _ = self.planner.van_in_slot(
+                    pose.x, pose.y, pose.yaw, half_len, half_wid, slot)
         behavior_output = self.behavior.update(
             perception=perception,
             pose=pose,
@@ -351,6 +363,7 @@ class WarpAV:
             junction=junction,
             junction_ahead_m=junction_ahead,
             park_heading_ok=park_heading_ok,
+            park_position_ok=park_position_ok,
         )
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.

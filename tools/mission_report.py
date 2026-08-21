@@ -148,8 +148,13 @@ def main(path):
     row(completed, "mission completed", parked_line or "no")
     if spot_kind:
         row(True, "parking spot type", "BAY (off the driving lane)" if spot_kind == "bay" else "kerb-hug (no bay on street)")
+    inside_txt = None
+    if parked_line and "INSIDE slot" in parked_line:
+        inside_txt = parked_line.split("INSIDE slot", 1)[1]
     if p_dist is not None:
         row(p_dist <= 1.5, "parked distance from spot", f"{p_dist} m (target <= 1.5)")
+    if inside_txt is not None:
+        row("YES" in inside_txt, "van fully INSIDE the slot box", inside_txt.strip()[:60])
         row(p_head <= 6, "parked heading vs road", f"{p_head:.0f} deg (target <= 6, parallel to the lane line)")
     row(flips_s <= 2.0, "steering flips/sec while moving", f"{flips_s:.2f} (target <= 2.0)")
     row(bad_brakes <= 5, "unjustified brake ticks at speed", f"{bad_brakes} ({justified} justified excluded)")

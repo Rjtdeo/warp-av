@@ -90,6 +90,7 @@ class BehaviorSystem:
         self.junction_creep_mps = 2.0
         self._junction_wait_started = None
         self._junction_done = False          # cleared for the junction we're in
+        self._park_best_d = None             # closest approach to the parking spot
         self.destination_threshold = 1.5 # meters — parked when this close to the SPOT (was 5.0 anywhere on the road)
         self.parked_max_speed = 0.8      # ...and slower than this
         self.park_zone_m = 15.0          # final approach: taper to walking pace
@@ -107,7 +108,8 @@ class BehaviorSystem:
         safety_ok: bool,
         junction: Optional[dict] = None,
         junction_ahead_m: Optional[float] = None,
-        park_heading_ok: bool = True
+        park_heading_ok: bool = True,
+        park_position_ok: bool = True
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -152,11 +154,31 @@ class BehaviorSystem:
                 speed=0.0, stop=True
             )
 
-        # --- Parked at the spot (close AND nearly stopped) ---
+        # Track the closest we ever got to the spot: if we start moving AWAY
+        # again at parking speed, we overshot — stop there rather than creep
+        # off down the road hunting perfection.
+        if destination_distance is not None and destination_distance < self.park_zone_m:
+            if self._park_best_d is None or destination_distance < self._park_best_d:
+                self._park_best_d = destination_distance
+        overshot = (self._park_best_d is not None
+                    and self._park_best_d < 2.5
+                    and destination_distance is not None
+                    and destination_distance > self._park_best_d + 0.8)
+        if overshot and pose.speed < self.parked_max_speed and self.has_mission:
+            self.mission_complete = True
+            self.has_mission = False
+            return self._decide(
+                DrivingBehavior.MISSION_COMPLETE,
+                f"Parked (overshot the spot by {destination_distance - self._park_best_d:.1f} m)",
+                speed=0.0, stop=True
+            )
+
+        # --- Parked at the spot (close, nearly stopped, straight, IN the box) ---
         if (destination_distance is not None
                 and destination_distance < self.destination_threshold
                 and pose.speed < self.parked_max_speed
-                and (park_heading_ok or destination_distance < 0.5)):
+                and (park_heading_ok or destination_distance < 0.5)
+                and (park_position_ok or destination_distance < 0.45)):
             self.mission_complete = True
             self.has_mission = False
             return self._decide(
@@ -323,7 +345,7 @@ class BehaviorSystem:
 
         # --- Final approach: park at the kerb ---
         if destination_distance is not None and destination_distance < self.park_zone_m:
-            creep = max(0.7, min(2.5, 0.35 * destination_distance))
+            creep = max(0.5, min(2.5, 0.35 * destination_distance))
             return self._decide(
                 DrivingBehavior.PARKING,
                 f"Parking — pulling over, {destination_distance:.1f} m to the spot",
@@ -386,6 +408,7 @@ class BehaviorSystem:
     def set_mission(self):
         self.has_mission = True
         self.mission_complete = False
+        self._park_best_d = None
         self.current_behavior = DrivingBehavior.IDLE
 
     def cancel_mission(self):
