@@ -15,3 +15,4 @@ scenarios/results/*.json
 scenarios/results/*.jsonl
 !scenarios/results/REPORT.md
 .vercel
+sweep_out/
