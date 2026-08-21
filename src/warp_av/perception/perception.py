@@ -51,6 +51,7 @@ class PerceptionOutput:
     closest_obstacle_speed: float = 0.0     # m/s; 0.0 also means "unknown" (camera mode has no tracking yet)
     traffic_light: str = "none"             # none | red | yellow | green (Troy #1; camera mode reports none until a classifier exists)
     traffic_light_distance_m: float = None  # distance to that light's stop line (None = unknown -> stop immediately on red)
+    closest_obstacle_lateral_m: float = None  # how far the closest in-corridor object sits from our path centreline
     path_blocked: bool = False
     timestamp: float = field(default_factory=time.time)
     healthy: bool = True

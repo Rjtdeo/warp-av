@@ -81,3 +81,20 @@ def test_no_route_keeps_ego_box_verdict():
                          path_blocked=True, closest_obstacle_distance=5.0)
     out = planner().filter_to_route_corridor(p, None, 0, 0, 0)
     assert out.path_blocked is True and out.closest_obstacle_distance == 5.0
+
+
+def test_cross_street_waiter_slows_but_does_not_block():
+    """The junction-deadlock bug: a car waiting at the cross-street stop line,
+    1.6 m off our (curving) path, must slow us — never freeze the mission."""
+    ego = (10.0, 0.0, 0.0)
+    out = run_filter(straight_route(), ego, [obj_at_world(16.0, 1.6, ego)])
+    assert out.path_blocked is False, "off-centre waiter must not hard-block"
+    assert out.closest_obstacle_distance < 8.0      # still seen -> slow zone
+    assert out.closest_obstacle_lateral_m == 1.6    # and the evidence is visible
+
+
+def test_true_lead_car_still_blocks():
+    ego = (10.0, 0.0, 0.0)
+    out = run_filter(straight_route(), ego, [obj_at_world(16.0, 0.6, ego)])
+    assert out.path_blocked is True
+    assert out.closest_obstacle_lateral_m == 0.6
