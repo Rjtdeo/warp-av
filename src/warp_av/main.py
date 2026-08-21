@@ -425,6 +425,7 @@ class WarpAV:
                 "closest_distance": round(perception.closest_obstacle_distance, 1),
                 "closest_type": perception.closest_obstacle_type.value,
                 "path_blocked": perception.path_blocked,
+                "closest_lateral_m": getattr(perception, "closest_obstacle_lateral_m", None),
 
                 # Objects shown on the operator map.
                 # These come from our current CARLA ground-truth perception.

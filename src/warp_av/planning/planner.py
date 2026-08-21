@@ -392,7 +392,8 @@ class RoutePlanner:
         return None
 
     def filter_to_route_corridor(self, perception, route: Route, ego_x, ego_y, ego_yaw,
-                                 corridor_halfwidth_m=1.75, danger_m=8.0, max_ahead_m=50.0):
+                                 corridor_halfwidth_m=1.75, block_halfwidth_m=1.40,
+                                 danger_m=8.0, max_ahead_m=50.0):
         """
         Recompute perception's "in my path" verdict against the ROUTE CORRIDOR
         instead of a straight box along the vehicle's nose.
@@ -433,6 +434,7 @@ class RoutePlanner:
         closest = 999.0
         closest_type = perception.closest_obstacle_type
         closest_speed = 0.0
+        closest_lat = None
         blocked = False
         found = False
         for obj in perception.objects:
@@ -449,11 +451,17 @@ class RoutePlanner:
                 closest = dist
                 closest_type = obj.object_type
                 closest_speed = obj.speed
-            if dist < danger_m:
+                closest_lat = round(lat, 2)
+            # Two-tier: only an object near the path CENTRE can stop us (a real
+            # lead vehicle sits at 0-0.8 m). The 1.4-1.75 m band — e.g. a car
+            # waiting at the cross-street stop line just around the corner —
+            # slows us (via closest_distance) but must not freeze the mission.
+            if dist < danger_m and lat <= block_halfwidth_m:
                 blocked = True
 
         perception.closest_obstacle_distance = closest
         perception.closest_obstacle_speed = closest_speed
+        perception.closest_obstacle_lateral_m = closest_lat
         perception.path_blocked = blocked
         if found:
             perception.closest_obstacle_type = closest_type
