@@ -5902,71 +5902,6 @@ function drawMap(s) {
         ctx.restore();
 
 
-        /* PARKING SLOTS (FIND PARKING result) */
-
-        const slots = s && s.parking_slots;
-
-        if (slots && slots.length) {
-
-            slots.forEach(function (sl) {
-
-                if (!sl.corners) { return; }
-
-                ctx.save();
-                ctx.beginPath();
-
-                sl.corners.forEach(function (c, i) {
-                    const [px, py] = project(Number(c[0]), Number(c[1]));
-                    if (i === 0) ctx.moveTo(px, py);
-                    else ctx.lineTo(px, py);
-                });
-
-                ctx.closePath();
-
-                if (sl.chosen) {
-                    ctx.fillStyle = 'rgba(57,231,125,.35)';
-                    ctx.strokeStyle = '#39e77d';
-                    ctx.lineWidth = 3;
-                } else if (sl.occupied) {
-                    ctx.fillStyle = 'rgba(255,82,82,.25)';
-                    ctx.strokeStyle = 'rgba(255,82,82,.95)';
-                    ctx.lineWidth = 2;
-                } else {
-                    ctx.fillStyle = 'rgba(180,190,205,.16)';
-                    ctx.strokeStyle = 'rgba(180,190,205,.9)';
-                    ctx.lineWidth = 2;
-                }
-
-                ctx.fill();
-                ctx.stroke();
-                ctx.restore();
-            });
-
-            /* fixed-size P badge on the chosen slot — visible at any zoom */
-            const chosen = slots.find(function (sl) { return sl.chosen; });
-            if (chosen) {
-                const [px, py] = project(Number(chosen.x), Number(chosen.y));
-                ctx.save();
-                ctx.beginPath();
-                ctx.arc(px, py, 10, 0, Math.PI * 2);
-                ctx.fillStyle = '#39e77d';
-                ctx.shadowColor = 'rgba(57,231,125,.8)';
-                ctx.shadowBlur = 12;
-                ctx.fill();
-                ctx.shadowBlur = 0;
-                ctx.strokeStyle = '#0c1722';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                ctx.fillStyle = '#0c1722';
-                ctx.font = '800 12px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('P', px, py + 0.5);
-                ctx.restore();
-            }
-        }
-
-
         /* route start */
 
         const first =
@@ -6059,6 +5994,73 @@ function drawMap(s) {
         );
     }
 
+
+
+    /* --------------------------------------------------------
+       PARKING SLOT BOXES (FIND PARKING)
+       Drawn whenever slots exist — independent of the route, so
+       they never flicker with route refreshes. Boxes are inflated
+       to a minimum on-screen size so they stay visible at any zoom.
+       -------------------------------------------------------- */
+
+    const parkingSlots = s && s.parking_slots;
+
+    if (parkingSlots && parkingSlots.length) {
+
+        parkingSlots.forEach(function (sl) {
+
+            if (!sl.corners) { return; }
+
+            let pts = sl.corners.map(function (c) {
+                return project(Number(c[0]), Number(c[1]));
+            });
+
+            let cx0 = 0, cy0 = 0;
+            pts.forEach(function (pp) { cx0 += pp[0]; cy0 += pp[1]; });
+            cx0 /= pts.length; cy0 /= pts.length;
+
+            let maxd = 0;
+            pts.forEach(function (pp) {
+                maxd = Math.max(maxd, Math.hypot(pp[0] - cx0, pp[1] - cy0));
+            });
+            const MIN_HALF_DIAG = 11;
+            if (maxd > 0 && maxd < MIN_HALF_DIAG) {
+                const k = MIN_HALF_DIAG / maxd;
+                pts = pts.map(function (pp) {
+                    return [cx0 + (pp[0] - cx0) * k, cy0 + (pp[1] - cy0) * k];
+                });
+            }
+
+            ctx.save();
+            ctx.beginPath();
+            pts.forEach(function (pp, i) {
+                if (i === 0) { ctx.moveTo(pp[0], pp[1]); }
+                else { ctx.lineTo(pp[0], pp[1]); }
+            });
+            ctx.closePath();
+
+            if (sl.chosen) {
+                ctx.fillStyle = 'rgba(57,231,125,.4)';
+                ctx.strokeStyle = '#39e77d';
+                ctx.lineWidth = 3;
+                ctx.shadowColor = 'rgba(57,231,125,.8)';
+                ctx.shadowBlur = 10;
+            } else if (sl.occupied) {
+                ctx.fillStyle = 'rgba(255,82,82,.28)';
+                ctx.strokeStyle = 'rgba(255,82,82,.95)';
+                ctx.lineWidth = 2;
+            } else {
+                ctx.fillStyle = 'rgba(180,190,205,.18)';
+                ctx.strokeStyle = 'rgba(180,190,205,.9)';
+                ctx.lineWidth = 2;
+            }
+
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            ctx.stroke();
+            ctx.restore();
+        });
+    }
 
 
     /* --------------------------------------------------------
