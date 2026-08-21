@@ -534,8 +534,9 @@ def execute_run(spec, rng, points, out_dir, log):
             else:
                 park_prog = None
 
-            # stuck detection
-            if speed < 0.15 and mission_state == "executing":
+            # stuck detection ('paused' counts: the sweep never pauses, so a
+            # lasting pause means the van is waiting for a resume nobody sent)
+            if speed < 0.15 and mission_state in ("executing", "paused"):
                 if stop_started is None:
                     stop_started = (t, beh, reason)
                 dur = t - stop_started[0]
@@ -620,6 +621,11 @@ def execute_run(spec, rng, points, out_dir, log):
                         hr["safety_reacted_s"] = hr.get("safety_reacted_s", round(dt_h, 1))
                     if dt_h > 6.0:
                         api_post("/api/test/inject", {"component": "perception", "action": "enable"})
+                        # After a safety stop the van (correctly) waits for an
+                        # operator re-engage — play the operator's part.
+                        api_post("/api/estop/clear")
+                        api_post("/api/mission/resume")
+                        hr["operator_resume_sent"] = True
                         hazard["cleared"] = True
                         hazard["t_cleared"] = t
 
