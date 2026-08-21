@@ -558,6 +558,7 @@ def execute_run(spec, rng, points, out_dir, log):
             if hazard["armed"] and not hazard["fired"]:
                 if spec["kind"] == "red_light" and jm is not None and speed > 3.0 \
                         and t > hazard.get("cooldown_until", 0.0) \
+                        and jm > 8.0 \
                         and (jm < 35.0 or tl.get("state") in ("green", "yellow", "red")):
                     api_post("/api/scenario/spawn", {"type": "red_light"})
                     hazard.update(fired=True, t_fired=t)
