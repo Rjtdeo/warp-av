@@ -177,6 +177,15 @@ def ensure_stack_up(log, max_wait_s=900):
             if api_alive():
                 log("watchdog: stack is back")
                 time.sleep(4)       # let sensors settle
+                # A restart leaves the DEAD stack's van standing in the
+                # world as a ghost — clear every non-ego actor right away
+                # or later runs collide with our own wreckage.
+                try:
+                    api_post("/api/traffic/clear", {"all": True}, timeout=20)
+                    api_post("/api/scenario/clear")
+                    log("watchdog: ghost actors cleared")
+                except Exception:
+                    pass
                 return True
     log("watchdog: could NOT revive the stack — will keep waiting")
     while not api_alive():
