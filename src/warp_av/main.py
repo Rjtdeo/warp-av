@@ -200,16 +200,18 @@ class WarpAV:
             kind = self._parking_spot.get("kind", "kerb")
             what = "PARKING BAY off the driving lane" if kind == "bay" else "kerb-hug inside the lane (no bay on this street)"
             note = f", {moved} m before the pin" if moved > 1 else ""
-            self.logger.log_event("parking_spot",
-                                  f"{what}: ({self._parking_spot['x']}, {self._parking_spot['y']}), "
+            self._parking_note = (f"{what}: ({self._parking_spot['x']}, {self._parking_spot['y']}), "
                                   f"{self._parking_spot['offset_m']} m right of lane centre{note}")
             print(f"[Mission] parking spot: {self._parking_spot}")
         else:
+            self._parking_note = None
             print("[Mission] no kerbside spot found near the pin — will park on the lane")
 
         # Start logging
         self.logger.start_mission_log(mission.mission_id)
         self.logger.log_event("mission_started", f"Destination: ({dest_x}, {dest_y})")
+        if getattr(self, "_parking_note", None):
+            self.logger.log_event("parking_spot", self._parking_note)
 
         # Engage autonomy
         self.vehicle_adapter.engage_autonomy()
