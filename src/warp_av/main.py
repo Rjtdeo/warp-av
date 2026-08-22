@@ -1742,28 +1742,43 @@ class WarpAV:
             return
         if now - self._blocked_since < 10.0 or now < self._overtake_retry_at:
             return
+        def waiting(why):
+            if now - getattr(self, "_overtake_why_at", 0.0) > 20.0:
+                self._overtake_why_at = now
+                print(f"[Overtake] waiting: {why}")
+            self._overtake_retry_at = now + 10.0
+
         if perception.traffic_light in ("red", "yellow"):
             return                       # that's a queue, not a dead car
         if junction_ahead is not None and junction_ahead < 25.0:
-            return                       # never overtake into a junction
+            waiting(f"junction only {junction_ahead:.0f} m ahead")
+            return
         lead_d = perception.closest_obstacle_distance
         if lead_d is None or lead_d > 14.0:
             return
         if getattr(perception, "closest_obstacle_speed", 0.0) > 0.3:
             return                       # it's moving — keep following
-        # Clearance: ANY other object in the next lead_d+30 m (either lane,
-        # moving or parked) vetoes the attempt. Retry in 10 s.
+        # Clearance: moving traffic anywhere ahead vetoes; STATIONARY bodies
+        # veto only if they sit in the LEFT bypass corridor (scenery cars
+        # parked on the right must not paralyse the pass).
         for obj in perception.objects:
-            if obj.x < -2.0 or obj.distance > lead_d + 30.0:
+            if obj.x < -2.0:
                 continue
-            if abs(obj.distance - lead_d) < 2.5 and getattr(obj, "speed", 0.0) < 0.3:
+            moving = getattr(obj, "speed", 0.0) > 0.3
+            if moving:
+                if obj.distance < lead_d + 45.0:
+                    waiting(f"moving vehicle {obj.distance:.0f} m ahead")
+                    return
+                continue
+            if abs(obj.distance - lead_d) < 2.5 and abs(obj.y) < 1.6:
                 continue                 # the dead lead itself
-            self._overtake_retry_at = now + 10.0
-            return
+            if obj.distance < lead_d + 28.0 and -6.5 < obj.y < -0.8:
+                waiting(f"stationary body in the passing lane at {obj.distance:.0f} m")
+                return
         rejoin = self.planner.plan_overtake(self._route, pose.x, pose.y,
                                             lead_d, lane_ok=self._lane_ok)
         if rejoin is None:
-            self._overtake_retry_at = now + 10.0
+            waiting("geometry refused (bend/junction/no lane/route end)")
             return
         self._overtake_point = rejoin
         self._blocked_since = None
