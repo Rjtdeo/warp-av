@@ -650,6 +650,72 @@ class RoutePlanner:
             perception.closest_obstacle_type = closest_type
         return perception
 
+    OVERTAKE_SHIFT_M = 3.4       # one lane to the LEFT around the dead car
+    OVERTAKE_PASS_M = 8.0        # stay shifted this far beyond the obstacle
+    OVERTAKE_REJOIN_M = 16.0     # fully back in lane this far beyond it
+
+    def plan_overtake(self, route: Route, ego_x, ego_y, obstacle_along_m,
+                      lane_ok=None):
+        """Rewrite the route to swing one lane LEFT around a dead vehicle
+        ahead and rejoin beyond it (straights only: refuses near junctions
+        or in bends). `lane_ok(x, y)` must confirm the shifted position is
+        on a real driving lane. Returns the rejoin point (Waypoint) or None
+        when the geometry does not allow a safe pass."""
+        wps = route.waypoints
+        n = len(wps)
+        if n < 10 or obstacle_along_m is None:
+            return None
+        ci = min(range(n), key=lambda i: math.hypot(wps[i].x - ego_x,
+                                                    wps[i].y - ego_y))
+        # cumulative arc from the ego's nearest waypoint
+        arcs = [0.0]
+        for i in range(ci, n - 1):
+            arcs.append(arcs[-1] + math.hypot(wps[i + 1].x - wps[i].x,
+                                              wps[i + 1].y - wps[i].y))
+        shift_done = max(2.5, obstacle_along_m - 3.5)
+        pass_end = obstacle_along_m + self.OVERTAKE_PASS_M
+        rejoin = obstacle_along_m + self.OVERTAKE_REJOIN_M
+        if arcs[-1] < rejoin + 3.0:
+            return None                       # destination too close — hold
+        # straight-and-open guard over the whole detour region
+        for k, i in enumerate(range(ci, min(ci + len(arcs), n))):
+            if arcs[k] > rejoin + 2.0:
+                break
+            if wps[i].is_junction:
+                return None
+            dyaw = abs((wps[i].yaw - wps[ci].yaw + math.pi) % (2 * math.pi) - math.pi)
+            if dyaw > math.radians(14):
+                return None                   # bend — sight lines too poor
+        new_tail = []
+        rejoin_wp = None
+        for k, i in enumerate(range(ci, n)):
+            a = arcs[k] if k < len(arcs) else arcs[-1]
+            if a <= shift_done:
+                t = a / shift_done
+            elif a <= pass_end:
+                t = 1.0
+            elif a <= rejoin:
+                t = (rejoin - a) / max(0.5, rejoin - pass_end)
+            else:
+                t = 0.0
+            s = t * t * (3 - 2 * t)           # smoothstep, no lateral jerk
+            wp = wps[i]
+            right = (-math.sin(wp.yaw), math.cos(wp.yaw))
+            off = -self.OVERTAKE_SHIFT_M * s  # minus right-vector = LEFT
+            nx, ny = wp.x + right[0] * off, wp.y + right[1] * off
+            if s > 0.5 and lane_ok is not None and k % 4 == 0:
+                if not lane_ok(nx, ny):
+                    return None               # no drivable lane to borrow
+            new_tail.append(Waypoint(x=nx, y=ny, z=wp.z, yaw=wp.yaw,
+                                     speed=wp.speed, is_junction=wp.is_junction))
+            if rejoin_wp is None and a >= rejoin:
+                rejoin_wp = new_tail[-1]
+        if rejoin_wp is None:
+            rejoin_wp = new_tail[-1]
+        # atomic swap: the 10 Hz tick thread may be iterating the old list
+        route.waypoints = wps[:ci] + new_tail
+        return rejoin_wp
+
     def signed_cross_track(self, route: Route, current_x, current_y) -> float:
         """
         Signed lateral offset of the vehicle from the route polyline.

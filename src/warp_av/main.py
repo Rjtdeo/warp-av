@@ -152,6 +152,9 @@ class WarpAV:
         self._cutin = None              # state machine for the cut-in car
         self._parked_cars = []          # cars parked in bays via /api/test/park_cars
         self._weather_preset = "default"
+        self._blocked_since = None      # when STOPPED_VEHICLE began (overtake timer)
+        self._overtake_point = None     # rejoin Waypoint while a pass is active
+        self._overtake_retry_at = 0.0
 
         self._running = False
 
@@ -450,6 +453,25 @@ class WarpAV:
             except Exception as e:
                 print(f"[Parking] approach re-scan failed: {e}")
 
+        # Go-around: pass a vehicle that is genuinely dead in our lane.
+        try:
+            self._maybe_overtake(pose, perception, behavior_output, junction_ahead)
+        except Exception as e:
+            print(f"[Overtake] check failed: {e}")
+        if self._overtake_point is not None:
+            d_rejoin = math.hypot(self._overtake_point.x - pose.x,
+                                  self._overtake_point.y - pose.y)
+            if d_rejoin < 4.0:
+                self._overtake_point = None
+                try:
+                    self.logger.log_event("overtake", "pass complete — back in lane")
+                except Exception:
+                    pass
+                print("[Overtake] pass complete — back in lane")
+            elif behavior_output.desired_speed_mps > 4.0:
+                behavior_output.desired_speed_mps = 4.0
+                behavior_output.reason += " | passing a stopped vehicle"
+
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         # Never overrides stops; only lowers a positive desired speed.
         curve_cap = None
@@ -669,6 +691,7 @@ class WarpAV:
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None),
                               "white_line_m": getattr(self, "_white_line_m", None)},
             "collision": {"count": self._collision_count, "last": self._last_collision},
+            "overtaking": self._overtake_point is not None,
             "weather": getattr(self, "_weather_preset", "default"),
             "version": getattr(self, "_git_rev", "unknown"),
             "uptime_s": round(time.time() - self._start_time, 1),
@@ -1679,6 +1702,65 @@ class WarpAV:
             if arc > limit:
                 break
         return None
+
+    def _lane_ok(self, x, y):
+        """Is this position on a real driving lane? (overtake feasibility)"""
+        try:
+            wp = self.vehicle_adapter.get_map().get_waypoint(
+                carla.Location(x=x, y=y, z=0.3), project_to_road=False,
+                lane_type=carla.LaneType.Driving)
+            return wp is not None
+        except Exception:
+            return False
+
+    def _maybe_overtake(self, pose, perception, behavior_output, junction_ahead):
+        """A lead vehicle that stays dead for 10 s on an open straight gets
+        passed: swing one lane left, by, and back. Conservative by design —
+        any doubt (lights, junctions, other traffic, bends) means keep
+        waiting."""
+        if self._overtake_point is not None:
+            return
+        if behavior_output.behavior != DrivingBehavior.STOPPED_VEHICLE:
+            self._blocked_since = None
+            return
+        now = time.time()
+        if self._blocked_since is None:
+            self._blocked_since = now
+            return
+        if now - self._blocked_since < 10.0 or now < self._overtake_retry_at:
+            return
+        if perception.traffic_light in ("red", "yellow"):
+            return                       # that's a queue, not a dead car
+        if junction_ahead is not None and junction_ahead < 25.0:
+            return                       # never overtake into a junction
+        lead_d = perception.closest_obstacle_distance
+        if lead_d is None or lead_d > 14.0:
+            return
+        if getattr(perception, "closest_obstacle_speed", 0.0) > 0.3:
+            return                       # it's moving — keep following
+        # Clearance: ANY other object in the next lead_d+30 m (either lane,
+        # moving or parked) vetoes the attempt. Retry in 10 s.
+        for obj in perception.objects:
+            if obj.x < -2.0 or obj.distance > lead_d + 30.0:
+                continue
+            if abs(obj.distance - lead_d) < 2.5 and getattr(obj, "speed", 0.0) < 0.3:
+                continue                 # the dead lead itself
+            self._overtake_retry_at = now + 10.0
+            return
+        rejoin = self.planner.plan_overtake(self._route, pose.x, pose.y,
+                                            lead_d, lane_ok=self._lane_ok)
+        if rejoin is None:
+            self._overtake_retry_at = now + 10.0
+            return
+        self._overtake_point = rejoin
+        self._blocked_since = None
+        try:
+            self.logger.log_event(
+                "overtake",
+                f"lead vehicle dead for 10 s — passing on the left, rejoining {self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
+        except Exception:
+            pass
+        print(f"[Overtake] dead vehicle at {lead_d:.1f} m — passing on the left")
 
     def _static_vehicle_objects(self, pose):
         """Nearby static-layer parked cars as pseudo-detections (VEHICLE,
