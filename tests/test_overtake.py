@@ -20,11 +20,15 @@ def test_overtake_path_shifts_left_and_rejoins():
     rejoin = planner().plan_overtake(r, 0.0, 0.0, obstacle_along_m=15.0,
                                      lane_ok=lambda x, y: True)
     assert rejoin is not None
-    # CARLA frame: LEFT of +x heading is negative y
-    ys = {round(wp.x): wp.y for wp in r.waypoints}
-    beside = [wp.y for wp in r.waypoints if 12.0 <= wp.x <= 22.0]
-    assert beside and all(y < -3.0 for y in beside), \
-        f"path must run a full lane left beside the obstacle, got {beside}"
+    # CARLA frame: LEFT of +x heading is negative y.
+    # Clearance builds along the whole approach: >2.2 m by the car's rear
+    # corner (~x 12.5), full lane beside and past it.
+    corner = [wp.y for wp in r.waypoints if 12.0 <= wp.x <= 14.0]
+    assert corner and all(y < -2.2 for y in corner), \
+        f"need >2.2 m clearance at the rear corner, got {corner}"
+    beside = [wp.y for wp in r.waypoints if 16.0 <= wp.x <= 23.0]
+    assert beside and all(y < -3.3 for y in beside), \
+        f"full lane offset beside/past the obstacle, got {beside}"
     tail = [wp.y for wp in r.waypoints if wp.x >= 34.0]
     assert tail and all(abs(y) < 0.25 for y in tail), "must rejoin the lane"
     assert math.hypot(rejoin.x - 31.0, rejoin.y) < 4.0

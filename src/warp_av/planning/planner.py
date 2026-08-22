@@ -650,7 +650,7 @@ class RoutePlanner:
             perception.closest_obstacle_type = closest_type
         return perception
 
-    OVERTAKE_SHIFT_M = 3.4       # one lane to the LEFT around the dead car
+    OVERTAKE_SHIFT_M = 3.6       # one lane to the LEFT around the dead car
     OVERTAKE_PASS_M = 8.0        # stay shifted this far beyond the obstacle
     OVERTAKE_REJOIN_M = 16.0     # fully back in lane this far beyond it
 
@@ -672,7 +672,10 @@ class RoutePlanner:
         for i in range(ci, n - 1):
             arcs.append(arcs[-1] + math.hypot(wps[i + 1].x - wps[i].x,
                                               wps[i + 1].y - wps[i].y))
-        shift_done = max(2.5, obstacle_along_m - 3.5)
+        # Full offset only PAST the car's centre: the whole approach is ramp,
+        # putting ~2.7 m of clearance at its rear corner already (v1 clipped
+        # the corner by demanding a full lane change inside 6 m).
+        shift_done = obstacle_along_m + 1.0
         pass_end = obstacle_along_m + self.OVERTAKE_PASS_M
         rejoin = obstacle_along_m + self.OVERTAKE_REJOIN_M
         if arcs[-1] < rejoin + 3.0:

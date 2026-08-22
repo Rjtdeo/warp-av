@@ -468,9 +468,18 @@ class WarpAV:
                 except Exception:
                     pass
                 print("[Overtake] pass complete — back in lane")
-            elif behavior_output.desired_speed_mps > 4.0:
-                behavior_output.desired_speed_mps = 4.0
-                behavior_output.reason += " | passing a stopped vehicle"
+            else:
+                # Belt and braces: any body within 1.6 m while passing —
+                # tracking lag, mis-judged widths, anything — pauses the
+                # maneuver. A stall is acceptable; a scrape is not.
+                too_tight = any(o.distance < 1.6 for o in perception.objects)
+                if too_tight and pose.speed > 0.3:
+                    behavior_output.desired_speed_mps = 0.0
+                    behavior_output.should_stop = True
+                    behavior_output.reason += " | overtake paused — clearance tight"
+                elif behavior_output.desired_speed_mps > 3.0:
+                    behavior_output.desired_speed_mps = 3.0
+                    behavior_output.reason += " | passing a stopped vehicle"
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         # Never overrides stops; only lowers a positive desired speed.
@@ -504,6 +513,10 @@ class WarpAV:
             if (behavior_output.behavior == DrivingBehavior.PARKING
                     and dest_dist is not None and dest_dist < 12.0):
                 lookahead = max(2.5, min(lookahead, 0.8 * dest_dist))
+            # Passing a dead car: the swerve must be TRACKED, not smoothed
+            # away — a 5 m aim floor made v1 clip the car's corner.
+            if self._overtake_point is not None:
+                lookahead = min(lookahead, 3.2)
             next_wp = self.planner.get_next_waypoint(self._route, pose.x, pose.y, lookahead=lookahead)
             if next_wp:
                 target_x, target_y = next_wp.x, next_wp.y
