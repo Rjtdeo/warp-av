@@ -93,6 +93,8 @@ class BehaviorSystem:
         self._junction_wait_started = None
         self._junction_done = False          # cleared for the junction we're in
         self._park_best_d = None             # closest approach to the parking spot
+        self.block_release_s = 2.0           # blocked verdicts must stay clear this long before moving again
+        self._block_memory = None            # (t_last_blocked, kind, distance)
         self.destination_threshold = 1.5 # meters — parked when this close to the SPOT (was 5.0 anywhere on the road)
         self.parked_max_speed = 0.8      # ...and slower than this
         self.park_zone_m = 15.0          # final approach: taper to walking pace
@@ -224,8 +226,11 @@ class BehaviorSystem:
         else:
             self._blocked_since = None
 
+        # (helper for the release latch below)
         # --- Path blocked by pedestrian (ALWAYS stop for pedestrians) ---
         if perception.path_blocked and perception.closest_obstacle_type == ObjectType.PEDESTRIAN:
+            self._note_block(DrivingBehavior.STOPPED_PEDESTRIAN,
+                             perception.closest_obstacle_distance)
             return self._decide(
                 DrivingBehavior.STOPPED_PEDESTRIAN,
                 f"PEDESTRIAN in path at {perception.closest_obstacle_distance:.1f}m — stopped",
@@ -234,6 +239,8 @@ class BehaviorSystem:
 
         # --- Path blocked by vehicle ---
         if perception.path_blocked and perception.closest_obstacle_type == ObjectType.VEHICLE:
+            self._note_block(DrivingBehavior.STOPPED_VEHICLE,
+                             perception.closest_obstacle_distance)
             return self._decide(
                 DrivingBehavior.STOPPED_VEHICLE,
                 f"VEHICLE blocking path at {perception.closest_obstacle_distance:.1f}m — stopped",
@@ -242,11 +249,30 @@ class BehaviorSystem:
 
         # --- Path blocked by obstacle ---
         if perception.path_blocked:
+            self._note_block(DrivingBehavior.STOPPED_OBSTACLE,
+                             perception.closest_obstacle_distance)
             return self._decide(
                 DrivingBehavior.STOPPED_OBSTACLE,
                 f"OBSTACLE in path at {perception.closest_obstacle_distance:.1f}m — stopped",
                 speed=0.0, stop=True
             )
+
+        # --- Release latch: a close blocker that BLINKS out of detection for
+        # a moment must not release the van instantly. In a dense-traffic
+        # brawl the verdict flapped every 1-3 s and the van crept half a
+        # metre per blink into a shrinking gap (two contacts). Stay stopped
+        # until the path has been continuously clear for block_release_s.
+        if (self._block_memory is not None
+                and pose.speed < 1.2
+                and time.time() - self._block_memory[0] < self.block_release_s):
+            kind, dist = self._block_memory[1], self._block_memory[2]
+            return self._decide(
+                kind,
+                f"Path just cleared (was blocked {dist:.1f}m ahead) — confirming for "
+                f"{self.block_release_s:.0f}s before moving",
+                speed=0.0, stop=True
+            )
+        self._block_memory = None
 
         # --- Traffic light (Troy #1): roll up to the stop line, hold there.
         # Ranked below pedestrian/vehicle/obstacle stops (a closer physical
@@ -378,6 +404,12 @@ class BehaviorSystem:
             f"Route clear — cruising at {self.cruise_speed:.1f} m/s",
             speed=self.cruise_speed, stop=False
         )
+
+    def _note_block(self, kind, distance):
+        """Remember a CLOSE physical blocker so a one-tick detection blink
+        cannot release the van instantly (release latch above)."""
+        if distance is not None and distance < 12.0:
+            self._block_memory = (time.time(), kind, distance)
 
     def _decide(self, behavior, reason, speed, stop) -> BehaviorOutput:
         # Log when behavior CHANGES (important for debugging)

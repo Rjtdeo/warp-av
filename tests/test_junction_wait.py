@@ -121,6 +121,7 @@ def test_stops_still_outrank_junction_wait():
     out = b.update(ped, pose, 500, True, junction=j)
     assert out.behavior == DrivingBehavior.STOPPED_PEDESTRIAN
     red = PerceptionOutput(traffic_light="red")
+    b._block_memory = None          # priority test, not a latch-timing test
     out = b.update(red, pose, 500, True, junction=j)
     assert out.behavior == DrivingBehavior.STOPPED_RED_LIGHT
 

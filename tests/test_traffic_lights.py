@@ -44,6 +44,7 @@ def test_physical_hazards_outrank_the_light():
             closest_obstacle_type=ObjectType.PEDESTRIAN, closest_obstacle_distance=6.0)
     assert o.behavior == DrivingBehavior.STOPPED_PEDESTRIAN
     # red light outranks car-following (no creeping into the junction behind traffic)
+    b._block_memory = None          # priority test, not a latch-timing test
     o = out(b, traffic_light="red", closest_obstacle_type=ObjectType.VEHICLE,
             closest_obstacle_distance=20.0, closest_obstacle_speed=5.0)
     assert o.behavior == DrivingBehavior.STOPPED_RED_LIGHT

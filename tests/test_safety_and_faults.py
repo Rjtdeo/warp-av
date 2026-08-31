@@ -56,6 +56,7 @@ def test_behavior_priority_order():
     assert b.update(veh, pose, 100.0, True).behavior == DrivingBehavior.STOPPED_VEHICLE
     obs = PerceptionOutput(path_blocked=True, closest_obstacle_type=ObjectType.OBSTACLE, closest_obstacle_distance=4.0)
     assert b.update(obs, pose, 100.0, True).behavior == DrivingBehavior.STOPPED_OBSTACLE
+    b._block_memory = None          # priority test, not a latch-timing test
     # slow zone
     near = PerceptionOutput(closest_obstacle_distance=10.0)
     out = b.update(near, pose, 100.0, True)

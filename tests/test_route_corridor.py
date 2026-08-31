@@ -124,3 +124,29 @@ def test_true_lead_car_still_blocks():
     out = run_filter(straight_route(), ego, [obj_at_world(16.0, 0.6, ego)])
     assert out.path_blocked is True
     assert out.closest_obstacle_lateral_m == 0.6
+
+
+def test_release_latch_survives_detection_blinks():
+    """Dense-traffic brawl (mission log): the blocked verdict flapped every
+    1-3 s and the van crept into a shrinking gap. A blink must NOT release
+    the van — only a path continuously clear for ~2 s may."""
+    import time as _time
+    from warp_av.behavior.behavior import BehaviorSystem, DrivingBehavior
+    from warp_av.localization.localization import Pose
+
+    b = BehaviorSystem(); b.set_mission()
+    blocked = PerceptionOutput(path_blocked=True, closest_obstacle_distance=5.0,
+                               closest_obstacle_type=ObjectType.VEHICLE)
+    clear = PerceptionOutput()
+    stopped = Pose(healthy=True)          # speed 0
+
+    r1 = b.update(blocked, stopped, 500, True)
+    assert r1.behavior == DrivingBehavior.STOPPED_VEHICLE
+    # one-tick blink: perception says clear — the van must STAY stopped
+    r2 = b.update(clear, stopped, 500, True)
+    assert r2.should_stop and r2.behavior == DrivingBehavior.STOPPED_VEHICLE
+    assert "confirming" in r2.reason.lower()
+    # continuously clear past the release window: free to go
+    b._block_memory = (_time.time() - 2.5, DrivingBehavior.STOPPED_VEHICLE, 5.0)
+    r3 = b.update(clear, stopped, 500, True)
+    assert not r3.should_stop, "after a genuinely clear window the van moves"
