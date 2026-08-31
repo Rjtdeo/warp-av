@@ -268,6 +268,29 @@ def park_check_plan():
     ]
 
 
+def showdown_plan():
+    """The camera-vs-truth exam: 20 identical mission types, run once per
+    perception mode. Same seed -> same plan both halves."""
+    base = {"kind": "baseline", "weather": "ClearNoon", "dense": False,
+            "parked": 0, "take_chosen": False, "fill_all": False}
+    plan = []
+    for i in range(8):
+        s = dict(base)
+        if i < 2:
+            s["parked"] = 3
+        elif i == 2:
+            s["parked"] = 2
+            s["take_chosen"] = True
+        plan.append(s)
+    plan += [dict(base, kind="red_light") for _ in range(4)]
+    plan += [dict(base, kind="jaywalker") for _ in range(3)]
+    plan += [dict(base, kind="cutin") for _ in range(2)]
+    plan += [dict(base, dense=True) for _ in range(3)]
+    for i, s in enumerate(plan):
+        s["run"] = i + 1
+    return plan
+
+
 def shakedown_plan():
     return [
         {"run": 1, "kind": "baseline", "weather": "ClearNoon", "dense": False,
@@ -384,6 +407,7 @@ def execute_run(spec, rng, points, out_dir, log):
     res["collision_base"] = (st0.get("collision") or {}).get("count", 0)
     res["start_pose"] = st0.get("pose")
     res["version"] = st0.get("version")
+    res["mode"] = st0.get("perception_mode")
 
     # Runs that occupy bays need a destination that actually HAS slot boxes;
     # retry a couple of destinations if the route ends bay-less.
@@ -438,6 +462,8 @@ def execute_run(spec, rng, points, out_dir, log):
                     max(180.0, dist / (3.0 if spec["dense"] else 4.0) + 140.0))
     if spec["kind"] in ("red_light", "fault"):
         timeout_s += 60.0        # forced holds eat clock a natural run doesn't
+    if res.get("mode") == "camera_lidar":
+        timeout_s *= 1.6         # camera mode cruises slower — fair clock
 
     # ---- poll loop ----
     hazard = {"armed": spec["kind"] in ("red_light", "jaywalker", "cutin", "fault"),
@@ -863,6 +889,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shakedown", action="store_true")
     ap.add_argument("--park-check", action="store_true")
+    ap.add_argument("--showdown", action="store_true")
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-resume", action="store_true")
@@ -870,9 +897,11 @@ def main():
     a = ap.parse_args()
 
     plan = (shakedown_plan() if a.shakedown
-            else park_check_plan() if a.park_check else build_plan())
+            else park_check_plan() if a.park_check
+            else showdown_plan() if a.showdown else build_plan())
     out_dir = a.out or ("sweep_out/shakedown" if a.shakedown
-                        else "sweep_out/parkcheck" if a.park_check else "sweep_out/full")
+                        else "sweep_out/parkcheck" if a.park_check
+                        else "sweep_out/showdown" if a.showdown else "sweep_out/full")
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(os.path.join(out_dir, "frames"), exist_ok=True)
 
