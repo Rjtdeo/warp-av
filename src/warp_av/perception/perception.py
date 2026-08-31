@@ -39,6 +39,8 @@ class DetectedObject:
     speed: float = 0.0          # estimated speed m/s
     confidence: float = 1.0     # 0-1
     id: int = 0
+    vx_world: float = 0.0       # world-frame velocity (prediction feeds on this)
+    vy_world: float = 0.0
     timestamp: float = field(default_factory=time.time)
 
 
@@ -211,9 +213,11 @@ class PerceptionSystem:
 
             # Get speed if it's a vehicle or walker
             speed = 0.0
+            vx_w = vy_w = 0.0
             velocity = actor.get_velocity()
             if velocity:
                 speed = math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
+                vx_w, vy_w = velocity.x, velocity.y
 
             return DetectedObject(
                 object_type=obj_type,
@@ -222,6 +226,8 @@ class PerceptionSystem:
                 distance=distance,
                 speed=speed,
                 id=actor.id,
+                vx_world=vx_w,
+                vy_world=vy_w,
                 timestamp=time.time()
             )
         except:

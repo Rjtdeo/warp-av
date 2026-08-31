@@ -52,6 +52,7 @@ JUSTIFIED_STOPS = {
     "stopped_red_light", "waiting_at_junction", "stopped_vehicle",
     "stopped_pedestrian", "stopped_obstacle", "stopped_blocked",
     "following_vehicle", "parking", "stopped_safety", "stopped_estop",
+    "yielding_predicted",
     "approaching_destination",
 }
 STUCK_S_JUSTIFIED = 180.0   # even a queue/red light should clear within this

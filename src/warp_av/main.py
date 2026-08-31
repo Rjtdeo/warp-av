@@ -38,6 +38,7 @@ from .perception.camera_lidar_perception import CameraLidarPerception
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import RoutePlanner
+from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
 from .mission.mission_manager import MissionManager, MissionState
@@ -441,6 +442,17 @@ class WarpAV:
                 white_line = None
         self._white_line_m = white_line
 
+        # Prediction: yield to crossers/cut-ins BEFORE they are in the path.
+        predicted = None
+        if self._route and pose.healthy and pose.speed > 0.5:
+            try:
+                predicted = predict_route_conflict(
+                    perception.objects, self._route.waypoints,
+                    pose.x, pose.y, pose.yaw, pose.speed)
+            except Exception:
+                predicted = None
+        self._predicted_conflict = predicted
+
         behavior_output = self.behavior.update(
             perception=perception,
             pose=pose,
@@ -451,6 +463,7 @@ class WarpAV:
             park_heading_ok=park_heading_ok,
             park_position_ok=park_position_ok,
             white_line_m=white_line,
+            predicted_conflict=predicted,
         )
 
         rescan_now = (behavior_output.behavior == DrivingBehavior.PARKING
@@ -725,6 +738,7 @@ class WarpAV:
                               "white_line_m": getattr(self, "_white_line_m", None)},
             "collision": {"count": self._collision_count, "last": self._last_collision},
             "overtaking": self._overtake_point is not None,
+            "predicted_conflict": getattr(self, "_predicted_conflict", None),
             "weather": getattr(self, "_weather_preset", "default"),
             "version": getattr(self, "_git_rev", "unknown"),
             "uptime_s": round(time.time() - self._start_time, 1),

@@ -755,6 +755,7 @@ class CameraLidarPerception:
                 objects.append(DetectedObject(
                     object_type=otype, x=ex, y=ey, distance=dist,
                     speed=self.tracker.reported_speed(tr),
+                    vx_world=tr.vx, vy_world=tr.vy,
                     confidence=tr.confidence if tr.cls else 0.65,
                     id=tr.tid, timestamp=now))
 

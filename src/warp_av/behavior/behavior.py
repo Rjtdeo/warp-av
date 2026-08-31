@@ -36,6 +36,7 @@ class DrivingBehavior(Enum):
     STOPPED_ESTOP = "stopped_estop"
     STOPPED_RED_LIGHT = "stopped_red_light"
     WAITING_AT_JUNCTION = "waiting_at_junction"
+    YIELDING_PREDICTED = "yielding_predicted"   # crosser/cut-in WILL be in our path
     PARKING = "parking"
     MISSION_COMPLETE = "mission_complete"
     NO_MISSION = "no_mission"
@@ -114,7 +115,8 @@ class BehaviorSystem:
         junction_ahead_m: Optional[float] = None,
         park_heading_ok: bool = True,
         park_position_ok: bool = True,
-        white_line_m: Optional[float] = None
+        white_line_m: Optional[float] = None,
+        predicted_conflict: Optional[dict] = None
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -273,6 +275,27 @@ class BehaviorSystem:
                 speed=0.0, stop=True
             )
         self._block_memory = None
+
+        # --- Predicted conflict: someone OUTSIDE our lane is about to be
+        # IN it (crosser at a junction, cut-in from the side). Yield before
+        # the danger exists instead of braking when it does. Ranked below
+        # physical blocks (a real thing in the path always wins) and above
+        # the traffic light chain.
+        if predicted_conflict is not None:
+            p_t = predicted_conflict.get("t", 0.0)
+            p_along = predicted_conflict.get("along_m", 0.0)
+            p_what = predicted_conflict.get("type", "vehicle")
+            if p_along < 14.0 or p_t < 1.1:
+                return self._decide(
+                    DrivingBehavior.YIELDING_PREDICTED,
+                    f"Yielding — {p_what} will cross our path {p_along:.0f}m ahead in {p_t:.1f}s",
+                    speed=0.0, stop=True
+                )
+            return self._decide(
+                DrivingBehavior.YIELDING_PREDICTED,
+                f"Slowing — {p_what} predicted in our path {p_along:.0f}m ahead in {p_t:.1f}s",
+                speed=2.5, stop=False
+            )
 
         # --- Traffic light (Troy #1): roll up to the stop line, hold there.
         # Ranked below pedestrian/vehicle/obstacle stops (a closer physical
