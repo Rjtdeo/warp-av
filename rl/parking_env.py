@@ -112,19 +112,27 @@ class CarlaParkingEnv(gym.Env):
         self._t = 0.0
         self._steer_prev = 0.0
 
-        for _ in range(30):
+        for _ in range(40):
             drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
-            # Curriculum: some starts almost at the slot (success reachable
-            # by luck -> the prize enters experience), some at exam range.
-            dist_back = self.rng.choice([3.0, 4.5, 6.0, 8.0, 10.0, 12.0])
-            back = drive_wp.previous(dist_back)
+            back = drive_wp.previous(16.0)
             if not back:
                 continue
-            start_tf = back[0].transform
+            lane_tf = back[0].transform
+            # Hindsight curriculum: spawn ALONG the ideal pull-in, from
+            # "already parked, just stop straight" (p=1: guaranteed prize)
+            # to the full 16 m lane-start exam (p=0). Round 1+2 lesson:
+            # a car cannot move sideways — short lane-starts were
+            # physically unsolvable and the student never tasted success.
+            p = self.rng.choice([1.0, 0.85, 0.65, 0.45, 0.25, 0.0])
+            lx, ly = lane_tf.location.x, lane_tf.location.y
+            lyaw = math.radians(lane_tf.rotation.yaw)
+            px = sx * p + lx * (1.0 - p)
+            py = sy * p + ly * (1.0 - p)
+            pyaw = math.atan2(math.sin(syaw) * p + math.sin(lyaw) * (1 - p),
+                              math.cos(syaw) * p + math.cos(lyaw) * (1 - p))
             tf = carla.Transform(
-                carla.Location(start_tf.location.x, start_tf.location.y,
-                               start_tf.location.z + 0.3),
-                carla.Rotation(yaw=start_tf.rotation.yaw + self.rng.uniform(-5, 5)))
+                carla.Location(px, py, lane_tf.location.z + 0.3),
+                carla.Rotation(yaw=math.degrees(pyaw) + self.rng.uniform(-3, 3)))
             self.van = self.world.try_spawn_actor(self.van_bp, tf)
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
