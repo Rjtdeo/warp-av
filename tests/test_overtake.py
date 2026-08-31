@@ -68,3 +68,24 @@ def test_dead_car_no_longer_blocks_the_rewritten_route():
     out = p.filter_to_route_corridor(PerceptionOutput(objects=[car]), r, 0.0, 0.0, 0.0)
     assert out.path_blocked is False, \
         "after the rewrite the dead car must sit a lane away from the corridor"
+
+
+def test_departure_blend_eases_out_of_a_bay():
+    """Van parked 6 m right of the lane: the route head must start AT the
+    van's side and decay to the lane centre — no full-lock swing."""
+    r = straight_route()
+    ok = planner().blend_departure(r, 0.0, 6.0)     # ego in the right bay
+    assert ok
+    head = r.waypoints[0]
+    assert abs(head.y - 6.0) < 0.8, f"route must start beside the van, got y={head.y}"
+    mid = [wp.y for wp in r.waypoints if 4.0 <= wp.x <= 8.0]
+    assert mid and all(0.5 < y < 5.5 for y in mid), "offset must decay smoothly"
+    tail = [wp.y for wp in r.waypoints if wp.x >= 16.0]
+    assert tail and all(abs(y) < 0.3 for y in tail), "must converge to the lane"
+
+
+def test_departure_blend_noop_when_already_in_lane():
+    r = straight_route()
+    ok = planner().blend_departure(r, 0.0, 0.4)
+    assert not ok
+    assert all(abs(wp.y) < 1e-9 for wp in r.waypoints)

@@ -650,6 +650,46 @@ class RoutePlanner:
             perception.closest_obstacle_type = closest_type
         return perception
 
+    def blend_departure(self, route: Route, ego_x, ego_y):
+        """Ease OUT of a parking bay at mission start: the route begins on
+        the lane centre while the van sits metres off in its bay, and pure
+        pursuit answers with near-full lock and an overshoot across the
+        lane (operator: "it drives between lanes at the start"; max steer
+        0.996 recorded). Decay the initial lateral offset smoothly over the
+        first stretch instead. Returns True when a blend was applied."""
+        wps = route.waypoints
+        if len(wps) < 8:
+            return False
+        d0x, d0y = wps[1].x - wps[0].x, wps[1].y - wps[0].y
+        seg = math.hypot(d0x, d0y)
+        if seg < 1e-6:
+            return False
+        d0x, d0y = d0x / seg, d0y / seg
+        ex, ey = ego_x - wps[0].x, ego_y - wps[0].y
+        # +ve = ego sits to the ROUTE's right (CARLA left-handed frame)
+        lat0 = d0x * ey - d0y * ex
+        if abs(lat0) < 1.5 or abs(lat0) > 8.0:
+            return False                     # already in lane / implausible
+        blend_len = max(8.0, min(14.0, abs(lat0) * 2.2))
+        new_head = []
+        arc = 0.0
+        i = 0
+        for i in range(len(wps) - 1):
+            wp = wps[i]
+            if arc >= blend_len:
+                break
+            t = arc / blend_len
+            s = t * t * (3 - 2 * t)          # smoothstep
+            off = lat0 * (1.0 - s)
+            right = (-math.sin(wp.yaw), math.cos(wp.yaw))
+            new_head.append(Waypoint(
+                x=wp.x + right[0] * off, y=wp.y + right[1] * off,
+                z=wp.z, yaw=wp.yaw, speed=wp.speed, is_junction=wp.is_junction))
+            arc += math.hypot(wps[i + 1].x - wp.x, wps[i + 1].y - wp.y)
+        # atomic swap: the 10 Hz tick thread may be iterating the old list
+        route.waypoints = new_head + wps[i:]
+        return True
+
     OVERTAKE_SHIFT_M = 3.6       # one lane to the LEFT around the dead car
     OVERTAKE_PASS_M = 8.0        # stay shifted this far beyond the obstacle
     OVERTAKE_REJOIN_M = 16.0     # fully back in lane this far beyond it

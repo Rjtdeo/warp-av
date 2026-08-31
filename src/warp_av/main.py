@@ -226,6 +226,14 @@ class WarpAV:
             self.mission_manager.fail_mission("Route planning failed")
             return False
 
+        # Ease out of the previous parking bay instead of full-lock swinging
+        # onto the lane (the "between lanes at the start" observation).
+        try:
+            if self.planner.blend_departure(self._route, pose.x, pose.y):
+                print("[Planner] departure blend: easing out of the bay onto the lane")
+        except Exception as e:
+            print(f"[Planner] departure blend failed ({e}) — starting as planned")
+
         self._parking_slots = None
         self._parking_rechecked = False
         # Bend the end of the route to a kerbside parking spot (Troy #7):
