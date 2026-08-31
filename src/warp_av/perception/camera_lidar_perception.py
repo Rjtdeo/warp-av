@@ -717,6 +717,14 @@ class CameraLidarPerception:
                     best["cls"] = cls
                     best["conf"] = float(det.confidence)
 
+            # Shape naming: a car-sized solid blob on the road is a car,
+            # camera confirmation or not (side/rear objects never enter the
+            # front camera's view and were all labelled OBSTACLE).
+            for c in clusters:
+                if c["cls"] is None and c["extent"] >= 0.9 and c["n"] >= 6:
+                    c["cls"] = "vehicle"
+                    c["conf"] = 0.45
+
             # ---- ego -> world, then track ----
             tf = self.sensor_adapter.vehicle.get_transform()
             yaw = math.radians(tf.rotation.yaw)
