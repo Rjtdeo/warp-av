@@ -80,14 +80,14 @@ class CarlaParkingEnv(gym.Env):
                 continue
             if r.lane_width < 1.8:
                 continue
-            back = wp.previous(11.0)
+            back = wp.previous(12.0)
             if not back or back[0].is_junction:
                 continue
             dyaw = abs((back[0].transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180)
             if dyaw > 6.0:
                 continue                     # approach must be straight
             t = r.transform
-            bays.append((back[0].transform, t.location.x, t.location.y,
+            bays.append((wp, t.location.x, t.location.y,
                          math.radians(t.rotation.yaw)))
         return bays
 
@@ -113,7 +113,14 @@ class CarlaParkingEnv(gym.Env):
         self._steer_prev = 0.0
 
         for _ in range(30):
-            start_tf, sx, sy, syaw = self.rng.choice(self.bays)
+            drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
+            # Curriculum: some starts almost at the slot (success reachable
+            # by luck -> the prize enters experience), some at exam range.
+            dist_back = self.rng.choice([3.0, 4.5, 6.0, 8.0, 10.0, 12.0])
+            back = drive_wp.previous(dist_back)
+            if not back:
+                continue
+            start_tf = back[0].transform
             tf = carla.Transform(
                 carla.Location(start_tf.location.x, start_tf.location.y,
                                start_tf.location.z + 0.3),
@@ -154,7 +161,7 @@ class CarlaParkingEnv(gym.Env):
         steer = float(np.clip(action[0], -1, 1))
         accel = float(np.clip(action[1], -1, 1))
         _, _, _, speed = self._pose()
-        throttle = max(0.0, accel) * 0.5 if speed < MAX_SPEED else 0.0
+        throttle = max(0.0, accel) * 0.7 if speed < MAX_SPEED else 0.0
         brake = max(0.0, -accel)
         self.van.apply_control(carla.VehicleControl(
             throttle=throttle, steer=steer * 0.8, brake=brake))

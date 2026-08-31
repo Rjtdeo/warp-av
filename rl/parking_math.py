@@ -91,4 +91,6 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     r = 2.0 * (dist_prev - dist)
     r -= 0.05
     r -= 0.10 * abs(steer - steer_prev)
+    if inside:
+        r += 1.5          # being IN the box pays every moment (taste of success)
     return r, False, {"result": "driving", "dist": round(dist, 2)}

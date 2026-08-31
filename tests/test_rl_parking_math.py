@@ -73,3 +73,12 @@ def test_spawn_distance_does_not_end_the_episode():
 def test_driving_past_the_slot_ends_the_attempt():
     r, done, info = step_outcome(5.5, 0.5, 0.0, 2.0, 5.0, 0.0, 0.0, 6.0, False)
     assert done and info["result"] == "overshoot"
+
+
+def test_being_inside_the_box_pays_even_while_moving():
+    """Round-2 curriculum fix: entering the box must itself be rewarding —
+    round 1's student never tasted success in 1,347 attempts."""
+    inside_moving, done, _ = step_outcome(0.0, 0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 5.0, False)
+    outside_moving, _, _ = step_outcome(4.0, 0.0, 0.0, 1.0, 4.5, 0.0, 0.0, 5.0, False)
+    assert not done
+    assert inside_moving > outside_moving + 1.0
