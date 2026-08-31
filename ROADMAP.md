@@ -20,9 +20,10 @@ gap to a real road fastest.
 
 ## Next
 
-4. **Prediction layer.** React to where things WILL be, not where they are — start with
-   straight-line extrapolation of every tracked object (the missing Waymo layer:
-   perceive → **predict** → plan → act).
+4. **Prediction layer — SHIPPED (v1).** Every moving object's position is guessed 3.5 s
+   ahead; the van yields to crossers/cut-ins BEFORE they enter its path (behavior
+   `yielding_predicted`). First dense-traffic live test: 11 predictive yields, mission
+   completed, zero contact. Next refinement: formal who-goes-first rules on top.
 5. **Swept-path collision checking.** Check the van's BODY through bends, not just its
    route line (a parked SUV in a curve was clipped this way).
 6. **Motion health alarm.** Commanded speed > 0 with no movement and no obstacle for N
