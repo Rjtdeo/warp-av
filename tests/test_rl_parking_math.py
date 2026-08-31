@@ -61,3 +61,15 @@ def test_corner_math_matches_geometry():
     assert inside and abs(m_len - 1.15) < 0.01 and abs(m_wid - 0.27) < 0.01
     inside2, _, m_wid2 = van_corners_in_slot(0.0, 0.3, 0.0)
     assert not inside2 and m_wid2 < 0.0
+
+
+def test_spawn_distance_does_not_end_the_episode():
+    """Smoke-test bug: the van STARTS ~11.5 m from the slot — that must be a
+    normal driving step, not instant disqualification."""
+    r, done, info = step_outcome(-11.0, -3.2, 0.0, 0.0, 11.5, 0.0, 0.0, 0.1, False)
+    assert not done and info["result"] == "driving"
+
+
+def test_driving_past_the_slot_ends_the_attempt():
+    r, done, info = step_outcome(5.5, 0.5, 0.0, 2.0, 5.0, 0.0, 0.0, 6.0, False)
+    assert done and info["result"] == "overshoot"

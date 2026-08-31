@@ -17,7 +17,9 @@ VAN_HALF_LEN = 2.35
 VAN_HALF_WID = 0.98
 
 SUCCESS_SPEED = 0.3          # must be (nearly) stopped to count as parked
-OUT_OF_BOUNDS_M = 7.0        # wandered this far off -> episode over
+OUT_OF_BOUNDS_M = 18.0       # truly lost (the van STARTS ~11 m from the slot)
+OVERSHOOT_M = 5.0            # drove past the slot -> attempt over
+LATERAL_LOST_M = 7.0         # wandered sideways off the road -> attempt over
 
 
 def to_slot_frame(van_x, van_y, van_yaw, slot_x, slot_y, slot_yaw):
@@ -68,8 +70,10 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
 
     if collided:
         return -200.0, True, {"result": "collision"}
-    if dist > OUT_OF_BOUNDS_M:
+    if dist > OUT_OF_BOUNDS_M or abs(ay) > LATERAL_LOST_M:
         return -50.0, True, {"result": "out_of_bounds"}
+    if ax > OVERSHOOT_M:
+        return -40.0, True, {"result": "overshoot"}
     if t_s > timeout_s:
         return -30.0, True, {"result": "timeout"}
 
