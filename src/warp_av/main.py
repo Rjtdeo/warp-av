@@ -300,17 +300,29 @@ class WarpAV:
         # Route-aware in-path check: judge objects against the corridor we will
         # actually drive, not the direction the nose points (mid-turn the nose
         # sweeps neighbouring lanes -> false "vehicle ahead" stops).
-        if self._route and perception.healthy and pose.healthy:
-            # The map's DECORATIVE parked cars are not actors, so perception
-            # cannot see them — the van slammed one at full parking-approach
-            # speed (sweep: impulse 9281). Feed them in as stationary
-            # pseudo-vehicles so the corridor width logic refuses to drive
-            # through them like any other parked car.
+        # Camera mode: objects come from the sensors, but SIGNALS come from
+        # the map/V2I feed (like production AVs) — without this the camera
+        # stack would sail through red lights.
+        if self.perception_mode == "camera_lidar" and perception.healthy:
             try:
-                perception.objects = list(perception.objects) + \
-                    self._static_vehicle_objects(pose)
+                tl_state, tl_dist = self.ground_truth_perception.current_light_state()
+                perception.traffic_light = tl_state
+                perception.traffic_light_distance_m = tl_dist
             except Exception:
                 pass
+
+        if self._route and perception.healthy and pose.healthy:
+            # The map's DECORATIVE parked cars are not actors, so ground-truth
+            # perception cannot see them — the van slammed one at full
+            # parking-approach speed (sweep: impulse 9281). Feed them in as
+            # stationary pseudo-vehicles. Camera mode skips this: the LiDAR
+            # physically sees those cars already.
+            if self.perception_mode == "ground_truth":
+                try:
+                    perception.objects = list(perception.objects) + \
+                        self._static_vehicle_objects(pose)
+                except Exception:
+                    pass
             perception = self.planner.filter_to_route_corridor(
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),

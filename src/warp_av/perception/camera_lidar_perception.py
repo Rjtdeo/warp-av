@@ -28,12 +28,15 @@ Important:
     the stable fallback.
 """
 
+import math
 import time
 from pathlib import Path
 from typing import List, Optional
 
 import cv2
 import numpy as np
+
+from .tracking import cluster_points, ObjectTracker
 
 from .perception import (
     DetectedObject,
@@ -633,6 +636,10 @@ class CameraLidarPerception:
         # Maximum age of a reused LiDAR measurement.
         self.lidar_hold_seconds = 0.8
 
+        # v2: multi-object tracking in world frame (ids + speeds).
+        self.tracker = ObjectTracker()
+        self.last_track_count = 0
+
         print(
             "[CameraLidar] Camera + LiDAR "
             "perception ready"
@@ -644,341 +651,132 @@ class CameraLidarPerception:
     # --------------------------------------------------------
 
     def update(self) -> PerceptionOutput:
-
+        """v2: LiDAR clustering -> camera classification -> world-frame
+        tracking. Produces a full object LIST with stable ids and speeds
+        (what following, cut-in handling, and the moving/parked distinction
+        need), instead of v1's single fused hazard. Traffic-light state is
+        overlaid by the stack from the map/signal feed."""
         if not self._enabled:
-
-            return PerceptionOutput(
-                healthy=False,
-                reason="PERCEPTION_DISABLED",
-            )
-
+            return PerceptionOutput(healthy=False, reason="PERCEPTION_DISABLED")
         try:
-
             now = time.time()
-
-            camera = (
-                self.sensor_adapter
-                .latest_camera
-            )
-
-            lidar = (
-                self.sensor_adapter
-                .latest_lidar
-            )
-
-
-            # ------------------------------------------------
-            # CHECK SENSOR FEEDS
-            # ------------------------------------------------
-
+            camera = self.sensor_adapter.latest_camera
+            lidar = self.sensor_adapter.latest_lidar
             if camera is None:
-
-                return PerceptionOutput(
-                    healthy=False,
-                    reason="CAMERA_NO_DATA",
-                )
-
+                return PerceptionOutput(healthy=False, reason="CAMERA_NO_DATA")
             if lidar is None:
+                return PerceptionOutput(healthy=False, reason="LIDAR_NO_DATA")
+            if now - camera.timestamp > 2.0:
+                return PerceptionOutput(healthy=False,
+                                        reason=f"CAMERA_STALE_{now - camera.timestamp:.1f}s")
+            if now - lidar.timestamp > 2.0:
+                return PerceptionOutput(healthy=False,
+                                        reason=f"LIDAR_STALE_{now - lidar.timestamp:.1f}s")
 
-                return PerceptionOutput(
-                    healthy=False,
-                    reason="LIDAR_NO_DATA",
-                )
+            # ---- camera inference, cached at inference_interval ----
+            monotonic_now = time.monotonic()
+            if monotonic_now - self._last_inference_time >= self.inference_interval:
+                t0 = time.perf_counter()
+                self._cached_camera_detections = self.detector.detect(camera.image[:, :, :3])
+                self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
+                self._last_inference_time = monotonic_now
+            detections = self._cached_camera_detections
 
+            # ---- LiDAR -> 2D clusters (sensor frame: x fwd, y right) ----
+            pts = lidar.points
+            mask = (pts[:, 2] > self.minimum_lidar_z) & (pts[:, 2] < self.maximum_lidar_z)
+            xy = pts[mask][::3, :2]          # downsample 3x: plenty for van-sized objects
+            clusters = cluster_points(xy.tolist())
 
-            camera_age = (
-                now
-                - camera.timestamp
-            )
-
-            lidar_age = (
-                now
-                - lidar.timestamp
-            )
-
-
-            if camera_age > 2.0:
-
-                return PerceptionOutput(
-                    healthy=False,
-                    reason=(
-                        f"CAMERA_STALE_"
-                        f"{camera_age:.1f}s"
-                    ),
-                )
-
-
-            if lidar_age > 2.0:
-
-                return PerceptionOutput(
-                    healthy=False,
-                    reason=(
-                        f"LIDAR_STALE_"
-                        f"{lidar_age:.1f}s"
-                    ),
-                )
-
-
-            # ------------------------------------------------
-            # CAMERA
-            # ------------------------------------------------
-
-            monotonic_now = (
-                time.monotonic()
-            )
-
-
-            if (
-                monotonic_now
-                - self._last_inference_time
-                >= self.inference_interval
-            ):
-
-                start = (
-                    time.perf_counter()
-                )
-
-
-                # CARLA gives BGRA.
-                # Remove alpha -> BGR.
-                bgr = (
-                    camera.image[
-                        :,
-                        :,
-                        :3
-                    ]
-                )
-
-
-                self._cached_camera_detections = (
-                    self.detector.detect(
-                        bgr
-                    )
-                )
-
-
-                self.last_inference_ms = (
-                    (
-                        time.perf_counter()
-                        - start
-                    )
-                    * 1000.0
-                )
-
-
-                self._last_inference_time = (
-                    monotonic_now
-                )
-
-
-            camera_detections = (
-                self._cached_camera_detections
-            )
-
-
-            # ------------------------------------------------
-            # CAMERA OBJECT MOST RELEVANT TO OUR PATH
-            # ------------------------------------------------
-
-            relevant_camera_object = (
-                self._choose_forward_camera_object(
-                    camera_detections,
-                    camera.width,
-                    camera.height,
-                )
-            )
-
-
-            # ------------------------------------------------
-            # CURRENT LIDAR SCAN
-            # ------------------------------------------------
-
-            lidar_hazard = (
-                self._find_front_lidar_hazard(
-                    lidar.points
-                )
-            )
-
-
-            # A real LiDAR hit always refreshes our memory.
-            if lidar_hazard is not None:
-
-                self._last_valid_lidar_hazard = (
-                    lidar_hazard.copy()
-                )
-
-                self._last_valid_lidar_time = now
-
-
-            # ------------------------------------------------
-            # TEMPORAL SENSOR FUSION
-            #
-            # If YOLO still sees a pedestrian/vehicle but one
-            # LiDAR scan misses the narrow object, briefly use
-            # the latest valid LiDAR measurement.
-            #
-            # This is NOT fake distance generation.
-            # The held value came from a real previous LiDAR
-            # scan and expires after lidar_hold_seconds.
-            # ------------------------------------------------
-
-            elif (
-                relevant_camera_object is not None
-                and
-                self._last_valid_lidar_hazard is not None
-                and
-                (
-                    now
-                    - self._last_valid_lidar_time
-                )
-                <= self.lidar_hold_seconds
-            ):
-
-                lidar_hazard = (
-                    self._last_valid_lidar_hazard.copy()
-                )
-
-                lidar_hazard["temporal_hold"] = True
-
-
-            # ------------------------------------------------
-            # NOTHING PHYSICAL SEEN AHEAD
-            # ------------------------------------------------
-
-            if lidar_hazard is None:
-
-                return PerceptionOutput(
-                    objects=[],
-                    closest_obstacle_distance=999.0,
-                    closest_obstacle_type=(
-                        ObjectType.UNKNOWN
-                    ),
-                    path_blocked=False,
-                    timestamp=now,
-                    healthy=True,
-                    reason="OK",
-                )
-
-
-            lidar_x = (
-                lidar_hazard["x"]
-            )
-
-            lidar_y = (
-                lidar_hazard["y"]
-            )
-
-            lidar_distance = (
-                lidar_hazard["distance"]
-            )
-
-
-            # ------------------------------------------------
-            # CAMERA CLASSIFICATION
-            # ------------------------------------------------
-
-            if (
-                relevant_camera_object
-                is not None
-            ):
-
-                if (
-                    relevant_camera_object.class_id
-                    == PERSON_CLASS
-                ):
-
-                    object_type = (
-                        ObjectType.PEDESTRIAN
-                    )
-
-                elif (
-                    relevant_camera_object.class_id
-                    in VEHICLE_CLASSES
-                ):
-
-                    object_type = (
-                        ObjectType.VEHICLE
-                    )
-
+            # ---- classify clusters by projecting into the image ----
+            # fov 90 deg -> fx = width/2. u grows to the RIGHT (y right in
+            # sensor frame), matching the image axis directly.
+            fx = camera.width / 2.0
+            for c in clusters:
+                c["cls"] = None
+                c["conf"] = 0.0
+                if c["x"] > 1.0:
+                    c["u"] = camera.width / 2.0 + fx * (c["y"] / c["x"])
                 else:
+                    c["u"] = None
+            for det in detections:
+                cls = ("pedestrian" if det.class_id == PERSON_CLASS
+                       else "vehicle" if det.class_id in VEHICLE_CLASSES
+                       else None)
+                if cls is None:
+                    continue
+                bx1, bx2 = det.box[0], det.box[2]
+                best = None
+                for c in clusters:
+                    if c["u"] is None or c["cls"] is not None:
+                        continue
+                    if bx1 - 12 <= c["u"] <= bx2 + 12:
+                        if best is None or c["distance"] < best["distance"]:
+                            best = c
+                if best is not None:
+                    best["cls"] = cls
+                    best["conf"] = float(det.confidence)
 
-                    object_type = (
-                        ObjectType.OBSTACLE
-                    )
+            # ---- ego -> world, then track ----
+            tf = self.sensor_adapter.vehicle.get_transform()
+            yaw = math.radians(tf.rotation.yaw)
+            cy, sy = math.cos(yaw), math.sin(yaw)
+            ex0, ey0 = tf.location.x, tf.location.y
+            observations = []
+            for c in clusters:
+                observations.append({
+                    "wx": ex0 + c["x"] * cy - c["y"] * sy,
+                    "wy": ey0 + c["x"] * sy + c["y"] * cy,
+                    "cls": c["cls"],
+                    "confidence": c["conf"],
+                })
+            tracks = self.tracker.update(observations, now)
 
+            # ---- tracks -> DetectedObjects (back to ego frame) ----
+            objects = []
+            for tr in tracks:
+                dx, dy = tr.wx - ex0, tr.wy - ey0
+                ex = dx * cy + dy * sy
+                ey = -dx * sy + dy * cy
+                dist = math.hypot(dx, dy)
+                if dist > self.detection_range:
+                    continue
+                otype = (ObjectType.PEDESTRIAN if tr.cls == "pedestrian"
+                         else ObjectType.VEHICLE if tr.cls == "vehicle"
+                         else ObjectType.OBSTACLE)
+                objects.append(DetectedObject(
+                    object_type=otype, x=ex, y=ey, distance=dist,
+                    speed=self.tracker.reported_speed(tr),
+                    confidence=tr.confidence if tr.cls else 0.65,
+                    id=tr.tid, timestamp=now))
 
-                confidence = (
-                    relevant_camera_object
-                    .confidence
-                )
+            # ---- simple forward in-path summary (route corridor refines) ----
+            closest_dist = 999.0
+            closest_type = ObjectType.UNKNOWN
+            closest_speed = 0.0
+            path_blocked = False
+            for obj in objects:
+                if obj.x > 0 and abs(obj.y) < self.path_width / 2:
+                    if obj.distance < closest_dist:
+                        closest_dist = obj.distance
+                        closest_type = obj.object_type
+                        closest_speed = obj.speed
+                    if obj.distance < self.danger_distance:
+                        path_blocked = True
 
-
-            else:
-
-                # LiDAR detected something physical,
-                # but YOLO could not classify it.
-                object_type = (
-                    ObjectType.OBSTACLE
-                )
-
-                confidence = 0.65
-
-
-            detected_object = (
-                DetectedObject(
-                    object_type=object_type,
-                    x=float(lidar_x),
-                    y=float(lidar_y),
-                    distance=float(
-                        lidar_distance
-                    ),
-                    speed=0.0,
-                    confidence=float(
-                        confidence
-                    ),
-                    id=0,
-                    timestamp=now,
-                )
-            )
-
-
+            self.last_track_count = len(objects)
             return PerceptionOutput(
-                objects=[
-                    detected_object
-                ],
-                closest_obstacle_distance=(
-                    float(
-                        lidar_distance
-                    )
-                ),
-                closest_obstacle_type=(
-                    object_type
-                ),
-                path_blocked=(
-                    lidar_distance
-                    < self.danger_distance
-                ),
-                timestamp=now,
-                healthy=True,
-                reason="OK",
-            )
-
+                objects=objects,
+                closest_obstacle_distance=closest_dist,
+                closest_obstacle_type=closest_type,
+                closest_obstacle_speed=closest_speed,
+                path_blocked=path_blocked,
+                timestamp=now, healthy=True, reason="OK")
 
         except Exception as error:
-
-            print(
-                "[CameraLidar] ERROR:",
-                error,
-            )
-
-            return PerceptionOutput(
-                healthy=False,
-                reason=(
-                    f"CAMERA_LIDAR_ERROR: "
-                    f"{error}"
-                ),
-            )
-
+            print("[CameraLidar] ERROR:", error)
+            return PerceptionOutput(healthy=False,
+                                    reason=f"CAMERA_LIDAR_ERROR: {error}")
 
     # --------------------------------------------------------
     # FIND FORWARD LIDAR HAZARD

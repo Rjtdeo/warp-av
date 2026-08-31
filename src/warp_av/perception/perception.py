@@ -129,26 +129,8 @@ class PerceptionSystem:
                     objects.append(obj)
 
             # Find closest object in our path
-            # Traffic light governing our lane (CARLA ground truth — the same
-            # answer a camera classifier will produce later).
-            tl_state = "none"
-            tl_dist = None
-            try:
-                tl = self.vehicle.get_traffic_light()
-                if tl is not None:
-                    tl_state = {"Red": "red", "Yellow": "yellow", "Green": "green"}.get(
-                        str(tl.get_state()).split(".")[-1], "none")
-                    # distance to the stop line, so behavior can roll up to it
-                    pts = self._tl_stop_cache.get(tl.id)
-                    if pts is None:
-                        pts = [(w.transform.location.x, w.transform.location.y)
-                               for w in tl.get_stop_waypoints()]
-                        self._tl_stop_cache[tl.id] = pts
-                    if pts:
-                        vloc = self.vehicle.get_location()
-                        tl_dist = min(math.hypot(px - vloc.x, py - vloc.y) for px, py in pts)
-            except Exception:
-                pass
+            # Traffic light governing our lane (map/signal feed).
+            tl_state, tl_dist = self.current_light_state()
 
             closest_dist = 999.0
             closest_type = ObjectType.UNKNOWN
@@ -185,6 +167,30 @@ class PerceptionSystem:
                 healthy=False,
                 reason=f"PERCEPTION_ERROR: {e}"
             )
+
+    def current_light_state(self):
+        """(state, stop_line_distance_m) of the light governing our lane —
+        the map/signal feed (CARLA ground truth). Camera mode reads signals
+        from here too: production AVs take light positions/phases from the
+        HD map and V2I feeds, not from pixel classification alone."""
+        tl_state = "none"
+        tl_dist = None
+        try:
+            tl = self.vehicle.get_traffic_light()
+            if tl is not None:
+                tl_state = {"Red": "red", "Yellow": "yellow", "Green": "green"}.get(
+                    str(tl.get_state()).split(".")[-1], "none")
+                pts = self._tl_stop_cache.get(tl.id)
+                if pts is None:
+                    pts = [(w.transform.location.x, w.transform.location.y)
+                           for w in tl.get_stop_waypoints()]
+                    self._tl_stop_cache[tl.id] = pts
+                if pts:
+                    vloc = self.vehicle.get_location()
+                    tl_dist = min(math.hypot(px - vloc.x, py - vloc.y) for px, py in pts)
+        except Exception:
+            pass
+        return tl_state, tl_dist
 
     def _actor_to_object(self, actor, vehicle_location, vehicle_yaw, obj_type) -> Optional[DetectedObject]:
         """Convert a CARLA actor to a DetectedObject in vehicle-relative coordinates."""
