@@ -153,6 +153,17 @@ class WarpAV:
         self._cutin = None              # state machine for the cut-in car
         self._parked_cars = []          # cars parked in bays via /api/test/park_cars
         self._weather_preset = "default"
+
+        # Operator decision (2026-08-30): CAMERA VISION is the boot default.
+        # Ground truth remains the automatic fallback so the stack always
+        # starts (fresh clone without models/yolox_s.onnx, load errors, ...).
+        try:
+            result = self.api_set_perception_mode("camera_lidar")
+            if isinstance(result, dict) and not result.get("success", True):
+                raise RuntimeError(result.get("reason", "switch refused"))
+            print("[Perception] BOOT DEFAULT: Camera + LiDAR")
+        except Exception as e:
+            print(f"[Perception] camera default unavailable ({e}) — staying on ground truth")
         self._blocked_since = None      # when STOPPED_VEHICLE began (overtake timer)
         self._overtake_point = None     # rejoin Waypoint while a pass is active
         self._overtake_retry_at = 0.0
