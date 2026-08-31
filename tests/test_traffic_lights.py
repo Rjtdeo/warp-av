@@ -79,9 +79,9 @@ def test_red_light_holds_relative_to_junction_entry_not_carla_stop_wp():
     o = b.update(PerceptionOutput(traffic_light="red", traffic_light_distance_m=2.0),
                  pose, 500, True, junction_ahead_m=10.0)
     assert not o.should_stop and "junction edge" in o.reason
-    # at 3.4 m from the junction entry: hold
+    # at 3.0 m from the junction entry: hold (operator-tuned hold 2.6)
     o = b.update(PerceptionOutput(traffic_light="red", traffic_light_distance_m=2.0),
-                 pose, 500, True, junction_ahead_m=3.4)
+                 pose, 500, True, junction_ahead_m=3.0)
     assert o.behavior == DrivingBehavior.STOPPED_RED_LIGHT
 
 
@@ -111,6 +111,6 @@ def test_white_line_outranks_junction_edge_reference():
 def test_no_paint_falls_back_to_junction_edge():
     b = BehaviorSystem(); b.set_mission()
     r = b.update(PerceptionOutput(traffic_light="red"), Pose(healthy=True), 500, True,
-                 junction_ahead_m=3.2, white_line_m=None)
+                 junction_ahead_m=3.0, white_line_m=None)
     assert r.behavior == DrivingBehavior.STOPPED_RED_LIGHT
     assert "junction edge" in r.reason
