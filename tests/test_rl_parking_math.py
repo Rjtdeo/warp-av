@@ -47,7 +47,18 @@ def test_ramming_in_fast_is_not_parked():
 
 def test_collision_is_the_worst_outcome():
     r, done, info = step_outcome(0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 8.0, True)
-    assert done and info["result"] == "collision" and r <= -200.0
+    assert done and info["result"] == "collision" and r == COLLISION_PENALTY
+    lost, _, _ = step_outcome(-30.0, 0.0, 0.0, 0.0, 30.0, 0.0, 0.0, 1.0, False)
+    over, _, _ = step_outcome(6.0, 0.0, 0.0, 1.0, 5.0, 0.0, 0.0, 1.0, False)
+    late, _, _ = step_outcome(-3.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 31.0, False)
+    assert r < min(lost, over, late), "nothing may be cheaper than hitting something"
+
+
+def test_a_crash_no_longer_dwarfs_the_prize():
+    """Round 5: -200 against a 100-220 prize froze the van a metre short of the
+    box — the last metre paid +8 and risked -200. Worst outcome, yes; ten times
+    the reward for trying, no."""
+    assert 50.0 < -COLLISION_PENALTY < 100.0
 
 
 def test_progress_pays_and_wandering_costs():
@@ -81,7 +92,51 @@ def test_being_inside_the_box_pays_even_while_moving():
     inside_moving, done, _ = step_outcome(0.0, 0.0, 0.0, 1.0, 0.5, 0.0, 0.0, 5.0, False)
     outside_moving, _, _ = step_outcome(4.0, 0.0, 0.0, 1.0, 4.5, 0.0, 0.0, 5.0, False)
     assert not done
-    assert inside_moving > outside_moving + 1.0
+    assert inside_moving > outside_moving, "still pays — deliberately only a little"
+
+
+def test_crawling_the_box_never_beats_the_smallest_park():
+    """The van has no reverse gear, so the longest it can stay inside the box
+    while still 'moving' is crawling its full length at the parked-speed limit.
+    Even that must earn less than the poorest genuine park (100), or the day it
+    learns to enter the box is the day it learns never to stop."""
+    steps_inside = SLOT_LEN / SUCCESS_SPEED / 0.1        # 0.1 s per step
+    assert INSIDE_PAY * steps_inside < 100.0
+
+
+def test_getting_lined_up_pays_and_getting_crooked_costs():
+    """Round 5 paid only for distance, so the van reached the bay and hovered
+    there crooked. Straightening and centring must pay on their own."""
+    crooked = lateral_error(0.4, math.radians(5))
+    straight = lateral_error(0.0, 0.0)
+    assert crooked > straight == 0.0
+    better, _, _ = step_outcome(-2.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 3.0, False,
+                                align_prev=crooked)
+    worse, _, _ = step_outcome(-2.0, 0.4, math.radians(5), 1.0, 2.0, 0.0, 0.0,
+                               3.0, False, align_prev=straight)
+    same, _, _ = step_outcome(-2.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 3.0, False,
+                              align_prev=straight)
+    assert better > same > worse
+    assert abs(better - same - ALIGN_PAY * crooked) < 1e-9
+
+
+def test_hovering_lined_up_earns_nothing_extra():
+    """Both shaping terms are differences: sitting in a good pose must pay the
+    same as sitting in a bad one, so the only way to earn is to improve."""
+    # both poses 4 m short of the box, so neither is inside and neither parks
+    good, _, _ = step_outcome(-4.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 3.0, False,
+                              align_prev=0.0)
+    bad_pose = lateral_error(0.5, math.radians(8))
+    bad, _, _ = step_outcome(-4.0, 0.5, math.radians(8), 0.0, math.hypot(4.0, 0.5),
+                             0.0, 0.0, 3.0, False, align_prev=bad_pose)
+    assert abs(good - bad) < 1e-9
+
+
+def test_alignment_shaping_is_off_unless_asked_for():
+    with_it, _, _ = step_outcome(-2.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 3.0, False)
+    off, _, _ = step_outcome(-2.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 3.0, False,
+                             align_prev=None)
+    assert with_it == off
 
 
 # ---------------------------------------------------------------------------
@@ -89,9 +144,10 @@ def test_being_inside_the_box_pays_even_while_moving():
 # ---------------------------------------------------------------------------
 import random
 
-from rl.parking_math import (APPROACH_PAY, Curriculum, LANE_START_M,
-                             OUT_OF_BOUNDS_M, bounds_for, spawn_pose,
-                             timeout_for)
+from rl.parking_math import (ALIGN_PAY, APPROACH_PAY, COLLISION_PENALTY,
+                             INSIDE_PAY, SLOT_LEN, SUCCESS_SPEED, Curriculum,
+                             LANE_START_M, OUT_OF_BOUNDS_M, bounds_for,
+                             lateral_error, spawn_pose, timeout_for)
 
 
 def test_far_start_is_not_disqualified_for_barely_moving():

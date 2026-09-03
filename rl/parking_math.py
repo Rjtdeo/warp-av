@@ -23,6 +23,24 @@ APPROACH_PAY = 8.0           # points per metre closed on the slot. Round 3 paid
                              # student took the safe option and never moved: 1,626
                              # episodes, not one failed attempt covered any ground.
 
+ALIGN_PAY = 20.0             # points per metre of lateral corner error removed.
+                             # Round 5 paid only for closing DISTANCE, so the van
+                             # drove to the bay and hovered there crooked or off-
+                             # centre: 5 parks in 2,430 attempts, none in the last
+                             # 1,140. Nothing had ever paid it for lining up.
+
+COLLISION_PENALTY = -80.0    # still the worst outcome, but no longer so far below
+                             # the parking prize (100-220) that the last metre is
+                             # never worth risking. Round 5's -200 froze the van a
+                             # step short of the box.
+
+INSIDE_PAY = 0.4             # per step spent inside the box while still moving.
+                             # Round 2's 1.5 was a "taste of success"; at 1.5 a van
+                             # crawling the slot's length at the parked-speed limit
+                             # would earn ~350 — more than any park — so the moment
+                             # it learned to enter the box it would learn never to
+                             # stop. 0.4 keeps the taste below the smallest prize.
+
 SUCCESS_SPEED = 0.3          # must be (nearly) stopped to count as parked
 OUT_OF_BOUNDS_M = 18.0       # FLOOR only — see bounds_for(). The real limit is
                              # measured from where THIS attempt started, because
@@ -70,11 +88,20 @@ def van_corners_in_slot(ax, ay, herr):
     return (m_len >= 0.0 and m_wid >= 0.0), m_len, m_wid
 
 
+def lateral_error(ay, herr):
+    """How far the van's corners reach sideways of the slot's centre line, in
+    metres: its own offset plus what its heading swings the far corners out by.
+    Zero means centred and straight — the pose the 0.27 m side clearance needs."""
+    return abs(ay) + VAN_HALF_LEN * abs(math.sin(herr))
+
+
 def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
-                 collided, timeout_s=30.0, bounds_m=None):
+                 collided, timeout_s=30.0, bounds_m=None, align_prev=None):
     """One training step's (reward, done, info).
 
     dist_prev is last step's distance-to-centre (progress shaping).
+    align_prev is last step's lateral_error; pass it to also pay for getting
+    straighter and more centred, not only closer. None disables that term.
     bounds_m is how far out this attempt is allowed to stray; pass
     bounds_for(start_dist) so a far start is not disqualified for barely
     moving. None keeps the old fixed limit.
@@ -84,7 +111,7 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     inside, m_len, m_wid = van_corners_in_slot(ax, ay, herr)
 
     if collided:
-        return -200.0, True, {"result": "collision"}
+        return COLLISION_PENALTY, True, {"result": "collision"}
     if dist > limit or abs(ay) > LATERAL_LOST_M:
         return -50.0, True, {"result": "out_of_bounds"}
     if ax > OVERSHOOT_M:
@@ -102,12 +129,16 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
                          "m_wid": round(m_wid, 2),
                          "herr_deg": round(math.degrees(herr), 1)}
 
-    # Ongoing: reward progress, charge for time and jerky steering.
+    # Ongoing: pay for getting closer AND for getting lined up; charge for
+    # time and jerky steering. Both shaping terms are differences, so hovering
+    # in place earns nothing — only improving does.
     r = APPROACH_PAY * (dist_prev - dist)
+    if align_prev is not None:
+        r += ALIGN_PAY * (align_prev - lateral_error(ay, herr))
     r -= 0.05
     r -= 0.10 * abs(steer - steer_prev)
     if inside:
-        r += 1.5          # being IN the box pays every moment (taste of success)
+        r += INSIDE_PAY   # being IN the box pays a little every moment
     return r, False, {"result": "driving", "dist": round(dist, 2)}
 
 

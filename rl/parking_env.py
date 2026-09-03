@@ -29,8 +29,8 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
-                             spawn_pose, bounds_for, timeout_for, Curriculum,
-                             LANE_START_M, SLOT_LEN, SLOT_WID)
+                             lateral_error, spawn_pose, bounds_for, timeout_for,
+                             Curriculum, LANE_START_M, SLOT_LEN, SLOT_WID)
 
 FIXED_DT = 0.1
 MAX_SPEED = 3.0
@@ -91,6 +91,7 @@ class CarlaParkingEnv(gym.Env):
         self._t = 0.0
         self._steer_prev = 0.0
         self._dist_prev = 0.0
+        self._align_prev = 0.0
         self._p = 0.0
         self._start_dist = 0.0
         self._bounds_m = None
@@ -176,8 +177,9 @@ class CarlaParkingEnv(gym.Env):
 
         self.world.tick()
         obs = self._obs()
-        ax, ay, _ = self._slot_frame()
+        ax, ay, herr = self._slot_frame()
         self._dist_prev = math.hypot(ax, ay)
+        self._align_prev = lateral_error(ay, herr)
         # Room to stray and time allowed both scale with where this attempt
         # began — a flat limit punished far starts for existing.
         self._p = p
@@ -216,8 +218,9 @@ class CarlaParkingEnv(gym.Env):
         reward, done, info = step_outcome(
             ax, ay, herr, speed, self._dist_prev, steer, self._steer_prev,
             self._t, self._collided, timeout_s=self._timeout_s,
-            bounds_m=self._bounds_m)
+            bounds_m=self._bounds_m, align_prev=self._align_prev)
         self._dist_prev = math.hypot(ax, ay)
+        self._align_prev = lateral_error(ay, herr)
         self._steer_prev = steer
         if done:
             info["p"] = round(self._p, 2)
