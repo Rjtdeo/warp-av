@@ -55,3 +55,29 @@ for the whole vehicle, and never above the safety supervisor.
 - Watch-outs: reward design is the hard part (students cheat), and volume matters — sim
   speed-up work pays for itself here. Imitation learning (copy good recorded drives,
   then RL-polish) is the industry's usual first rung.
+
+### Round history (parking student)
+
+| Round | Change | Result |
+|---|---|---|
+| 1-2 | Flat random spawns 3-12 m out | 2,709 attempts, **0 parks** — short lane-parallel starts were geometrically unsolvable (a car cannot move sideways) |
+| 3 | Hindsight curriculum: spawn along the ideal pull-in, including inside the box | 269 training parks; graded 7/30 — but see below |
+| 4 | Honest exam + distance-aware limits + a ladder that moves | pending the CARLA machine |
+
+**Round 3's 7/30 was not an exam.** `eval_parking.py` reused the training spawn mix, so
+roughly one attempt in six began with the van already inside the box. Round 4 makes the
+exam a fixed full distance (`--p 0.0`, the default) and writes `rl/REPORT_CARD.md` plus
+`rl/eval_runs.csv` into the repo, so the number is reproducible and comparable.
+
+**Round 4's three changes:**
+1. *Room to stray is measured from where the attempt started.* A full-distance start is
+   already ~16.3 m from the slot and the old flat 18 m write-off left under 2 m of slack —
+   one bad second of steering ended the attempt before it had driven anywhere.
+2. *Time allowed scales with the distance to cover* (12 s + 2 s/m, capped at 60 s) instead
+   of a flat 30 s for every attempt.
+3. *The difficulty ladder moves.* Rounds 1-3 drew all six difficulties with equal chance
+   for ever, so a third of every run re-proved mastered lessons. A `Curriculum` now holds a
+   focus rung, steps out when the recent success rate passes 55%, eases back below 15%, and
+   mixes in 25% easy revision so old skills are not forgotten. A student that keeps winning
+   walks from "already in the box" to the full exam in ~250 attempts; one that plateaus
+   around 45% takes 500-2,000 and is carried up by variance rather than held for ever.

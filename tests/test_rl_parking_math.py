@@ -82,3 +82,105 @@ def test_being_inside_the_box_pays_even_while_moving():
     outside_moving, _, _ = step_outcome(4.0, 0.0, 0.0, 1.0, 4.5, 0.0, 0.0, 5.0, False)
     assert not done
     assert inside_moving > outside_moving + 1.0
+
+
+# ---------------------------------------------------------------------------
+# Round 4: honest distance limits, honest time, and a ladder that moves
+# ---------------------------------------------------------------------------
+import random
+
+from rl.parking_math import (Curriculum, LANE_START_M, OUT_OF_BOUNDS_M,
+                             bounds_for, spawn_pose, timeout_for)
+
+
+def test_far_start_is_not_disqualified_for_barely_moving():
+    """Rounds 1-3 bug: a full-distance attempt begins ~16.3 m out and the flat
+    18 m limit ended it after under 2 m of drift. The room must be measured
+    from where THIS attempt started."""
+    start = 16.3
+    _, done_old, info_old = step_outcome(-19.0, 0.5, 0.0, 1.0, 18.5, 0.0, 0.0,
+                                         3.0, False)
+    assert done_old and info_old["result"] == "out_of_bounds", "old flat limit"
+    _, done_new, info_new = step_outcome(-19.0, 0.5, 0.0, 1.0, 18.5, 0.0, 0.0,
+                                         3.0, False, bounds_m=bounds_for(start))
+    assert not done_new and info_new["result"] == "driving"
+
+
+def test_bounds_never_shrink_below_the_old_floor():
+    assert bounds_for(2.0) == OUT_OF_BOUNDS_M
+    assert bounds_for(LANE_START_M) > LANE_START_M + 5.0
+
+
+def test_time_allowed_grows_with_the_distance_to_cover():
+    assert timeout_for(0.0) < timeout_for(8.0) < timeout_for(LANE_START_M)
+    assert timeout_for(999.0) <= 60.0, "but not unlimited"
+
+
+def test_spawn_pose_slides_from_the_box_to_the_lane():
+    lane = (10.0, 0.0, 0.0)
+    slot = (26.0, -3.0, 0.0)
+    x1, y1, _ = spawn_pose(1.0, *lane, *slot)
+    assert (round(x1, 6), round(y1, 6)) == slot[:2], "p=1 starts in the box"
+    x0, y0, _ = spawn_pose(0.0, *lane, *slot)
+    assert (round(x0, 6), round(y0, 6)) == lane[:2], "p=0 is the full exam"
+    xm, ym, _ = spawn_pose(0.5, *lane, *slot)
+    assert lane[0] < xm < slot[0] and slot[1] < ym < lane[1]
+
+
+def test_the_exam_default_is_the_hardest_rung():
+    assert Curriculum.LEVELS[0] == 1.0 and Curriculum.LEVELS[-1] == 0.0
+
+
+def test_ladder_climbs_when_the_student_keeps_winning():
+    c = Curriculum(window=4)
+    assert c.focus == 0
+    moved = [c.record(c.focus_p, True) for _ in range(4)]
+    assert moved[-1] == 1 and c.focus == 1
+
+
+def test_ladder_eases_back_when_the_student_keeps_losing():
+    c = Curriculum(window=4, start_level=2)
+    moved = [c.record(c.focus_p, False) for _ in range(4)]
+    assert moved[-1] == 1 and c.focus == 1
+
+
+def test_a_middling_score_holds_the_level():
+    c = Curriculum(window=4, start_level=2)
+    for parked in (True, False, True, False):
+        c.record(c.focus_p, parked)
+    assert c.focus == 2
+
+
+def test_review_runs_never_move_the_ladder():
+    """Easy revision attempts must not be counted as mastering the hard rung."""
+    c = Curriculum(window=4, start_level=3)
+    easier = Curriculum.LEVELS[0]
+    for _ in range(20):
+        assert c.record(easier, True) is None
+    assert c.focus == 3
+
+
+def test_the_ladder_stops_at_both_ends():
+    top = Curriculum(window=4, start_level=len(Curriculum.LEVELS) - 1)
+    for _ in range(20):
+        top.record(top.focus_p, True)
+    assert top.focus == len(Curriculum.LEVELS) - 1
+    bottom = Curriculum(window=4)
+    for _ in range(20):
+        bottom.record(bottom.focus_p, False)
+    assert bottom.focus == 0
+
+
+def test_the_easiest_rung_has_nothing_to_revise():
+    c = Curriculum(start_level=0, review_p=1.0)
+    rng = random.Random(1)
+    assert all(c.next_p(rng) == 1.0 for _ in range(20))
+
+
+def test_revision_always_picks_an_easier_rung_than_the_focus():
+    c = Curriculum(start_level=3, review_p=1.0)
+    rng = random.Random(1)
+    focus = c.focus_p
+    for _ in range(50):
+        p = c.next_p(rng)
+        assert p != focus and p > focus, "revision must be easier, never harder"

@@ -1,13 +1,19 @@
 """
 Overnight trainer for the RL parking student.
 
-    python rl\\train_parking.py                # fresh training (400k steps)
-    python rl\\train_parking.py --resume       # continue from the checkpoint
+    python rl\\train_parking.py                    # fresh training (400k steps)
+    python rl\\train_parking.py --resume           # continue from the checkpoint
     python rl\\train_parking.py --steps 100000
+    python rl\\train_parking.py --resume --start-level 3
+
+Difficulty is no longer a fixed random mix: a Curriculum starts at "already in
+the box, just stop" and steps out towards the full 16 m lane start as the
+recent success rate passes 55%. --start-level skips straight to a harder rung
+when resuming a student that already mastered the easy ones.
 
 Writes:
     rl/models/parking_ppo.zip         latest checkpoint (every ~10k steps)
-    rl/train_log.csv                  per-episode: steps, reward, result
+    rl/train_log.csv                  per-episode: steps, reward, result, difficulty
 Run INSTEAD of the main van program (it owns the simulator while training).
 """
 import argparse
@@ -22,6 +28,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
 from rl.parking_env import CarlaParkingEnv
+from rl.parking_math import Curriculum
 
 MODEL = os.path.join(os.path.dirname(__file__), "models", "parking_ppo.zip")
 LOG = os.path.join(os.path.dirname(__file__), "train_log.csv")
@@ -37,7 +44,8 @@ class EpisodeLogger(BaseCallback):
         self._f = open(LOG, "a", newline="")
         self._w = csv.writer(self._f)
         if new:
-            self._w.writerow(["wall_s", "steps", "episode", "reward", "result"])
+            self._w.writerow(["wall_s", "steps", "episode", "reward", "result",
+                              "p", "start_dist_m"])
 
     def _on_step(self):
         for info in self.locals.get("infos", []):
@@ -46,11 +54,13 @@ class EpisodeLogger(BaseCallback):
                 self._episodes += 1
                 self._w.writerow([int(time.time() - self._t0), self.num_timesteps,
                                   self._episodes, round(ep["r"], 1),
-                                  info.get("result", "?")])
+                                  info.get("result", "?"),
+                                  info.get("p", ""), info.get("start_dist", "")])
                 self._f.flush()
                 if self._episodes % 25 == 0:
                     print(f"[train] {self._episodes} episodes, "
-                          f"{self.num_timesteps} steps, last reward {ep['r']:.0f}")
+                          f"{self.num_timesteps} steps, last reward {ep['r']:.0f}, "
+                          f"difficulty p={info.get('p')}")
         if self.num_timesteps - self._last_save >= 10000:
             self._last_save = self.num_timesteps
             self.model.save(MODEL)
@@ -62,10 +72,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", type=int, default=400000)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--start-level", type=int, default=0,
+                    help="curriculum rung to begin on (0 = easiest, 5 = full distance)")
     a = ap.parse_args()
 
     os.makedirs(os.path.dirname(MODEL), exist_ok=True)
-    env = CarlaParkingEnv()
+    curriculum = Curriculum(start_level=a.start_level)
+    env = CarlaParkingEnv(curriculum=curriculum)
+    print(f"[train] curriculum: {curriculum.describe()}")
     try:
         if a.resume and os.path.exists(MODEL):
             print(f"[train] resuming from {MODEL}")
@@ -77,6 +91,7 @@ def main():
                     reset_num_timesteps=not a.resume)
         model.save(MODEL)
         print(f"[train] DONE — model at {MODEL}")
+        print(f"[train] curriculum ended at: {curriculum.describe()}")
     finally:
         env.close()
 

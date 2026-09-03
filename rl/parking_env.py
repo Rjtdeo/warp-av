@@ -1,10 +1,15 @@
 """
 CARLA practice arena for the RL parking student.
 
-Each episode: the van appears on the driving lane ~9-14 m before a randomly
+Each episode the van appears somewhere along the ideal pull-in for a randomly
 chosen real parking bay, and must end fully inside a 7 m slot there, parallel
-and stopped. Runs CARLA in synchronous fast-forward while training and puts
-the world back to normal on exit.
+and stopped. How far back it starts is the DIFFICULTY: a Curriculum walks the
+student from "already in the box, just stop" out to the full 16 m lane start
+as its success rate climbs. Runs CARLA in synchronous fast-forward while
+training and puts the world back to normal on exit.
+
+Pass exam_p to freeze the difficulty instead (exam_p=0.0 is the real exam:
+every attempt from the full distance).
 
 IMPORTANT: run this INSTEAD of the main van program, never alongside it —
 both would fight over the simulator clock.
@@ -24,7 +29,8 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
-                             SLOT_LEN, SLOT_WID)
+                             spawn_pose, bounds_for, timeout_for, Curriculum,
+                             LANE_START_M, SLOT_LEN, SLOT_WID)
 
 FIXED_DT = 0.1
 MAX_SPEED = 3.0
@@ -33,9 +39,12 @@ MAX_SPEED = 3.0
 class CarlaParkingEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, host="localhost", port=2000, seed=7):
+    def __init__(self, host="localhost", port=2000, seed=7, exam_p=None,
+                 curriculum=None):
         super().__init__()
         self.rng = random.Random(seed)
+        self.exam_p = exam_p
+        self.curriculum = None if exam_p is not None else (curriculum or Curriculum())
         self.client = carla.Client(host, port)
         self.client.set_timeout(15.0)
         self.world = self.client.get_world()
@@ -65,6 +74,10 @@ class CarlaParkingEnv(gym.Env):
         self._t = 0.0
         self._steer_prev = 0.0
         self._dist_prev = 0.0
+        self._p = 0.0
+        self._start_dist = 0.0
+        self._bounds_m = None
+        self._timeout_s = 30.0
 
     # ------------------------------------------------------------------
     def _scan_bays(self):
@@ -104,6 +117,11 @@ class CarlaParkingEnv(gym.Env):
     def _on_col(self, _event):
         self._collided = True
 
+    def _next_p(self):
+        if self.exam_p is not None:
+            return self.exam_p
+        return self.curriculum.next_p(self.rng)
+
     # ------------------------------------------------------------------
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -112,24 +130,18 @@ class CarlaParkingEnv(gym.Env):
         self._t = 0.0
         self._steer_prev = 0.0
 
+        p = (options or {}).get("p")
+        if p is None:
+            p = self._next_p()      # only draw when the caller did not fix it
         for _ in range(40):
             drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
-            back = drive_wp.previous(16.0)
+            back = drive_wp.previous(LANE_START_M)
             if not back:
                 continue
             lane_tf = back[0].transform
-            # Hindsight curriculum: spawn ALONG the ideal pull-in, from
-            # "already parked, just stop straight" (p=1: guaranteed prize)
-            # to the full 16 m lane-start exam (p=0). Round 1+2 lesson:
-            # a car cannot move sideways — short lane-starts were
-            # physically unsolvable and the student never tasted success.
-            p = self.rng.choice([1.0, 0.85, 0.65, 0.45, 0.25, 0.0])
-            lx, ly = lane_tf.location.x, lane_tf.location.y
-            lyaw = math.radians(lane_tf.rotation.yaw)
-            px = sx * p + lx * (1.0 - p)
-            py = sy * p + ly * (1.0 - p)
-            pyaw = math.atan2(math.sin(syaw) * p + math.sin(lyaw) * (1 - p),
-                              math.cos(syaw) * p + math.cos(lyaw) * (1 - p))
+            px, py, pyaw = spawn_pose(
+                p, lane_tf.location.x, lane_tf.location.y,
+                math.radians(lane_tf.rotation.yaw), sx, sy, syaw)
             tf = carla.Transform(
                 carla.Location(px, py, lane_tf.location.z + 0.3),
                 carla.Rotation(yaw=math.degrees(pyaw) + self.rng.uniform(-3, 3)))
@@ -149,6 +161,12 @@ class CarlaParkingEnv(gym.Env):
         obs = self._obs()
         ax, ay, _ = self._slot_frame()
         self._dist_prev = math.hypot(ax, ay)
+        # Room to stray and time allowed both scale with where this attempt
+        # began — a flat limit punished far starts for existing.
+        self._p = p
+        self._start_dist = self._dist_prev
+        self._bounds_m = bounds_for(self._start_dist)
+        self._timeout_s = timeout_for(self._start_dist)
         return np.array(obs, dtype=np.float32), {}
 
     def _pose(self):
@@ -180,9 +198,18 @@ class CarlaParkingEnv(gym.Env):
         _, _, _, speed = self._pose()
         reward, done, info = step_outcome(
             ax, ay, herr, speed, self._dist_prev, steer, self._steer_prev,
-            self._t, self._collided)
+            self._t, self._collided, timeout_s=self._timeout_s,
+            bounds_m=self._bounds_m)
         self._dist_prev = math.hypot(ax, ay)
         self._steer_prev = steer
+        if done:
+            info["p"] = round(self._p, 2)
+            info["start_dist"] = round(self._start_dist, 1)
+            if self.curriculum is not None:
+                moved = self.curriculum.record(self._p,
+                                               info.get("result") == "parked")
+                if moved is not None:
+                    print(f"[curriculum] {self.curriculum.describe()}")
         obs = np.array(self._obs(), dtype=np.float32)
         return obs, reward, done, False, info
 

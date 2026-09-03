@@ -1,5 +1,6 @@
 """
-Pure math for the RL parking student: observations and rewards.
+Pure math for the RL parking student: what it sees, what it scores, and how
+hard the next attempt should be.
 
 Everything is expressed in the SLOT's own frame (x along the slot, y across
 it, origin at the slot centre) so every parking bay in every town looks
@@ -17,9 +18,13 @@ VAN_HALF_LEN = 2.35
 VAN_HALF_WID = 0.98
 
 SUCCESS_SPEED = 0.3          # must be (nearly) stopped to count as parked
-OUT_OF_BOUNDS_M = 18.0       # truly lost (the van STARTS ~11 m from the slot)
+OUT_OF_BOUNDS_M = 18.0       # FLOOR only — see bounds_for(). The real limit is
+                             # measured from where THIS attempt started, because
+                             # a full-distance start is already ~16.3 m out.
 OVERSHOOT_M = 5.0            # drove past the slot -> attempt over
 LATERAL_LOST_M = 7.0         # wandered sideways off the road -> attempt over
+
+LANE_START_M = 16.0          # how far back down the lane a p=0 attempt begins
 
 
 def to_slot_frame(van_x, van_y, van_yaw, slot_x, slot_y, slot_yaw):
@@ -60,17 +65,21 @@ def van_corners_in_slot(ax, ay, herr):
 
 
 def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
-                 collided, timeout_s=30.0):
+                 collided, timeout_s=30.0, bounds_m=None):
     """One training step's (reward, done, info).
 
     dist_prev is last step's distance-to-centre (progress shaping).
+    bounds_m is how far out this attempt is allowed to stray; pass
+    bounds_for(start_dist) so a far start is not disqualified for barely
+    moving. None keeps the old fixed limit.
     """
+    limit = OUT_OF_BOUNDS_M if bounds_m is None else bounds_m
     dist = math.hypot(ax, ay)
     inside, m_len, m_wid = van_corners_in_slot(ax, ay, herr)
 
     if collided:
         return -200.0, True, {"result": "collision"}
-    if dist > OUT_OF_BOUNDS_M or abs(ay) > LATERAL_LOST_M:
+    if dist > limit or abs(ay) > LATERAL_LOST_M:
         return -50.0, True, {"result": "out_of_bounds"}
     if ax > OVERSHOOT_M:
         return -40.0, True, {"result": "overshoot"}
@@ -94,3 +103,93 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     if inside:
         r += 1.5          # being IN the box pays every moment (taste of success)
     return r, False, {"result": "driving", "dist": round(dist, 2)}
+
+
+# ---------------------------------------------------------------------------
+# Where an attempt starts, how far it may stray, and how long it gets
+# ---------------------------------------------------------------------------
+
+def spawn_pose(p, lane_x, lane_y, lane_yaw, slot_x, slot_y, slot_yaw):
+    """Start pose for difficulty p, sliding along the ideal pull-in.
+
+    p = 1.0 -> already in the box, only needs to stop (the free lesson)
+    p = 0.0 -> the full exam: back at the lane start, must drive and turn in
+    """
+    p = max(0.0, min(1.0, p))
+    x = slot_x * p + lane_x * (1.0 - p)
+    y = slot_y * p + lane_y * (1.0 - p)
+    yaw = math.atan2(math.sin(slot_yaw) * p + math.sin(lane_yaw) * (1.0 - p),
+                     math.cos(slot_yaw) * p + math.cos(lane_yaw) * (1.0 - p))
+    return x, y, yaw
+
+
+def bounds_for(start_dist_m, slack_m=8.0, floor_m=OUT_OF_BOUNDS_M):
+    """How far from the slot this attempt may stray before it is written off.
+
+    Round 1-3 used a flat 18 m for every attempt. A full-distance start is
+    already ~16.3 m out, so the student had under 2 m of room: one wrong
+    second of steering ended the attempt before it had driven anywhere.
+    """
+    return max(floor_m, start_dist_m + slack_m)
+
+
+def timeout_for(start_dist_m, base_s=12.0, per_m_s=2.0, cap_s=60.0):
+    """Seconds allowed. A far start needs longer than a nudge-in-the-box."""
+    return min(cap_s, base_s + per_m_s * max(0.0, start_dist_m))
+
+
+class Curriculum:
+    """Picks the next attempt's difficulty, and gets harder as the student wins.
+
+    Rounds 1-3 drew all six difficulties with equal chance for ever, so a third
+    of every training run was spent re-proving lessons already mastered. Here a
+    'focus' level walks down the ladder once the recent success rate is good
+    enough, with occasional easy runs mixed in so old skills are not forgotten.
+    """
+
+    LEVELS = (1.0, 0.85, 0.65, 0.45, 0.25, 0.0)
+
+    def __init__(self, window=40, promote_at=0.55, demote_at=0.15,
+                 review_p=0.25, start_level=0):
+        self.window = window
+        self.promote_at = promote_at
+        self.demote_at = demote_at
+        self.review_p = review_p
+        self.focus = max(0, min(len(self.LEVELS) - 1, start_level))
+        self._recent = []
+
+    @property
+    def focus_p(self):
+        return self.LEVELS[self.focus]
+
+    def next_p(self, rng):
+        """Difficulty for the next attempt."""
+        if self.focus > 0 and rng.random() < self.review_p:
+            return self.LEVELS[rng.randrange(self.focus)]   # revisit an easier one
+        return self.focus_p
+
+    def record(self, p, parked):
+        """Log an attempt. Returns the new focus level if the ladder moved."""
+        if p != self.focus_p:
+            return None                    # review runs never move the ladder
+        self._recent.append(bool(parked))
+        if len(self._recent) < self.window:
+            return None
+        rate = sum(self._recent) / float(len(self._recent))
+        if rate >= self.promote_at and self.focus < len(self.LEVELS) - 1:
+            self.focus += 1
+        elif rate <= self.demote_at and self.focus > 0:
+            self.focus -= 1
+        else:
+            # no move: slide the window so we re-check soon instead of waiting
+            # for another full window of attempts
+            self._recent = self._recent[len(self._recent) // 2:]
+            return None
+        self._recent = []
+        return self.focus
+
+    def describe(self):
+        seen = len(self._recent)
+        rate = (sum(self._recent) / float(seen)) if seen else 0.0
+        return (f"level {self.focus + 1}/{len(self.LEVELS)} (p={self.focus_p:.2f}), "
+                f"{seen} recent at this level, {rate * 100:.0f}% parked")
