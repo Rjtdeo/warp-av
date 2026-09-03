@@ -79,3 +79,22 @@ def test_a_second_rotation_does_not_clobber_the_first_backup(tmp_path):
 
 def test_header_of_is_quiet_about_a_missing_file(tmp_path):
     assert header_of(str(tmp_path / "nope.csv")) is None
+
+
+def test_a_fresh_run_never_appends_to_the_previous_runs_log(tmp_path):
+    """Round 6 appended to round 5's log because the columns matched: two runs
+    in one CSV with the episode counter restarting mid-file. A new run must
+    always start its own file, whatever the old header looks like."""
+    log = str(tmp_path / "train_log.csv")
+    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1"]])
+    needs_header, backup = prepare_log(log, fresh=True)
+    assert needs_header and backup and os.path.exists(backup)
+    assert not os.path.exists(log)
+    with open(backup, newline="") as f:
+        assert len(list(csv.reader(f))) == 2, "the old run is kept intact"
+
+
+def test_a_resumed_run_keeps_appending_to_its_own_log(tmp_path):
+    log = str(tmp_path / "train_log.csv")
+    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1"]])
+    assert prepare_log(log, fresh=False) == (False, None)

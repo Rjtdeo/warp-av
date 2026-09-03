@@ -36,7 +36,7 @@ LOG = os.path.join(os.path.dirname(__file__), "train_log.csv")
 
 
 class EpisodeLogger(BaseCallback):
-    def __init__(self):
+    def __init__(self, fresh=True):
         super().__init__()
         self._t0 = time.time()
         self._episodes = 0
@@ -46,10 +46,10 @@ class EpisodeLogger(BaseCallback):
         # makes the WHOLE log unreadable (pandas raises, csv.DictReader silently
         # drops p and start_dist). Check the header, not just the file's
         # existence, and set a mismatched log aside instead of corrupting it.
-        new, backup = prepare_log(LOG)
+        new, backup = prepare_log(LOG, fresh=fresh)
         if backup:
-            print(f"[train] train_log.csv had an older header — kept it at "
-                  f"{backup} and started a fresh log")
+            print(f"[train] previous train_log.csv kept at {backup}; "
+                  f"this run logs to a fresh file")
         self._f = open(LOG, "a", newline="")
         self._w = csv.writer(self._f)
         if new:
@@ -95,7 +95,8 @@ def main():
         else:
             model = PPO("MlpPolicy", env, verbose=1, seed=7,
                         n_steps=1024, batch_size=256, learning_rate=3e-4)
-        model.learn(total_timesteps=a.steps, callback=EpisodeLogger(),
+        model.learn(total_timesteps=a.steps,
+                    callback=EpisodeLogger(fresh=not a.resume),
                     reset_num_timesteps=not a.resume)
         model.save(MODEL)
         print(f"[train] DONE — model at {MODEL}")

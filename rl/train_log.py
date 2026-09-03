@@ -29,17 +29,22 @@ def header_of(path):
         return None
 
 
-def prepare_log(path, columns=None):
+def prepare_log(path, columns=None, fresh=False):
     """Make `path` safe to append `columns`-shaped rows to.
 
     Returns (needs_header, backup_path). A log whose header does not match is
     moved aside rather than appended to, so the older round's rows stay
     loadable under their own header and the live log always matches its rows.
+
+    fresh=True means a NEW training run rather than a resumed one: the existing
+    log is set aside even when its header matches. Round 6 briefly appended to
+    round 5's file because the columns agreed — two runs in one CSV, with the
+    episode counter restarting in the middle. One file, one run.
     """
     columns = list(columns or COLUMNS)
     if not os.path.exists(path):
         return True, None
-    if header_of(path) == columns:
+    if not fresh and header_of(path) == columns:
         return False, None
     backup = path + ".v1.bak"
     n = 2
