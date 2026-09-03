@@ -17,6 +17,12 @@ SLOT_WID = 2.5
 VAN_HALF_LEN = 2.35
 VAN_HALF_WID = 0.98
 
+APPROACH_PAY = 8.0           # points per metre closed on the slot. Round 3 paid
+                             # 2.0, so driving the whole 16 m was worth +32 while
+                             # standing still cost -45 and a crash cost -200. The
+                             # student took the safe option and never moved: 1,626
+                             # episodes, not one failed attempt covered any ground.
+
 SUCCESS_SPEED = 0.3          # must be (nearly) stopped to count as parked
 OUT_OF_BOUNDS_M = 18.0       # FLOOR only — see bounds_for(). The real limit is
                              # measured from where THIS attempt started, because
@@ -97,7 +103,7 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
                          "herr_deg": round(math.degrees(herr), 1)}
 
     # Ongoing: reward progress, charge for time and jerky steering.
-    r = 2.0 * (dist_prev - dist)
+    r = APPROACH_PAY * (dist_prev - dist)
     r -= 0.05
     r -= 0.10 * abs(steer - steer_prev)
     if inside:
@@ -147,7 +153,14 @@ class Curriculum:
     enough, with occasional easy runs mixed in so old skills are not forgotten.
     """
 
-    LEVELS = (1.0, 0.85, 0.65, 0.45, 0.25, 0.0)
+    # Difficulty as a fraction of the way along the ideal pull-in: 0.0 is the
+    # full ~16 m exam. Rounds 1-4 started this ladder at 1.0 — the van spawned
+    # ALREADY INSIDE the box, where doing nothing scored ~220 instantly and
+    # driving would have left the box for an overshoot. Lesson one taught the
+    # exact habit the rest of the ladder needs broken, and the student never
+    # unlearned it (measured 2026-09-03: 10/10 parked at p=1.0, 0/30 at p=0.0).
+    # The easiest rung is now a genuine ~4 m pull-in.
+    LEVELS = (0.75, 0.6, 0.45, 0.3, 0.15, 0.0)
 
     def __init__(self, window=40, promote_at=0.55, demote_at=0.15,
                  review_p=0.25, start_level=0):

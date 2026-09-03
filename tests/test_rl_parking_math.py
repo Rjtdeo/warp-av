@@ -89,8 +89,9 @@ def test_being_inside_the_box_pays_even_while_moving():
 # ---------------------------------------------------------------------------
 import random
 
-from rl.parking_math import (Curriculum, LANE_START_M, OUT_OF_BOUNDS_M,
-                             bounds_for, spawn_pose, timeout_for)
+from rl.parking_math import (APPROACH_PAY, Curriculum, LANE_START_M,
+                             OUT_OF_BOUNDS_M, bounds_for, spawn_pose,
+                             timeout_for)
 
 
 def test_far_start_is_not_disqualified_for_barely_moving():
@@ -128,7 +129,27 @@ def test_spawn_pose_slides_from_the_box_to_the_lane():
 
 
 def test_the_exam_default_is_the_hardest_rung():
-    assert Curriculum.LEVELS[0] == 1.0 and Curriculum.LEVELS[-1] == 0.0
+    assert Curriculum.LEVELS[-1] == 0.0
+
+
+def test_no_rung_ever_spawns_the_van_already_parked():
+    """The bug that wasted rounds 1-4. A p=1.0 rung puts the van inside the box
+    at a standstill, where doing nothing scores ~220 at once and driving would
+    only overshoot. Measured 2026-09-03: 10/10 parked at p=1.0, 0/30 at p=0.0 —
+    the student had learned to sit still and nothing else."""
+    assert max(Curriculum.LEVELS) <= 0.8, "the easiest rung must still need driving"
+    lane, slot = (-16.0, -3.0, 0.0), (0.0, 0.0, 0.0)
+    for p in Curriculum.LEVELS:
+        x, y, _ = spawn_pose(p, *lane, *slot)
+        assert math.hypot(x, y) > 3.0, f"rung p={p} starts too close to be a lesson"
+
+
+def test_approaching_the_slot_is_worth_more_than_standing_still():
+    """Standing still for a 30 s episode costs about -45. Closing the full
+    distance must beat that comfortably, or not moving stays the rational play."""
+    approach = APPROACH_PAY * 16.3
+    idle_cost = 0.05 * 300 + 30.0
+    assert approach > idle_cost * 2, "driving must clearly beat doing nothing"
 
 
 def test_ladder_climbs_when_the_student_keeps_winning():
@@ -174,7 +195,7 @@ def test_the_ladder_stops_at_both_ends():
 def test_the_easiest_rung_has_nothing_to_revise():
     c = Curriculum(start_level=0, review_p=1.0)
     rng = random.Random(1)
-    assert all(c.next_p(rng) == 1.0 for _ in range(20))
+    assert all(c.next_p(rng) == Curriculum.LEVELS[0] for _ in range(20))
 
 
 def test_revision_always_picks_an_easier_rung_than_the_focus():
