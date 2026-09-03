@@ -184,3 +184,36 @@ def test_revision_always_picks_an_easier_rung_than_the_focus():
     for _ in range(50):
         p = c.next_p(rng)
         assert p != focus and p > focus, "revision must be easier, never harder"
+
+
+def test_the_ladder_log_says_why_it_moved():
+    """A move is the only thing ever logged, and it also empties the window —
+    so the line must report the score that triggered it, not an empty window."""
+    c = Curriculum(window=4)
+    for _ in range(4):
+        c.record(c.focus_p, True)
+    line = c.describe()
+    assert "recent at this level" not in line, "the window is empty at this moment"
+    assert "no attempts yet" not in line, "but it is not a fresh ladder either"
+    assert "promoted" in line and "100% parked" in line and "over 4 attempts" in line
+
+
+def test_the_ladder_log_says_when_it_eased_back():
+    c = Curriculum(window=4, start_level=2)
+    for _ in range(4):
+        c.record(c.focus_p, False)
+    assert "eased back" in c.describe()
+
+
+def test_the_ladder_names_a_rung_the_same_way_the_flag_sets_it():
+    """describe() counts rungs from 1 for humans; --start-level counts from 0.
+    Reading a number out of the log and passing it back must not land one rung
+    too hard, so the line has to state the flag's own number."""
+    for level in range(len(Curriculum.LEVELS)):
+        line = Curriculum(start_level=level).describe()
+        assert f"--start-level {level}" in line
+        assert f"level {level + 1}/{len(Curriculum.LEVELS)}" in line
+
+
+def test_a_fresh_ladder_does_not_pretend_to_have_results():
+    assert "no attempts yet" in Curriculum().describe()

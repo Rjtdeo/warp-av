@@ -50,19 +50,36 @@ class CarlaParkingEnv(gym.Env):
         self.world = self.client.get_world()
         self._original_settings = self.world.get_settings()
 
-        settings = self.world.get_settings()
-        settings.synchronous_mode = True
-        settings.fixed_delta_seconds = FIXED_DT
-        self.world.apply_settings(settings)
+        # Synchronous mode is a SERVER setting and outlives this client, so if
+        # anything below raises we must put the world back before propagating —
+        # otherwise __init__ never returns, the caller's finally: env.close()
+        # never runs, and CARLA is left frozen with nobody ticking it. Every
+        # later client (trainer retry, exam, the main van program) then hangs.
+        try:
+            settings = self.world.get_settings()
+            settings.synchronous_mode = True
+            settings.fixed_delta_seconds = FIXED_DT
+            self.world.apply_settings(settings)
 
-        self.cmap = self.world.get_map()
-        self.bays = self._scan_bays()
-        if len(self.bays) < 5:
-            raise RuntimeError(f"only {len(self.bays)} usable bays found")
-        print(f"[ParkingEnv] {len(self.bays)} practice bays ready")
+            self.cmap = self.world.get_map()
+            self.bays = self._scan_bays()
+            if len(self.bays) < 5:
+                raise RuntimeError(f"only {len(self.bays)} usable bays found")
+            print(f"[ParkingEnv] {len(self.bays)} practice bays ready")
 
-        bp = self.world.get_blueprint_library().filter("vehicle.mercedes.sprinter")[0]
-        bp.set_attribute("role_name", "warp_rl")
+            bps = self.world.get_blueprint_library().filter("vehicle.mercedes.sprinter")
+            if not bps:
+                raise RuntimeError("blueprint vehicle.mercedes.sprinter is not in "
+                                   "this CARLA build")
+            bp = bps[0]
+            bp.set_attribute("role_name", "warp_rl")
+        except BaseException:
+            try:
+                self.world.apply_settings(self._original_settings)
+                print("[ParkingEnv] startup failed — world restored to normal mode")
+            except Exception:
+                pass
+            raise
         self.van = None
         self.van_bp = bp
         self.col_sensor = None

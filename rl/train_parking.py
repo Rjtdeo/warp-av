@@ -29,6 +29,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from rl.parking_env import CarlaParkingEnv
 from rl.parking_math import Curriculum
+from rl.train_log import COLUMNS, prepare_log
 
 MODEL = os.path.join(os.path.dirname(__file__), "models", "parking_ppo.zip")
 LOG = os.path.join(os.path.dirname(__file__), "train_log.csv")
@@ -40,12 +41,19 @@ class EpisodeLogger(BaseCallback):
         self._t0 = time.time()
         self._episodes = 0
         self._last_save = 0
-        new = not os.path.exists(LOG)
+        # Round 4 widened this log from 5 columns to 7. The CARLA machine still
+        # has the rounds 1-3 file, and appending wide rows under a narrow header
+        # makes the WHOLE log unreadable (pandas raises, csv.DictReader silently
+        # drops p and start_dist). Check the header, not just the file's
+        # existence, and set a mismatched log aside instead of corrupting it.
+        new, backup = prepare_log(LOG)
+        if backup:
+            print(f"[train] train_log.csv had an older header — kept it at "
+                  f"{backup} and started a fresh log")
         self._f = open(LOG, "a", newline="")
         self._w = csv.writer(self._f)
         if new:
-            self._w.writerow(["wall_s", "steps", "episode", "reward", "result",
-                              "p", "start_dist_m"])
+            self._w.writerow(COLUMNS)
 
     def _on_step(self):
         for info in self.locals.get("infos", []):

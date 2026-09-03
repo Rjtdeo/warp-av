@@ -95,10 +95,14 @@ def main():
     if not os.path.exists(MODEL):
         sys.exit(f"no trained model at {MODEL} — train one first")
 
-    env = CarlaParkingEnv(seed=a.seed, exam_p=a.p)   # different bays than training
+    # Load the brain BEFORE touching CARLA. A half-written checkpoint (trainer
+    # killed mid-save) makes PPO.load raise, and if the world were already in
+    # synchronous mode by then nothing would ever tick it again — the exam would
+    # take every other CARLA client down with it.
     model = PPO.load(MODEL)
     mode = "mixed difficulty" if a.mixed else f"full distance (p={a.p:.2f})"
     print(f"[eval] {mode}, {a.episodes} attempts")
+    env = CarlaParkingEnv(seed=a.seed, exam_p=a.p)   # different bays than training
     results = []
     try:
         for ep in range(a.episodes):

@@ -157,6 +157,7 @@ class Curriculum:
         self.review_p = review_p
         self.focus = max(0, min(len(self.LEVELS) - 1, start_level))
         self._recent = []
+        self.last_move = None
 
     @property
     def focus_p(self):
@@ -175,7 +176,9 @@ class Curriculum:
         self._recent.append(bool(parked))
         if len(self._recent) < self.window:
             return None
-        rate = sum(self._recent) / float(len(self._recent))
+        seen = len(self._recent)
+        rate = sum(self._recent) / float(seen)
+        was = self.focus
         if rate >= self.promote_at and self.focus < len(self.LEVELS) - 1:
             self.focus += 1
         elif rate <= self.demote_at and self.focus > 0:
@@ -183,13 +186,28 @@ class Curriculum:
         else:
             # no move: slide the window so we re-check soon instead of waiting
             # for another full window of attempts
-            self._recent = self._recent[len(self._recent) // 2:]
+            self._recent = self._recent[seen // 2:]
             return None
+        # Remember WHY we moved. The move is the only moment anything gets
+        # logged, and it is also the moment the window is emptied — without
+        # this the log line would for ever read "0 recent, 0% parked".
+        self.last_move = {"from": was, "to": self.focus, "rate": rate, "n": seen}
         self._recent = []
         return self.focus
 
     def describe(self):
-        seen = len(self._recent)
-        rate = (sum(self._recent) / float(seen)) if seen else 0.0
-        return (f"level {self.focus + 1}/{len(self.LEVELS)} (p={self.focus_p:.2f}), "
-                f"{seen} recent at this level, {rate * 100:.0f}% parked")
+        # Name the rung the same way --start-level does (0-indexed) as well as
+        # human 1-of-6, so a number read out of the log cannot be fed back in
+        # one rung too hard.
+        head = (f"level {self.focus + 1}/{len(self.LEVELS)} "
+                f"(--start-level {self.focus}, p={self.focus_p:.2f})")
+        if self._recent:
+            seen = len(self._recent)
+            rate = sum(self._recent) / float(seen)
+            return f"{head}, {seen} recent at this level, {rate * 100:.0f}% parked"
+        if self.last_move:
+            m = self.last_move
+            verb = "promoted" if m["to"] > m["from"] else "eased back"
+            return (f"{head}, just {verb} after {m['rate'] * 100:.0f}% parked "
+                    f"over {m['n']} attempts")
+        return f"{head}, no attempts yet"
