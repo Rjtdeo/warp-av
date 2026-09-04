@@ -72,7 +72,7 @@ class CarlaParkingEnv(gym.Env):
     def __init__(self, host="localhost", port=2000, seed=7, exam_p=None,
                  curriculum=None, lane_start_m=LANE_START_M, yaw_noise_deg=3.0,
                  lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0,
-                 neighbour_p=0.5, neighbour_ahead_p=0.3):
+                 neighbour_p=0.5, neighbour_ahead_p=0.3, use_feelers=True):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
         yaw_noise_deg    random heading error at spawn, +/- (train: 3)
@@ -86,7 +86,9 @@ class CarlaParkingEnv(gym.Env):
         neighbour_p      chance per attempt of a REAL parked car in the bay
                          behind the target (only when the van starts far enough
                          back not to be born touching it)
-        neighbour_ahead_p  chance of one in the bay ahead"""
+        neighbour_ahead_p  chance of one in the bay ahead
+        use_feelers      False reproduces the round-6 five-number view, so an
+                         older brain can sit the same exam as a newer one"""
         super().__init__()
         self.rng = random.Random(seed)
         self.exam_p = exam_p
@@ -99,6 +101,7 @@ class CarlaParkingEnv(gym.Env):
         self.neighbour_p = float(neighbour_p)
         self.neighbour_ahead_p = float(neighbour_ahead_p)
         self.neighbours = []
+        self.use_feelers = bool(use_feelers)
         self._obs_queue = []            # for obs_delay
         self._obs_last = None           # for obs_dropout
         self._spawn_yaw_off = 0.0
@@ -162,8 +165,8 @@ class CarlaParkingEnv(gym.Env):
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         # 5 pose numbers + 4 feelers (see parking_math.feelers)
-        self.observation_space = spaces.Box(low=-2.0, high=2.0,
-                                            shape=(5 + len(FEELER_SECTORS),),
+        n_obs = 5 + (len(FEELER_SECTORS) if self.use_feelers else 0)
+        self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(n_obs,),
                                             dtype=np.float32)
         self.slot = None
         self._t = 0.0
@@ -344,8 +347,9 @@ class CarlaParkingEnv(gym.Env):
             y += self.rng.gauss(0.0, sp)
             yaw += math.radians(self.rng.gauss(0.0, syaw))
             speed = max(0.0, speed + self.rng.gauss(0.0, sv))
-        obs = (observation(x, y, yaw, speed, self._steer_prev, *self.slot)
-               + feelers(x, y, yaw, self._obstacle_points()))
+        obs = observation(x, y, yaw, speed, self._steer_prev, *self.slot)
+        if self.use_feelers:
+            obs = obs + feelers(x, y, yaw, self._obstacle_points())
         if self.obs_delay > 0:
             # The world moves on; the student sees where things WERE.
             self._obs_queue.append(obs)

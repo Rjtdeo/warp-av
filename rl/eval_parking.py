@@ -114,26 +114,33 @@ def main():
                     help="chance of a real parked car in the bay BEHIND the target (training uses 0.5)")
     ap.add_argument("--neighbour-ahead-p", type=float, default=0.0,
                     help="chance of one in the bay AHEAD (training uses 0.3)")
+    ap.add_argument("--model", type=str, default="",
+                    help="brain file to examine (default rl/models/parking_ppo.zip)")
+    ap.add_argument("--no-feelers", action="store_true",
+                    help="give the student the round-6 five-number view (needed for brains trained before round 7)")
     ap.add_argument("--tag", type=str, default="",
                     help="name this exam; rows go to rl/exams/<date>_<tag>.csv and the main report card is left alone")
     a = ap.parse_args()
     obs_noise = tuple(float(v) for v in a.obs_noise.split(",")) if a.obs_noise else None
 
-    if not os.path.exists(MODEL):
-        sys.exit(f"no trained model at {MODEL} — train one first")
+    model_path = a.model or MODEL
+    if not os.path.exists(model_path):
+        sys.exit(f"no trained model at {model_path} — train one first")
 
     # Load the brain BEFORE touching CARLA. A half-written checkpoint (trainer
     # killed mid-save) makes PPO.load raise, and if the world were already in
     # synchronous mode by then nothing would ever tick it again — the exam would
     # take every other CARLA client down with it.
-    model = PPO.load(MODEL)
+    model = PPO.load(model_path)
+    print(f"[eval] brain: {model_path}")
     mode = "mixed difficulty" if a.mixed else f"full distance (p={a.p:.2f})"
     print(f"[eval] {mode}, {a.episodes} attempts")
     env = CarlaParkingEnv(seed=a.seed, exam_p=a.p, lane_start_m=a.lane_start,
                           yaw_noise_deg=a.yaw_noise, lateral_noise_m=a.lateral_noise,
                           obs_noise=obs_noise, obs_dropout=a.obs_dropout,
                           obs_delay=a.obs_delay, neighbour_p=a.neighbour_p,
-                          neighbour_ahead_p=a.neighbour_ahead_p)   # different bays than training
+                          neighbour_ahead_p=a.neighbour_ahead_p,
+                          use_feelers=not a.no_feelers)   # different bays than training
     if a.tag:
         print(f"[eval] harder-exam settings: lane start {a.lane_start} m, yaw +/-{a.yaw_noise} deg, "
               f"lateral +/-{a.lateral_noise} m, obs noise {obs_noise}, "
