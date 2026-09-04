@@ -386,3 +386,33 @@ def test_a_car_behind_is_only_placed_when_the_van_starts_clear_of_it():
     front bumper at about -8.7 m, inside that car. It must start farther back."""
     assert not neighbour_behind_fits(11.0)
     assert neighbour_behind_fits(13.5)
+
+
+from rl.parking_math import IDLE_COST, neighbour_ahead_fits
+
+
+def test_standing_still_outside_the_box_costs_more_than_creeping():
+    """Round 7a froze within 1,200 attempts once a car ahead made overshoots
+    into crashes: sitting still was the cheap option. It must not be."""
+    still, _, _ = step_outcome(-4.0, -0.7, 0.0, 0.0, 4.06, 0.0, 0.0, 3.0, False)
+    creeping, _, _ = step_outcome(-4.0, -0.7, 0.0, 0.5, 4.06, 0.0, 0.0, 3.0, False)
+    assert creeping - still >= IDLE_COST - 1e-9
+
+
+def test_a_whole_attempt_of_standing_still_costs_about_a_crash():
+    """Easiest rung: ~200 steps. (0.05 + IDLE_COST) * 200 + 30 should land near
+    the -80 a crash costs, so freezing is never the safe play."""
+    total = -(0.05 + IDLE_COST) * 200 - 30.0
+    assert total <= -75.0
+
+
+def test_being_inside_the_box_is_exempt_from_the_idle_charge():
+    inside_still, _, _ = step_outcome(0.0, 0.0, 0.0, 0.31, 0.5, 0.0, 0.0, 3.0, False)
+    outside_still, _, _ = step_outcome(-4.0, -0.7, 0.0, 0.1, 4.06, 0.0, 0.0, 3.0, False)
+    assert inside_still > outside_still
+
+
+def test_a_car_ahead_only_appears_once_there_is_an_approach_to_practise():
+    assert not neighbour_ahead_fits(4.1)
+    assert not neighbour_ahead_fits(6.5)
+    assert neighbour_ahead_fits(9.0)
