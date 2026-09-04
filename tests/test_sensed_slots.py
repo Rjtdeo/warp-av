@@ -79,8 +79,10 @@ def test_a_slot_on_the_bus_stop_kerb_is_rejected():
 
 def test_a_slot_slightly_moved_along_or_across_is_accepted():
     ref = dict(x=0.0, y=0.0, yaw=0.0)
-    assert consistent_with(ref, dict(x=7.0, y=0.4, yaw=math.radians(4))) is None
-    assert consistent_with(ref, dict(x=-6.0, y=-1.2, yaw=0.0)) is None
+    assert consistent_with(ref, dict(x=3.5, y=0.4, yaw=math.radians(4))) is None
+    assert consistent_with(ref, dict(x=-3.0, y=-1.2, yaw=0.0)) is None
+    assert consistent_with(ref, dict(x=7.0, y=0.0, yaw=0.0)) is not None, "a whole slot along is a different bay"
+    assert consistent_with(ref, dict(x=7.0, y=0.0, yaw=0.0), max_along_m=12.0) is None
 
 
 def test_a_slot_far_along_or_twisted_is_rejected():

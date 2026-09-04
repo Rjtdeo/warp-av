@@ -2012,7 +2012,13 @@ class WarpAV:
             return
         sl = slots[new_idx]
         # The lidar sharpens the bay; it does not move it to the next kerb along.
-        why = consistent_with(sp, sl)
+        # A free map target may only be sharpened (about one slot along); a
+        # TAKEN map target may be swapped for a free lidar slot farther along.
+        map_slots = getattr(self, "_parking_slots", None) or []
+        target_taken = bool(map_slots and sp.get("slot_index") is not None
+                            and sp["slot_index"] < len(map_slots)
+                            and map_slots[sp["slot_index"]].get("occupied"))
+        why = consistent_with(sp, sl, max_along_m=12.0 if target_taken else 4.0)
         if why:
             n = getattr(self, "_lidar_rescan_tries", 0) + 1
             self._lidar_rescan_tries = n
