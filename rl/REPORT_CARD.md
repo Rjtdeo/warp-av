@@ -85,3 +85,10 @@ errors and noisy inputs, which is a real failure. One (harder #32) was a
 decorative car 30 m back, outside the 18 m keep-clear zone the arena checks;
 starts beyond ~24 m are past what the arena was cleaned for. And the student
 still observes no obstacles at all; nothing in these exams changes that.
+
+**Harder tier, repeated (20:36-20:43).** Exact re-run with the same seed: 42/60 again,
+identical outcome on all 60 attempts - the exam is deterministic given its seed
+(the same seed drives the same start draws and the same noise draws), so 70% is
+not measurement jitter. A fresh set of 60 starts (seed 888): 47/60, with 5
+timeouts, 3 collisions, 5 wandered off, worst side clearance again 0.00 m.
+All three harder runs together: 131/180 = 73%. The 90% mark stands failed.
