@@ -237,10 +237,16 @@ NEIGHBOUR_BEHIND_BAYS = 2            # the practice car sits TWO bays back (-14 
 NEIGHBOUR_BEHIND_MIN_START_M = 13.0  # only when the van starts far enough back for
                                      # the approach past that car to be the lesson
 
-PROXIMITY_CLOSE = 0.2                # feeler reading (x10 m) below which it is "too
-PROXIMITY_PAY = 3.0                  # close": charge PAY * (CLOSE - reading) per step,
+PROXIMITY_CLOSE = 0.25               # feeler reading (x10 m) below which it is "too
+PROXIMITY_PAY = 15.0                 # close": charge PAY * (CLOSE - reading) per step,
                                      # so the warning arrives BEFORE the crash. Cannot
-                                     # be farmed: it is never positive.
+                                     # be farmed: it is never positive. Was 3.0 in
+                                     # round 7c's first half hour: the +8/m approach
+                                     # pay rewards cutting the corner early, which is
+                                     # the crash path, and a -0.6/step warning lost that
+                                     # tug-of-war (26% with the car, flat from the first
+                                     # block). At 15 a close pass costs about a crash,
+                                     # but before contact, where it can still steer.
 NEIGHBOUR_AHEAD_MIN_START_M = 9.0    # hazards after the skill, not before: round 7a
                                      # put a car 7 m ahead on a third of its 4 m
                                      # starts and the student learned to freeze
