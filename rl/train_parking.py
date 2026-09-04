@@ -65,7 +65,7 @@ class EpisodeLogger(BaseCallback):
                                   info.get("result", "?"),
                                   info.get("p", ""), info.get("start_dist", ""),
                                   info.get("neighbours", ""), info.get("stage", ""),
-                                  info.get("reverse_steps", "")])
+                                  info.get("reverse_steps", ""), info.get("hazard", "")])
                 self._f.flush()
                 if self._episodes % 25 == 0:
                     print(f"[train] {self._episodes} episodes, "
@@ -86,11 +86,14 @@ def main():
                     help="curriculum rung to begin on (0 = easiest, 5 = full distance)")
     ap.add_argument("--reverse", action="store_true", help="third control: reverse gear (round 8)")
     ap.add_argument("--obstacles", action="store_true", help="hazards in stages (round 8)")
+    ap.add_argument("--start-stage", type=int, default=0, help="obstacle stage to begin on (0-2)")
     a = ap.parse_args()
 
     os.makedirs(os.path.dirname(MODEL), exist_ok=True)
     curriculum = Curriculum(start_level=a.start_level)
-    env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles)
+    from rl.parking_math import Stages
+    env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles,
+                          stages=Stages(start=a.start_stage) if a.obstacles else None)
     if a.obstacles:
         print(f"[train] {env.stages.describe()}")
     print(f"[train] curriculum: {curriculum.describe()}")

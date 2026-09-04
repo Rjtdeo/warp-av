@@ -81,13 +81,13 @@ def _write_rows(results):
         w = csv.writer(f)
         w.writerow(["episode", "p", "start_dist_m", "result",
                     "m_len", "m_wid", "herr_deg", "hit", "ax", "ay", "speed",
-                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours", "reverse_steps"])
+                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours", "reverse_steps", "hazard"])
         for i, r in enumerate(results, 1):
             w.writerow([i, r.get("p"), r.get("start_dist"), r.get("result"),
                         r.get("m_len", ""), r.get("m_wid", ""), r.get("herr_deg", ""),
                         r.get("hit", ""), r.get("ax", ""), r.get("ay", ""), r.get("speed", ""),
                         r.get("spawn_yaw_off_deg", ""), r.get("spawn_lat_off_m", ""),
-                        r.get("neighbours", ""), r.get("reverse_steps", "")])
+                        r.get("neighbours", ""), r.get("reverse_steps", ""), r.get("hazard", "")])
 
 
 def main():

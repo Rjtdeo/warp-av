@@ -117,6 +117,7 @@ class CarlaParkingEnv(gym.Env):
         self._ax_prev = 0.0
         self._reverse_steps = 0
         self._reversing = False
+        self._hazard = ""              # which neighbour this attempt got: behind1 / behind2 / ahead / ""
         self._obs_queue = []            # for obs_delay
         self._obs_last = None           # for obs_dropout
         self._spawn_yaw_off = 0.0
@@ -252,29 +253,36 @@ class CarlaParkingEnv(gym.Env):
         none; stage 1 a car two bays back (50%) or one ahead (30%), never both;
         stage 2 also a car RIGHT behind (30%, bay ahead free) - only a
         pull-past-and-reverse gets in. Without stages: the flat chances."""
+        self._hazard = ""
         if self.stages is not None:
             lvl = self.stages.level
             if lvl == 0:
                 return
             if lvl >= 2 and neighbour_behind_fits(planned_start) and self.rng.random() < 0.3:
-                self._spawn_neighbour(drive_wp, -1)
-                return
-            behind = False
+                if self._spawn_neighbour(drive_wp, -1):
+                    self._hazard = "behind1"
+                    return
             if neighbour_behind_fits(planned_start) and self.rng.random() < 0.5:
-                behind = self._spawn_neighbour(drive_wp, -2)
-            if not behind and neighbour_ahead_fits(planned_start) and self.rng.random() < 0.3:
-                self._spawn_neighbour(drive_wp, +1)
+                if self._spawn_neighbour(drive_wp, -2):
+                    self._hazard = "behind2"
+                    return
+            if neighbour_ahead_fits(planned_start) and self.rng.random() < 0.3:
+                if self._spawn_neighbour(drive_wp, +1):
+                    self._hazard = "ahead"
             return
         behind = False
         if (self.neighbour_p and neighbour_behind_fits(planned_start)
                 and self.rng.random() < self.neighbour_p):
             behind = self._spawn_neighbour(drive_wp, -self.neighbour_behind_bays)
+            if behind:
+                self._hazard = f"behind{self.neighbour_behind_bays}"
         # Never both without a reverse gear: a gap between two parked cars is
         # not a lesson, it is a wall.
         if (not behind and self.neighbour_ahead_p
                 and neighbour_ahead_fits(planned_start)
                 and self.rng.random() < self.neighbour_ahead_p):
-            self._spawn_neighbour(drive_wp, +1)
+            if self._spawn_neighbour(drive_wp, +1):
+                self._hazard = "ahead"
 
     def _obstacle_points(self):
         """Outline points of everything the feelers may touch: the real
@@ -442,11 +450,19 @@ class CarlaParkingEnv(gym.Env):
             info["spawn_lat_off_m"] = round(self._spawn_lat_off, 2)
             info["neighbours"] = len(self.neighbours)
             info["reverse_steps"] = self._reverse_steps
+            info["hazard"] = self._hazard
             info["stage"] = self.stages.level if self.stages is not None else ""
             if self.stages is not None:
-                moved = self.stages.record(info.get("result") == "parked")
-                if moved is not None:
-                    print(f"[stages] {self.stages.describe()}")
+                # A stage is judged ONLY on attempts that contain its own hazard.
+                # Counting the easy empty and car-ahead attempts too unlocked
+                # "car right behind" while the two-bays-back skill was at 25%.
+                lvl = self.stages.level
+                counts = (lvl == 0) or (lvl == 1 and self._hazard == "behind2") \
+                    or (lvl >= 2 and self._hazard == "behind1")
+                if counts:
+                    moved = self.stages.record(info.get("result") == "parked")
+                    if moved is not None:
+                        print(f"[stages] {self.stages.describe()}")
             if info.get("result") == "collision":
                 # Where it was and what it touched, so a crash is a fact, not a guess.
                 info["hit"] = self._hit or "unknown"
