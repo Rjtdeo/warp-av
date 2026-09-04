@@ -545,3 +545,30 @@ def test_far_start_is_set_back_behind_the_approach_car():
     assert lane_start_for(2, 30.0) == 30.0             # an explicit longer lane start is kept
     for bays in (1, 2, 3, 4):
         assert neighbour_behind_fits(lane_start_for(bays, 16.0), bays)
+
+
+from rl.parking_math import lane_hold_penalty, LANE_HOLD_UNTIL_M, LANE_HOLD_Y_M, LANE_HOLD_PAY
+
+
+def test_driving_down_the_lane_far_from_the_bay_costs_nothing():
+    assert lane_hold_penalty(-16.0, 3.1) == 0.0      # driving-lane centre, 16 m out
+    assert lane_hold_penalty(-30.0, -3.1) == 0.0     # either side of the bay line
+    assert lane_hold_penalty(-16.0, LANE_HOLD_Y_M) == 0.0
+
+
+def test_swinging_into_the_parking_lane_early_is_charged_but_the_final_approach_is_free():
+    early = lane_hold_penalty(-16.0, 1.0)
+    assert early == -LANE_HOLD_PAY * (LANE_HOLD_Y_M - 1.0) < 0
+    assert lane_hold_penalty(-16.0, 0.0) < early    # deeper in the lane costs more
+    assert lane_hold_penalty(-LANE_HOLD_UNTIL_M + 0.1, 1.0) == 0.0   # inside 12 m: turn in freely
+    assert lane_hold_penalty(-8.0, 0.0) == 0.0
+
+
+def test_step_outcome_applies_the_lane_hold_only_when_asked():
+    args = (-16.0, 1.0, 0.0, 2.0, 16.1, 0.0, 0.0, 3.0, False)
+    plain, _, _ = step_outcome(*args, ax_prev=-16.2)
+    held, _, _ = step_outcome(*args, ax_prev=-16.2, lane_hold=True)
+    assert abs((held - plain) - lane_hold_penalty(-16.0, 1.0)) < 1e-9
+    in_lane, _, _ = step_outcome(-16.0, 3.1, 0.0, 2.0, 16.3, 0.0, 0.0, 3.0, False, ax_prev=-16.2, lane_hold=True)
+    in_lane_plain, _, _ = step_outcome(-16.0, 3.1, 0.0, 2.0, 16.3, 0.0, 0.0, 3.0, False, ax_prev=-16.2)
+    assert abs(in_lane - in_lane_plain) < 1e-9

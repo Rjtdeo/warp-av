@@ -108,9 +108,29 @@ ALIGN_ZONE_M = 9.5           # lining-up only pays inside the last slot-and-a-bi
 REVERSE_COST = 0.02          # per step in reverse: reversing is allowed, dithering is not
 
 
+LANE_HOLD_UNTIL_M = 12.0     # more than this far before the bay, the van belongs in the
+LANE_HOLD_Y_M = 2.6          # driving lane: charge for having its centre nearer the bay
+LANE_HOLD_PAY = 2.0          # line than this, PAY per metre per step. The round-6 habit
+                             # swings into the parking lane at once and drives along
+                             # it; a car anywhere in that lane on the approach is then
+                             # hit within 2 s of setting off (rounds 8a-8d: 520 such
+                             # attempts, 0 parks, even with the car 28 m ahead). The
+                             # driving lane's centre is ~3.1 m from the bay line, so a
+                             # lawful approach costs nothing; the swing-in costs about
+                             # a crash. Never positive, so it cannot be farmed.
+
+
+def lane_hold_penalty(ax, ay, until_m=LANE_HOLD_UNTIL_M, y_m=LANE_HOLD_Y_M, pay=LANE_HOLD_PAY):
+    """Per-step charge for being in the parking lane while still far from the bay."""
+    if ax >= -until_m:
+        return 0.0
+    return -pay * max(0.0, y_m - abs(ay))
+
+
 def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
                  collided, timeout_s=30.0, bounds_m=None, align_prev=None,
-                 feeler_readings=None, ax_prev=None, overshoot_m=None, reversing=False):
+                 feeler_readings=None, ax_prev=None, overshoot_m=None, reversing=False,
+                 lane_hold=False):
     """One training step's (reward, done, info).
 
     dist_prev is last step's distance-to-centre (progress shaping); when
@@ -124,6 +144,8 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     bounds_m is how far out this attempt is allowed to stray; pass
     bounds_for(start_dist) so a far start is not disqualified for barely
     moving. None keeps the old fixed limit.
+    lane_hold=True adds the lane_hold_penalty: stay in the driving lane until
+    LANE_HOLD_UNTIL_M before the bay (round 8e).
     """
     limit = OUT_OF_BOUNDS_M if bounds_m is None else bounds_m
     dist = math.hypot(ax, ay)
@@ -159,6 +181,8 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
         r += ALIGN_PAY * (align_prev - lateral_error(ay, herr))
     if feeler_readings is not None:
         r += proximity_penalty(feeler_readings)
+    if lane_hold:
+        r += lane_hold_penalty(ax, ay)
     if reversing:
         r -= REVERSE_COST
     r -= 0.05

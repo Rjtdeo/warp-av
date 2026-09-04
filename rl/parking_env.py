@@ -445,7 +445,8 @@ class CarlaParkingEnv(gym.Env):
             self._t, self._collided, timeout_s=self._timeout_s,
             bounds_m=self._bounds_m, align_prev=self._align_prev,
             feeler_readings=self._feelers_now, ax_prev=self._ax_prev,
-            overshoot_m=12.0 if self.reverse else None, reversing=self._reversing)
+            overshoot_m=12.0 if self.reverse else None, reversing=self._reversing,
+            lane_hold=True)
         self._dist_prev = math.hypot(ax, ay)
         self._align_prev = lateral_error(ay, herr)
         self._ax_prev = ax
