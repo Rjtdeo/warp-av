@@ -18,6 +18,7 @@ YOUR ROVER did steps 1, 5, 8 in three nodes.
 This does all 10 steps in a clean loop.
 """
 
+import os
 import time
 import sys
 import signal
@@ -46,6 +47,7 @@ from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
+from .planning.rl_parker import RLParker
 from .perception.bay_finder import why_no_kerb
 
 
@@ -109,6 +111,10 @@ class WarpAV:
         # Where parking slots come from: "map" (CARLA's lane data, the
         # baseline) or "lidar" (bay_finder on the live sweep, map as fallback).
         self.parking_source = "map"
+        # Who drives the last 16 m into a slot: "rules" (the hand-written
+        # parker) or "rl" (round 6's learned parker, rl/models/parking_ppo_round6.zip).
+        self.parker = "rules"
+        self.rl_parker = RLParker()
         self.perception = self.ground_truth_perception
 
         print("[Perception] Default mode: GROUND TRUTH")
@@ -155,6 +161,7 @@ class WarpAV:
         self._lidar_rescan_done = False
         self._lidar_rescan_tries = 0
         self._hold_short_done = False
+        self.rl_parker.reset()
         self._traffic_vehicles = []
         self._traffic_walkers = []      # (walker, controller) pairs
         self._scenario_jaywalkers = []  # (walker, start_location)
@@ -601,6 +608,10 @@ class WarpAV:
             cross_track_m=cross_track,
         )
 
+        # 6b. The learned parker takes the wheel for the last 16 m of a slot
+        # parking when selected; the behaviour layer's stops still win.
+        cmd, behavior_output = self._maybe_learned_parker(cmd, behavior_output, pose)
+
         # 7. Send command to vehicle
         self.vehicle_adapter.send_command(cmd)
 
@@ -694,6 +705,9 @@ class WarpAV:
             },
             "perception_mode": self.perception_mode,
             "parking_source": self.parking_source,
+            "parker": self.parker,
+            "rl_parker": ({"engaged": self.rl_parker.engaged, "done": self.rl_parker.done,
+                           "result": self.rl_parker.result}),
 
             "perception_runtime": {
                 "source": (
@@ -2047,6 +2061,53 @@ class WarpAV:
                               f"({shift:.2f} m from the map slot)")
         print(f"[Parking] lidar re-scan: target moved {shift:.2f} m onto a lidar-found slot")
 
+    def _maybe_learned_parker(self, cmd, behavior_output, pose):
+        """Swap the command for the learned parker's while it is at the wheel."""
+        if self.parker != "rl" or not self.mission_manager.current_mission:
+            return cmd, behavior_output
+        sp = getattr(self, "_parking_spot", None)
+        if not sp or sp.get("kind") != "slot":
+            return cmd, behavior_output
+        rl = self.rl_parker
+        if rl.done:
+            return cmd, behavior_output
+        if not rl.engaged:
+            if not rl.should_take_over(sp, pose.x, pose.y):
+                return cmd, behavior_output
+            self.logger.log_event("parking_rl", f"learned parker took the wheel "
+                                  f"{rl.distance_to(sp, pose.x, pose.y):.1f} m from the slot")
+            print("[Parking] learned parker at the wheel")
+        # A stop demanded by the behaviour layer (obstacle, pedestrian, safety)
+        # is honoured: the learned parker waits with the brakes on.
+        if behavior_output.should_stop and behavior_output.behavior != DrivingBehavior.PARKING:
+            return cmd, behavior_output
+        out = rl.act(pose.x, pose.y, pose.yaw, pose.speed, sp)
+        cmd = VehicleCommand(steering=out["steering"], throttle=out["throttle"], brake=out["brake"])
+        if out["parked"]:
+            self.logger.log_event("parking_rl", out["reason"])
+            behavior_output.behavior = DrivingBehavior.MISSION_COMPLETE
+            behavior_output.reason = "Parked - learned parker"
+            behavior_output.should_stop = True
+            self.behavior.mission_complete = True
+            self.behavior.has_mission = False
+        elif out["gave_up"]:
+            self.logger.log_event("parking_rl", out["reason"])
+            print(f"[Parking] {out['reason']}")
+        else:
+            behavior_output.reason = out["reason"]
+        return cmd, behavior_output
+
+    def api_set_parker(self, who):
+        """Who drives the last 16 m into a slot: "rules" or "rl"."""
+        who = str(who).strip().lower()
+        if who not in ("rules", "rl"):
+            return {"success": False, "reason": "Parker must be rules or rl", "parker": self.parker}
+        if who == "rl" and not os.path.exists(self.rl_parker.model_path):
+            return {"success": False, "reason": f"no brain at {self.rl_parker.model_path}", "parker": self.parker}
+        self.parker = who
+        self.logger.log_event("parker", f"the last 16 m are now driven by the {'learned' if who == 'rl' else 'hand-written'} parker")
+        return {"success": True, "parker": who}
+
     def api_set_parking_source(self, source):
         """Where FIND PARKING gets its slots: "map" (CARLA lane data) or
         "lidar" (the bay finder on the live sweep, map as fallback)."""
@@ -2796,6 +2857,14 @@ def park_cars_api():
         fill_all=bool(data.get('fill_all', False)),
         clear=bool(data.get('clear', False)),
         take_chosen=bool(data.get('take_chosen', False))))
+
+@app.route('/api/parking/parker', methods=['GET', 'POST'])
+def parking_parker():
+    if request.method == 'GET':
+        return jsonify({"parker": av_system.parker})
+    data = request.get_json(silent=True) or {}
+    return jsonify(av_system.api_set_parker(data.get("parker", "")))
+
 
 @app.route('/api/parking/source', methods=['GET', 'POST'])
 def parking_source():

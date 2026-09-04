@@ -41,6 +41,7 @@ SSH_HOST = os.environ.get("WARP_SSH_HOST", "Rajat@192.168.1.103")
 SSH_KEY = os.path.expanduser("~/.ssh/warp_av_ed25519")
 PARKING_SOURCE = None        # set from --parking-source
 PERCEPTION_MODE = None       # set from --perception-mode
+PARKER = None                # set from --parker
 WIN_REPO = r"C:\Users\Rajat\Desktop\warp-av"
 WIN_PY = r"C:\Users\Rajat\AppData\Local\Programs\Python\Python310\python.exe"
 CARLA_EXE = r"C:\CARLA\WindowsNoEditor\CarlaUE4.exe"
@@ -414,8 +415,13 @@ def execute_run(spec, rng, points, out_dir, log):
     if PARKING_SOURCE:
         # set before EVERY run: a watchdog restart of the stack resets it to "map"
         api_post("/api/parking/source", {"source": PARKING_SOURCE})
+    if PARKER:
+        r = api_post("/api/parking/parker", {"parker": PARKER})
+        if not r.get("success", True):
+            log(f"parker NOT set: {r.get('reason')}")
     st0 = api_get("/api/state")
     res["parking_source"] = st0.get("parking_source")
+    res["parker"] = st0.get("parker")
     res["collision_base"] = (st0.get("collision") or {}).get("count", 0)
     res["start_pose"] = st0.get("pose")
     res["version"] = st0.get("version")
@@ -905,6 +911,8 @@ def main():
                     help="set the van's perception mode before every run (default: leave it)")
     ap.add_argument("--repeat", type=int, default=1,
                     help="run the chosen plan this many times over (runs renumbered)")
+    ap.add_argument("--parker", choices=("rules", "rl"), default=None,
+                    help="who drives the last 16 m into a slot, set before every run (default: leave it)")
     ap.add_argument("--parking-source", choices=("map", "lidar"), default=None,
                     help="where FIND PARKING gets its slots for every run (default: leave the stack as it is)")
     ap.add_argument("--showdown", action="store_true")
@@ -913,9 +921,10 @@ def main():
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--expect-version", default=None)
     a = ap.parse_args()
-    global PARKING_SOURCE, PERCEPTION_MODE
+    global PARKING_SOURCE, PERCEPTION_MODE, PARKER
     PARKING_SOURCE = a.parking_source
     PERCEPTION_MODE = a.perception_mode
+    PARKER = a.parker
 
     plan = (shakedown_plan() if a.shakedown
             else park_check_plan() if a.park_check
