@@ -277,3 +277,13 @@ start (the stop-short and lidar-retry flags were not resetting either); overshoo
 counts after the van has actually reached the bay; the 45 s counts time at the wheel; lidar
 slots sit 0.6 m off the kerb (run 4's pole); the rig waits 40 s for the brain to load.
 Re-running.
+
+**Arm C, second pass (13:25-13:41, c87854f): 3 of 6.** Run 1: the learned parker took the wheel
+at 16.3 m and parked inside (0.13 m side, 2 deg) - its second park inside the van. The rest
+exposed two more of my own bugs: the per-mission reset sat on a branch of start_mission and
+did not always run (a parker left engaged by a stopped mission judged the next mission's slot
+"183 m off the slot line" and gave up at once), and with finder v2 seeing further, FIND PARKING
+at mission start began taking lidar bays beside the START and bending the route onto them (run
+3 drove into a traffic light at speed on that route). Both fixed in 3376829: resets run
+unconditionally at the top of start_mission; lidar slots at mission start count only within
+40 m of the destination. Third pass running.
