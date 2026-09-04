@@ -32,7 +32,7 @@ from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
                              bay_is_clear, feelers, neighbour_pose,
                              neighbour_behind_fits, neighbour_ahead_fits,
-                             FEELER_SECTORS, Curriculum,
+                             NEIGHBOUR_BEHIND_BAYS, FEELER_SECTORS, Curriculum,
                              LANE_START_M, SLOT_LEN, SLOT_WID)
 
 FIXED_DT = 0.1
@@ -103,6 +103,7 @@ class CarlaParkingEnv(gym.Env):
         self.neighbour_ahead_p = float(neighbour_ahead_p)
         self.neighbours = []
         self.use_feelers = bool(use_feelers)
+        self._feelers_now = None
         self._obs_queue = []            # for obs_delay
         self._obs_last = None           # for obs_dropout
         self._spawn_yaw_off = 0.0
@@ -301,12 +302,16 @@ class CarlaParkingEnv(gym.Env):
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
                 planned_start = math.hypot(px - sx, py - sy)
-                if (self.neighbour_ahead_p and neighbour_ahead_fits(planned_start)
-                        and self.rng.random() < self.neighbour_ahead_p):
-                    self._spawn_neighbour(drive_wp, +1)
+                behind = False
                 if (self.neighbour_p and neighbour_behind_fits(planned_start)
                         and self.rng.random() < self.neighbour_p):
-                    self._spawn_neighbour(drive_wp, -1)
+                    behind = self._spawn_neighbour(drive_wp, -NEIGHBOUR_BEHIND_BAYS)
+                # Never both: with no reverse gear, nosing into a gap between two
+                # parked cars is not a lesson, it is a wall.
+                if (not behind and self.neighbour_ahead_p
+                        and neighbour_ahead_fits(planned_start)
+                        and self.rng.random() < self.neighbour_ahead_p):
+                    self._spawn_neighbour(drive_wp, +1)
                 break
         if self.van is None:
             raise RuntimeError("could not spawn the practice van anywhere")
@@ -351,7 +356,8 @@ class CarlaParkingEnv(gym.Env):
             speed = max(0.0, speed + self.rng.gauss(0.0, sv))
         obs = observation(x, y, yaw, speed, self._steer_prev, *self.slot)
         if self.use_feelers:
-            obs = obs + feelers(x, y, yaw, self._obstacle_points())
+            self._feelers_now = feelers(x, y, yaw, self._obstacle_points())
+            obs = obs + self._feelers_now
         if self.obs_delay > 0:
             # The world moves on; the student sees where things WERE.
             self._obs_queue.append(obs)
@@ -380,7 +386,8 @@ class CarlaParkingEnv(gym.Env):
         reward, done, info = step_outcome(
             ax, ay, herr, speed, self._dist_prev, steer, self._steer_prev,
             self._t, self._collided, timeout_s=self._timeout_s,
-            bounds_m=self._bounds_m, align_prev=self._align_prev)
+            bounds_m=self._bounds_m, align_prev=self._align_prev,
+            feeler_readings=self._feelers_now)
         self._dist_prev = math.hypot(ax, ay)
         self._align_prev = lateral_error(ay, herr)
         self._steer_prev = steer

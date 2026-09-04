@@ -104,7 +104,8 @@ def lateral_error(ay, herr):
 
 
 def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
-                 collided, timeout_s=30.0, bounds_m=None, align_prev=None):
+                 collided, timeout_s=30.0, bounds_m=None, align_prev=None,
+                 feeler_readings=None):
     """One training step's (reward, done, info).
 
     dist_prev is last step's distance-to-centre (progress shaping).
@@ -143,6 +144,8 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     r = APPROACH_PAY * (dist_prev - dist)
     if align_prev is not None:
         r += ALIGN_PAY * (align_prev - lateral_error(ay, herr))
+    if feeler_readings is not None:
+        r += proximity_penalty(feeler_readings)
     r -= 0.05
     r -= 0.10 * abs(steer - steer_prev)
     if inside:
@@ -223,11 +226,30 @@ def feelers(van_x, van_y, van_yaw, points, reach_m=FEELER_REACH_M):
 
 
 NEIGHBOUR_BAY_PITCH_M = 7.0          # the next bay along is one slot length away
-NEIGHBOUR_BEHIND_MIN_START_M = 13.0  # a car in the bay behind spans -9.3..-4.7 m
-                                     # along; the van must spawn clear of it
+NEIGHBOUR_BEHIND_BAYS = 2            # the practice car sits TWO bays back (-14 m).
+                                     # Round 7b put it one bay back: parallel bays,
+                                     # a 4.7 m van with a 7 m turning circle and no
+                                     # reverse gear cannot nose into a 7 m gap with a
+                                     # car right behind - 0 parks in ~1,800 tries. Two
+                                     # bays back is where the round-6 pull-in really
+                                     # clips cars (crashes at 11-15 m before the bay),
+                                     # and turning in later avoids it.
+NEIGHBOUR_BEHIND_MIN_START_M = 13.0  # only when the van starts far enough back for
+                                     # the approach past that car to be the lesson
+
+PROXIMITY_CLOSE = 0.2                # feeler reading (x10 m) below which it is "too
+PROXIMITY_PAY = 3.0                  # close": charge PAY * (CLOSE - reading) per step,
+                                     # so the warning arrives BEFORE the crash. Cannot
+                                     # be farmed: it is never positive.
 NEIGHBOUR_AHEAD_MIN_START_M = 9.0    # hazards after the skill, not before: round 7a
                                      # put a car 7 m ahead on a third of its 4 m
                                      # starts and the student learned to freeze
+
+
+def proximity_penalty(feeler_readings, close=PROXIMITY_CLOSE, pay=PROXIMITY_PAY):
+    """Per-step charge for anything inside the 'too close' band of any feeler.
+    Zero when nothing is near; grows as a reading falls towards contact."""
+    return -pay * sum(max(0.0, close - f) for f in feeler_readings)
 
 
 def neighbour_pose(slot_x, slot_y, slot_yaw, bays_away):

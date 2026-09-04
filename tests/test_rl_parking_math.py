@@ -416,3 +416,35 @@ def test_a_car_ahead_only_appears_once_there_is_an_approach_to_practise():
     assert not neighbour_ahead_fits(4.1)
     assert not neighbour_ahead_fits(6.5)
     assert neighbour_ahead_fits(9.0)
+
+
+from rl.parking_math import proximity_penalty, PROXIMITY_CLOSE, NEIGHBOUR_BEHIND_BAYS
+
+
+def test_nothing_near_costs_nothing():
+    assert proximity_penalty([1.0, 1.0, 1.0, 1.0]) == 0.0
+    assert proximity_penalty([PROXIMITY_CLOSE, 0.5, 1.0, 1.0]) == 0.0
+
+
+def test_the_warning_grows_as_something_gets_closer():
+    far = proximity_penalty([0.18, 1.0, 1.0, 1.0])
+    near = proximity_penalty([0.05, 1.0, 1.0, 1.0])
+    assert 0.0 > far > near
+
+
+def test_the_warning_reaches_the_reward_before_any_crash():
+    """Same step, same pose: with a feeler reading 'very close' the step must
+    score lower than with nothing near, while the attempt goes on."""
+    clear, done1, _ = step_outcome(-8.0, -2.0, 0.1, 1.5, 8.3, 0.0, 0.0, 4.0, False,
+                                   feeler_readings=[1.0, 1.0, 1.0, 1.0])
+    close, done2, _ = step_outcome(-8.0, -2.0, 0.1, 1.5, 8.3, 0.0, 0.0, 4.0, False,
+                                   feeler_readings=[1.0, 0.08, 1.0, 0.1])
+    assert not done1 and not done2 and close < clear
+
+
+def test_the_practice_car_sits_two_bays_back():
+    """One bay back was a wall: parallel bays, no reverse gear, 0 parks in ~1,800
+    tries. Two bays back is where the pull-in path really clips a car."""
+    assert NEIGHBOUR_BEHIND_BAYS == 2
+    x, y, _ = neighbour_pose(0.0, 0.0, 0.0, -NEIGHBOUR_BEHIND_BAYS)
+    assert x == -14.0 and y == 0.0
