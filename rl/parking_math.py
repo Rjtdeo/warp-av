@@ -252,11 +252,25 @@ NEIGHBOUR_BEHIND_BAYS = 2            # the practice car sits TWO bays back (-14 
                                      # bays back is where the round-6 pull-in really
                                      # clips cars (crashes at 11-15 m before the bay),
                                      # and turning in later avoids it.
-NEIGHBOUR_BEHIND_MIN_START_M = 13.0  # only when the van starts far enough back for
-                                     # the approach past that car to be the lesson
+NEIGHBOUR_BEHIND_CLEARANCE_M = 6.0   # a car `n` bays back may only be placed when the
+                                     # van starts at least n*7 + 6 m back: half a car
+                                     # (2.35) + half a van (2.6) + a metre of road, so
+                                     # the van is born BEHIND the car and has to drive
+                                     # past it. Round 8a/8b used a flat 13 m, written
+                                     # for one bay back, with the car TWO bays back
+                                     # (-14 m): from a 16 m start the van was born
+                                     # alongside the car's rear, 1.4 m away, and its
+                                     # first move (a steer to the right) hit it -
+                                     # 313/313 crashes at 1.4 s, nothing to learn from.
+NEIGHBOUR_BEHIND_MIN_START_M = 1 * NEIGHBOUR_BAY_PITCH_M + NEIGHBOUR_BEHIND_CLEARANCE_M   # 13 m, one bay back
 
-PROXIMITY_CLOSE = 0.25               # feeler reading (x10 m) below which it is "too
+PROXIMITY_CLOSE = 0.15               # feeler reading (x10 m) below which it is "too
 PROXIMITY_PAY = 15.0                 # close": charge PAY * (CLOSE - reading) per step,
+                                     # Was 0.25 (2.5 m): a lawful pass down a 3.5 m lane
+                                     # beside a parked car is a 1.4 m gap, and that was
+                                     # being charged -1.65 a step for driving correctly.
+                                     # 1.5 m leaves the lawful pass nearly free and
+                                     # still charges a swerve towards the car.
                                      # so the warning arrives BEFORE the crash. Cannot
                                      # be farmed: it is never positive. Was 3.0 in
                                      # round 7c's first half hour: the +8/m approach
@@ -288,10 +302,11 @@ def neighbour_ahead_fits(start_dist_m):
     return start_dist_m >= NEIGHBOUR_AHEAD_MIN_START_M
 
 
-def neighbour_behind_fits(start_dist_m):
-    """A car in the bay behind may only be placed when the van starts far enough
-    back not to be born touching it (front bumper at start = along + 2.35 m)."""
-    return start_dist_m >= NEIGHBOUR_BEHIND_MIN_START_M
+def neighbour_behind_fits(start_dist_m, bays_back=1):
+    """A car `bays_back` bays behind the target may only be placed when the van
+    starts far enough back to be born behind it, not beside it: at least
+    bays_back * 7 m + 6 m (half a car, half a van, a metre of road)."""
+    return start_dist_m >= bays_back * NEIGHBOUR_BAY_PITCH_M + NEIGHBOUR_BEHIND_CLEARANCE_M
 
 
 def spawn_pose(p, lane_x, lane_y, lane_yaw, slot_x, slot_y, slot_yaw):

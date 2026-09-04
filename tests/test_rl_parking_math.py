@@ -338,7 +338,7 @@ def test_one_corner_inside_is_enough():
 
 
 from rl.parking_math import (FEELER_REACH_M, FEELER_SECTORS, feelers, neighbour_pose,
-                             neighbour_behind_fits, NEIGHBOUR_BAY_PITCH_M)
+                             neighbour_behind_fits, NEIGHBOUR_BAY_PITCH_M, proximity_penalty)
 
 
 def test_feelers_read_full_reach_when_nothing_is_near():
@@ -388,6 +388,22 @@ def test_a_car_behind_is_only_placed_when_the_van_starts_clear_of_it():
     assert neighbour_behind_fits(13.5)
 
 
+def test_car_two_bays_back_needs_a_twenty_metre_start():
+    # 16 m back the van is born alongside a car two bays back (round 8a/8b:
+    # 313/313 crashes at 1.4 s). It must be born behind the car and pass it.
+    assert not neighbour_behind_fits(16.2, bays_back=2)
+    assert not neighbour_behind_fits(19.9, bays_back=2)
+    assert neighbour_behind_fits(20.0, bays_back=2)
+    assert neighbour_behind_fits(22.2, bays_back=2)
+    assert neighbour_behind_fits(13.0, bays_back=1) and not neighbour_behind_fits(12.9, bays_back=1)
+
+
+def test_lawful_pass_beside_a_parked_car_is_nearly_free():
+    # a 1.4 m gap down a 3.5 m lane reads 0.14 on the right feeler
+    assert proximity_penalty([1.0, 1.0, 1.0, 0.14]) > -0.2
+    assert proximity_penalty([1.0, 1.0, 1.0, 0.05]) < -1.0
+
+
 from rl.parking_math import IDLE_COST, neighbour_ahead_fits
 
 
@@ -427,7 +443,7 @@ def test_nothing_near_costs_nothing():
 
 
 def test_the_warning_grows_as_something_gets_closer():
-    far = proximity_penalty([0.18, 1.0, 1.0, 1.0])
+    far = proximity_penalty([0.12, 1.0, 1.0, 1.0])    # 1.2 m, inside the 1.5 m band
     near = proximity_penalty([0.05, 1.0, 1.0, 1.0])
     assert 0.0 > far > near
 

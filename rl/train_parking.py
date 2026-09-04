@@ -87,12 +87,15 @@ def main():
     ap.add_argument("--reverse", action="store_true", help="third control: reverse gear (round 8)")
     ap.add_argument("--obstacles", action="store_true", help="hazards in stages (round 8)")
     ap.add_argument("--start-stage", type=int, default=0, help="obstacle stage to begin on (0-2)")
+    ap.add_argument("--lane-start", type=float, default=16.0,
+                    help="metres back along the lane the far starts begin (22 for the car two bays back)")
     a = ap.parse_args()
 
     os.makedirs(os.path.dirname(MODEL), exist_ok=True)
     curriculum = Curriculum(start_level=a.start_level)
     from rl.parking_math import Stages
     env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles,
+                          lane_start_m=a.lane_start,
                           stages=Stages(start=a.start_stage) if a.obstacles else None)
     if a.obstacles:
         print(f"[train] {env.stages.describe()}")

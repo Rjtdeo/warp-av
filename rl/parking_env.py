@@ -258,11 +258,11 @@ class CarlaParkingEnv(gym.Env):
             lvl = self.stages.level
             if lvl == 0:
                 return
-            if lvl >= 2 and neighbour_behind_fits(planned_start) and self.rng.random() < 0.3:
+            if lvl >= 2 and neighbour_behind_fits(planned_start, 1) and self.rng.random() < 0.3:
                 if self._spawn_neighbour(drive_wp, -1):
                     self._hazard = "behind1"
                     return
-            if neighbour_behind_fits(planned_start) and self.rng.random() < 0.5:
+            if neighbour_behind_fits(planned_start, 2) and self.rng.random() < 0.5:
                 if self._spawn_neighbour(drive_wp, -2):
                     self._hazard = "behind2"
                     return
@@ -271,7 +271,7 @@ class CarlaParkingEnv(gym.Env):
                     self._hazard = "ahead"
             return
         behind = False
-        if (self.neighbour_p and neighbour_behind_fits(planned_start)
+        if (self.neighbour_p and neighbour_behind_fits(planned_start, self.neighbour_behind_bays)
                 and self.rng.random() < self.neighbour_p):
             behind = self._spawn_neighbour(drive_wp, -self.neighbour_behind_bays)
             if behind:
