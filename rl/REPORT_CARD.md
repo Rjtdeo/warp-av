@@ -150,3 +150,25 @@ which has no feelers and no such rule, cannot be spooked that way.
 
 Round 6 remains the better brain for anything with imperfect inputs; round 7 is
 marginally the better one on clean, empty bays. Rows in .
+
+### The learned parker inside the van, third pass (4 Sep, 13:57-14:08): 5 of 6
+
+Stack 3376829. Lidar bays, ground-truth perception, round 6's brain driving the last 16 m.
+The brain took the wheel in **all six** runs (every log: "learned parker took the wheel
+16.x m from the slot").
+
+| run | slot | result |
+|---|---|---|
+| 1 | map | parked, INSIDE (0.33 / 0.15 m), 1 deg |
+| 2 | map, stolen -> re-targeted | parked, 4 cm over the side line (within tolerance), 1 deg |
+| 3 | map | parked, 7 cm over (within tolerance), 1 deg |
+| 4 | map | **collision with a decorative parked car beside the bay** |
+| 5 | **lidar** (re-scan moved the target 0.47 m), stolen -> re-targeted | parked, INSIDE (0.40 / 0.14 m), 2 deg |
+| 6 | map | parked, INSIDE (0.18 m side), 1.5 deg |
+
+Run 5 is the full chain: a bay the lidar found, the trained brain driving into it. Against
+the hand-written parker on the same six runs this morning (arm B: 3 of 6, both stolen-slot
+runs failed), the learned parker handled both stolen-slot runs. The one failure is the known
+gap: round 6 has no obstacle inputs, and in ground-truth mode the van's own perception does
+not see map decoration either, so nothing stopped it. Obstacle awareness (round 7's unfinished
+work) is now the next target, with a reverse gear as the honest way to park between two cars.
