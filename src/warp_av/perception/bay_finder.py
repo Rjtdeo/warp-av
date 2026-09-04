@@ -112,6 +112,22 @@ def along_of(x, y_right, kerb: Kerb):
     return x * c + y_right * s
 
 
+def why_no_kerb(points: np.ndarray) -> str:
+    """One line saying why fit_kerb would give up on this sweep - for logs."""
+    if points is None or len(points) == 0:
+        return "no lidar points"
+    x, y, z = points[:, 0], points[:, 1], points[:, 2] + LIDAR_HEIGHT_M
+    band = ((y > SEARCH_RIGHT_MIN_M) & (y < SEARCH_RIGHT_MAX_M) & (x > -SEARCH_BACK_M)
+            & (x < SEARCH_AHEAD_M) & (z > KERB_LOW_M) & (z < KERB_HIGH_M))
+    n = int(band.sum())
+    if n < 20:
+        return f"only {n} kerb-height points to the right (need 20)"
+    strips = len(np.unique(np.floor((x[band] + SEARCH_BACK_M) / BIN_M).astype(int)))
+    if strips < 8:
+        return f"{n} kerb-height points but only {strips} strips along (need 8)"
+    return f"{n} kerb-height points in {strips} strips, but no straight line fits (curve or clutter)"
+
+
 def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
     """All free stretches at least min_len_m long beside the kerb, nearest first
     (measured from the van), each with the slot pose a van should aim for."""

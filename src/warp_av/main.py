@@ -46,6 +46,7 @@ from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot
+from .perception.bay_finder import why_no_kerb
 
 
 class WarpAV:
@@ -152,6 +153,7 @@ class WarpAV:
         self._scenario_lights_frozen = False
         self._parking_spot = None
         self._lidar_rescan_done = False
+        self._lidar_rescan_tries = 0
         self._traffic_vehicles = []
         self._traffic_walkers = []      # (walker, controller) pairs
         self._scenario_jaywalkers = []  # (walker, start_location)
@@ -498,8 +500,13 @@ class WarpAV:
             rescan_now = True
         # With the lidar as the slot source, look for the real bay once the map's
         # slot is within reach (the finder sees ~30 m ahead) and swap onto it.
+        # Keeps trying every 2 s while closing in (the kerb may only fit
+        # once the bay is well inside the sweep), and while blocked near the
+        # destination, where real occupancy from the lidar is the way out.
         if (self.parking_source == "lidar" and not getattr(self, "_lidar_rescan_done", False)
-                and dest_dist is not None and dest_dist < 22.0):
+                and dest_dist is not None and 6.0 < dest_dist < 22.0
+                and time.time() - getattr(self, "_last_lidar_rescan", 0.0) > 2.0):
+            self._last_lidar_rescan = time.time()
             try:
                 self._lidar_rescan_on_approach(pose)
             except Exception as e:
@@ -1956,7 +1963,6 @@ class WarpAV:
         sp = getattr(self, "_parking_spot", None)
         if not sp or sp.get("kind") != "slot":
             return
-        self._lidar_rescan_done = True
         scan = getattr(self.sensor_adapter, "latest_lidar", None)
         if scan is None:
             self.logger.log_event("parking_lidar", "approach re-scan: no lidar data")
@@ -1967,8 +1973,14 @@ class WarpAV:
             self.logger.log_event("parking_lidar", f"approach re-scan failed: {e}")
             return
         if not slots:
-            self.logger.log_event("parking_lidar", "approach re-scan: lidar saw no bay - keeping the map slot")
+            # not done: try again as the van closes in (the trigger re-fires)
+            n = getattr(self, "_lidar_rescan_tries", 0) + 1
+            self._lidar_rescan_tries = n
+            if n in (1, 3, 6, 10):
+                self.logger.log_event("parking_lidar",
+                                      f"approach re-scan #{n}: lidar saw no bay ({why_no_kerb(scan.points)}) - keeping the map slot for now")
             return
+        self._lidar_rescan_done = True
         self._mark_slot_occupancy(slots)
         new_idx = nearest_free_slot(slots, sp["x"], sp["y"], max_dist_m=12.0)
         if new_idx is None:
