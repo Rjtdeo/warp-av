@@ -45,6 +45,7 @@ from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
+from warp_av.planning.sensed_slots import sensed_parking_slots
 
 
 class WarpAV:
@@ -104,6 +105,9 @@ class WarpAV:
 
         # Always start safely with the proven baseline.
         self.perception_mode = "ground_truth"
+        # Where parking slots come from: "map" (CARLA's lane data, the
+        # baseline) or "lidar" (bay_finder on the live sweep, map as fallback).
+        self.parking_source = "map"
         self.perception = self.ground_truth_perception
 
         print("[Perception] Default mode: GROUND TRUTH")
@@ -664,6 +668,7 @@ class WarpAV:
                 ],
             },
             "perception_mode": self.perception_mode,
+            "parking_source": self.parking_source,
 
             "perception_runtime": {
                 "source": (
@@ -1930,12 +1935,44 @@ class WarpAV:
             self.logger.log_event("parking_rescan", f"slot #{idx} was taken — re-targeted to slot #{new_idx}")
             print(f"[Parking] slot #{idx} taken — switching to slot #{new_idx}")
 
+    def api_set_parking_source(self, source):
+        """Where FIND PARKING gets its slots: "map" (CARLA lane data) or
+        "lidar" (the bay finder on the live sweep, map as fallback)."""
+        source = str(source).strip().lower()
+        if source not in ("map", "lidar"):
+            return {"success": False, "reason": "Source must be map or lidar",
+                    "source": self.parking_source}
+        self.parking_source = source
+        self.logger.log_event("parking_source", f"parking slots now come from the {source}")
+        return {"success": True, "source": source}
+
+    def _parking_slots_from_source(self):
+        """(slots, where_from). Lidar first when selected; the map when the
+        lidar sees no kerb, when it is disabled, or when the source is map."""
+        if self.parking_source == "lidar":
+            scan = getattr(self.sensor_adapter, "latest_lidar", None)
+            pose = self.localization.get_last_pose()
+            if scan is not None and pose is not None and getattr(pose, "healthy", True):
+                try:
+                    slots = sensed_parking_slots(scan.points, pose.x, pose.y, pose.yaw)
+                except Exception as e:
+                    self.logger.log_event("parking_slots", f"lidar bay finder failed: {e}")
+                    slots = []
+                if slots:
+                    self.logger.log_event("parking_slots", f"{len(slots)} slots from the LIDAR")
+                    return slots, "lidar"
+            self.logger.log_event("parking_slots", "lidar saw no bay - falling back to the map")
+        slots = self.planner.find_parking_slots(self._route)
+        for sl in slots:
+            sl.setdefault("source", "map")
+        return slots, "map"
+
     def api_find_parking(self):
         """FIND PARKING: slice the bays near the destination into van-sized
         slots, skip occupied ones, retarget the mission to the best free slot."""
         if not self._route or not self.mission_manager.current_mission:
             return {"success": False, "reason": "Start a mission first — parking is searched near its destination"}
-        slots = self.planner.find_parking_slots(self._route)
+        slots, where_from = self._parking_slots_from_source()
         if not slots:
             return {"success": False, "reason": "No parking bays on the final stretch of this route"}
 
@@ -2647,6 +2684,14 @@ def park_cars_api():
         fill_all=bool(data.get('fill_all', False)),
         clear=bool(data.get('clear', False)),
         take_chosen=bool(data.get('take_chosen', False))))
+
+@app.route('/api/parking/source', methods=['GET', 'POST'])
+def parking_source():
+    if request.method == 'GET':
+        return jsonify({"source": av_system.parking_source})
+    data = request.get_json(silent=True) or {}
+    return jsonify(av_system.api_set_parking_source(data.get("source", "")))
+
 
 @app.route('/api/parking/find', methods=['POST'])
 def find_parking():
