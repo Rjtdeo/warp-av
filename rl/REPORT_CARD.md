@@ -92,3 +92,39 @@ identical outcome on all 60 attempts - the exam is deterministic given its seed
 not measurement jitter. A fresh set of 60 starts (seed 888): 47/60, with 5
 timeouts, 3 collisions, 5 wandered off, worst side clearance again 0.00 m.
 All three harder runs together: 131/180 = 73%. The 90% mark stands failed.
+
+## Round 7 (overnight 3-4 Sep): eyes for obstacles - did not learn avoidance
+
+Round 7 gave the student four "feelers" (nearest obstacle per sector) and put a
+real parked car in a neighbouring bay during practice. Three legs overnight:
+7a from zero froze (a car 7 m ahead on the easiest rung turned overshoots into
+crashes; it learned to sit still). 7b warm-started from round 6 kept its parking
+but the car ONE bay behind was geometrically impossible to nose past (parallel
+bays, no reverse gear): 0/460 with cars both sides. 7c moved the car TWO bays
+back, added a too-close warning (then made it 5x stronger), then widened the side
+feelers to the rear quarters. With-car parking stayed at 22-28% in every block
+for 16,445 attempts; no-car parking stayed at 99%.
+
+Morning exams, clean bays, seed 2026, 30 attempts from the full distance, a car
+parked two bays back on every attempt (rows in `rl/exams/2026-09-04_*.csv`):
+
+| brain | with a car two bays back | on empty bays |
+|---|---|---|
+| round 6 (cannot see the car) | 3/30, 27 collisions | 30/30 (yesterday) |
+| round 7 (four feelers, 5.5 h of practice with the car) | **3/30, 27 collisions** | **30/30**, 0.24 m side clearance, 0.3 deg |
+
+Identical, attempt for attempt - the same 27 starts crash into the same cars.
+Round 7 learned nothing about the neighbour; it did keep, and slightly neaten,
+round 6's parking.
+
+**Why, as best I can tell.** The per-step "closer to the bay centre" pay rewards
+turning in early, which is exactly the path that clips the car; a warning that
+fires late and a crash at the end never outweighed it, and the avoiding path
+(drive straight past, then turn in late and sharp) is far from the learned one,
+so exploration never found it. Three sensing/warning fixes in one night changed
+nothing, which points at the scoring's shape, not the sensing.
+
+**Next, to be done in daylight:** pay approach progress along the bay axis rather
+than towards the centre, so cutting in early is not rewarded; and/or a reverse
+gear, which is how parallel parking is actually done. Round 6 remains the
+deliverable for empty bays.
