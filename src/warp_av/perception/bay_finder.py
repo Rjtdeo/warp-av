@@ -32,9 +32,11 @@ BODY_HIGH_M = 2.2             # ... to here above the road
 SEARCH_RIGHT_MIN_M = 0.8      # look for the kerb this far to the right of the van ...
 SEARCH_RIGHT_MAX_M = 8.0      # ... out to here
 SEARCH_BACK_M = 12.0          # and this far behind ...
-SEARCH_AHEAD_M = 40.0         # ... to this far ahead
+SEARCH_AHEAD_M = 30.0         # ... to this far ahead (beyond ~25 m a car is 2-5 points)
 BIN_M = 0.5                   # occupancy bins along the kerb
-OCCUPIED_POINTS = 3           # a bin with this many body points is taken
+OCCUPIED_POINTS = 2           # a bin with this many body points is taken (near) ...
+OCCUPIED_FAR_M = 15.0         # ... and beyond this range a single point is enough:
+                              # a parked car 25 m away returns 2-5 points in total
 END_MARGIN_M = 0.5            # a bay needs this much clear beyond each end
 KERB_GAP_M = 0.3              # a parked van sits this far off the kerb face
 
@@ -47,6 +49,8 @@ class Bay:
     length: float       # how long the free stretch is
     along_start: float  # free stretch, in along-kerb metres from the sensor
     along_end: float
+    slot_start: float   # the 7 m slot itself, centred in the free stretch
+    slot_end: float
 
 
 @dataclass
@@ -101,6 +105,13 @@ def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optio
     return Kerb(float(a), float(b), int(keep.sum()))
 
 
+def along_of(x, y_right, kerb: Kerb):
+    """Along-kerb coordinate of sensor-frame points (what Bay.along_* and
+    Bay.slot_* are measured in)."""
+    c, s = math.cos(kerb.yaw), math.sin(kerb.yaw)
+    return x * c + y_right * s
+
+
 def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
     """All free stretches at least min_len_m long beside the kerb, nearest first
     (measured from the van), each with the slot pose a van should aim for."""
@@ -116,7 +127,9 @@ def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
     along = x * c + y * s
     edges = np.arange(-SEARCH_BACK_M, SEARCH_AHEAD_M + BIN_M, BIN_M)
     counts, _ = np.histogram(along[body], bins=edges)
-    occupied = counts >= OCCUPIED_POINTS
+    centres = edges[:-1] + BIN_M / 2.0
+    need = np.where(np.abs(centres) > OCCUPIED_FAR_M, 1, OCCUPIED_POINTS)
+    occupied = counts >= need
     bays: List[Bay] = []
     i = 0
     while i < len(occupied):
@@ -142,7 +155,9 @@ def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
             sx, sy = kx + nx * off, ky + ny * off
             bays.append(Bay(x=float(sx), y=float(-sy), yaw=float(kerb.yaw),
                             length=float(free_end - free_start),
-                            along_start=float(free_start), along_end=float(free_end)))
+                            along_start=float(free_start), along_end=float(free_end),
+                            slot_start=float(mid - SLOT_LEN_M / 2.0),
+                            slot_end=float(mid + SLOT_LEN_M / 2.0)))
         i = j
     bays.sort(key=lambda bay: abs(bay.x))
     return bays

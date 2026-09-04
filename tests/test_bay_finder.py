@@ -84,3 +84,20 @@ def test_a_bay_beside_a_wide_pavement_is_still_placed_against_the_kerb():
     bays = find_bays(scene(kerb_y=3.0, pavement_m=2.5, cars=((2.0, 4.5), (15.0, 4.5))))
     b = next(bay for bay in bays if 4.0 < bay.x < 13.0)
     assert abs(-b.y - (3.0 - KERB_GAP_M - SLOT_WID_M / 2)) < 0.3
+
+
+def test_a_sparse_far_car_still_blocks_the_bay():
+    """At 25 m a parked car returns only a handful of lidar points; a fixed
+    3-points-per-bin rule called a 43 m stretch free with three cars in it."""
+    sc = scene(kerb_y=3.0)
+    far = np.array([[24.0, 1.8, -LIDAR_HEIGHT_M + 0.9, 0.0], [25.5, 1.6, -LIDAR_HEIGHT_M + 1.1, 0.0],
+                    [27.0, 1.9, -LIDAR_HEIGHT_M + 0.8, 0.0]], dtype=np.float32)
+    bays = find_bays(np.concatenate([sc, far]))
+    assert all(b.slot_end < 23.5 or b.slot_start > 27.5 for b in bays), "the slot must not sit on the far car"
+
+
+def test_the_slot_is_the_middle_seven_metres_of_the_free_stretch():
+    bays = find_bays(scene(kerb_y=3.0, cars=((2.0, 4.5), (15.0, 4.5))))
+    b = next(bay for bay in bays if 4.0 < bay.x < 13.0)
+    assert abs((b.slot_end - b.slot_start) - 7.0) < 1e-6
+    assert b.along_start < b.slot_start and b.slot_end < b.along_end

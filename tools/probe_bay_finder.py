@@ -28,7 +28,7 @@ import carla
 import numpy as np
 
 from rl.parking_env import static_vehicle_outlines
-from warp_av.perception.bay_finder import find_bays, fit_kerb, LIDAR_HEIGHT_M
+from warp_av.perception.bay_finder import find_bays, fit_kerb, along_of, LIDAR_HEIGHT_M
 
 
 def candidate_spots(cmap, rng, n):
@@ -108,14 +108,21 @@ def main():
             kerb_truth = ly + lane.lane_width / 2.0
             # decorative vehicles IN THE PARKING STRIP as along-intervals (occupied truth);
             # anything beyond the pavement is not in the bay and must not count
-            occ = []
+            occ = []          # filled after the kerb is fitted, in the finder's along-kerb coordinate
+            occ_xy = []
             for outline in statics:
                 sx = [to_sensor_frame(px, py, tf) for px, py in outline]
-                if any(-12 < x < 40 and (kerb_truth - 4.0) < y < (kerb_truth + 0.3) for x, y in sx):
-                    occ.append((min(x for x, _ in sx), max(x for x, _ in sx)))
+                if any(-12 < x < 30 and (kerb_truth - 4.0) < y < (kerb_truth + 0.3) for x, y in sx):
+                    occ_xy.append(sx)
 
             kerb = fit_kerb(pts)
             bays = find_bays(pts)
+            if kerb is not None:
+                for sx in occ_xy:
+                    al = [along_of(x, y, kerb) for x, y in sx]
+                    occ.append((min(al), max(al)))
+            else:
+                occ = [(min(x for x, _ in sx), max(x for x, _ in sx)) for sx in occ_xy]
             # Diagnostic: does the lidar even SEE each decorative vehicle in the
             # strip, and where does it sit relative to the detected kerb?
             veh_notes = []
@@ -139,7 +146,8 @@ def main():
             if nearest is not None:
                 side_err = (-nearest.y) - ly           # slot centre vs lane centre, + = further right
                 head_err = math.degrees(nearest.yaw - lane_yaw)
-                overlaps = any(not (nearest.along_end < s or nearest.along_start > e) for s, e in occ)
+                # the 7 m slot itself must not overlap a parked vehicle
+                overlaps = any(not (nearest.slot_end < s or nearest.slot_start > e) for s, e in occ)
             free_truth = any(True for _ in [0]) and not occ   # no decoration within view = free
             rows.append(dict(sample=k, kerb_found=kerb is not None, kerb_err_m=round(kerb_err, 2) if kerb else "",
                              bays_found=len(bays),
@@ -170,7 +178,7 @@ def main():
               f"overlap a decorative parked vehicle (bad)")
         ke = [abs(float(r["kerb_err_m"])) for r in rows if r["kerb_found"]]
         if ke:
-            print(f"kerb face    mean {np.mean(ke):.2f} m off the map's  worst {max(ke):.2f} m")
+            print(f"kerb face    mean {np.mean(ke):.2f} m from the map's lane edge (which need not be the physical kerb)  worst {max(ke):.2f} m")
         if found:
             print(f"side error   mean {np.mean(se):.2f} m  worst {max(se):.2f} m   (slot centre vs the map's lane centre)")
             print(f"heading err  mean {np.mean(he):.1f} deg worst {max(he):.1f} deg")
