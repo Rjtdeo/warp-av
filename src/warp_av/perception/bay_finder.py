@@ -106,6 +106,36 @@ def heights_above_road(points: np.ndarray, plane=None):
     return points[:, 2] - (a + b * points[:, 0] + c * points[:, 1])
 
 
+EDGE_CELL_M = 0.5             # lateral cell used to look for the edge cluster
+EDGE_MIN_POINTS = 2           # a cell needs this many raised points and the next cell
+                              # at least one (a pavement), OR EDGE_DENSE points on its
+                              # own (a bare kerb with nothing behind it): a kerb is a
+                              # dense cluster, a stray road-surface point is not
+EDGE_DENSE = 3
+
+
+def edge_per_strip(xs, ys):
+    """For each half-metre strip along the van, the lateral position of the
+    nearest CLUSTER of raised points - the pavement's near edge. A single
+    raised point nearer in (road noise, a stone) does not count: with the kerb
+    9 m out, taking the nearest single point put the edge at 2-7 m."""
+    strip = np.floor((xs + SEARCH_BACK_M) / BIN_M).astype(int)
+    cell = np.floor((ys - SEARCH_RIGHT_MIN_M) / EDGE_CELL_M).astype(int)
+    n_cells = int((SEARCH_RIGHT_MAX_M - SEARCH_RIGHT_MIN_M) / EDGE_CELL_M) + 2
+    strips = np.unique(strip)
+    ex, ey = [], []
+    for st in strips:
+        sel = strip == st
+        counts = np.bincount(np.clip(cell[sel], 0, n_cells - 1), minlength=n_cells)
+        for k in range(n_cells - 1):
+            if counts[k] >= EDGE_DENSE or (counts[k] >= EDGE_MIN_POINTS and counts[k + 1] >= 1):
+                inside = sel & (cell == k)
+                ex.append(float(xs[inside].mean()))
+                ey.append(float(ys[inside].min()))
+                break
+    return np.array(ex), np.array(ey)
+
+
 def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optional[Kerb]:
     """Kerb edge as a gentle curve through the nearest raised points in each
     half-metre strip to the van's right (the pavement's near edge), with
@@ -120,10 +150,7 @@ def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optio
     xs, ys = x[m], y[m]
     if len(xs) < 20:
         return None
-    strip = np.floor((xs + SEARCH_BACK_M) / BIN_M).astype(int)
-    order = np.lexsort((ys, strip))
-    _, first = np.unique(strip[order], return_index=True)
-    ex, ey = xs[order][first], ys[order][first]
+    ex, ey = edge_per_strip(xs, ys)
     if len(ex) < 6:
         return None
     keep = np.ones(len(ex), dtype=bool)
