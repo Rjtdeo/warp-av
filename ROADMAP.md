@@ -220,3 +220,21 @@ ground-truth mode the three plain parkings all finished inside (side margins -0.
 -0.10 m within the 0.10 m tolerance, headings 1-3 deg); both stolen-slot runs failed - one
 sat behind the thief until the clock ran out (the stop-short rule fired too late, now fixed
 to re-check from 30 m out), one hit a decorative car on the approach.
+
+**Arm B - lidar bays:** 4 of 6 by the rig's count - but the stack's own log shows the lidar
+path engaged properly in only one of the six runs ("4 slots from the LIDAR", parked, run 6);
+the others fell back to the map at mission start and the approach re-scan then reported
+"0 kerb-height points to the right", "no straight line fits (curve or clutter)", or - the
+gate doing its job once - "lidar slot rejected: 6.0 m off the reference bay's line". The two
+stolen-slot runs failed exactly as in arm A (waited behind the thief; hit a decorative car).
+
+**So the honest reading of the experiment:** the three plain parkings scored 3 of 3 in both
+arms, but arm B is not a test of lidar bays - it is mostly map bays with the lidar declining
+to answer. At the sweep's destinations the finder, tuned on straight lane-side spots, often
+meets a set-back bay (6.25 m right of the lane, its kerb near the 8 m edge of the search
+window), a curved kerb, or no raised kerb at all. Two things follow: widen and curve-tolerate
+the kerb fit (search out to ~10 m, fit a gentle arc or piecewise line, accept a flush edge from
+the road-surface boundary); and fix the parker's stolen-slot handling (re-check from 30 m,
+commit 91ba2d9, deployed after this experiment). Then the whole-loop comparison is worth
+re-running. The component result stands: 36 of 40 probe spots, 0 slots on a parked car, and
+two end-to-end parks in bays the van found itself.
