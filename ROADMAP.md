@@ -256,3 +256,24 @@ the finder found the kerb at 26 and a bay at 26, **0 on a parked vehicle**, side
 0.32 m (worst 1.57 m), heading mean 3.0 deg (worst 13.3 deg). Before v2 it reported "0
 kerb-height points" at these. Nine misses and the two large headings remain on the list;
 the stack's gate rejects anything more than 1.5 m or 15 deg off the map's line.
+
+### The learned parker inside the van (4 Sep, 13:02-13:18): first park, then a reset bug
+
+`rl_parker.RLParker` takes the wheel for the last 16 m of a slot parking when `parker = rl`
+(`/api/parking/parker`), with round 6's brain and its exact training action mapping, and
+hands back on overshoot, wander or 45 s. Arm C - lidar bays, ground-truth perception,
+learned parker, six runs:
+
+| run | result | what the van's log says |
+|---|---|---|
+| 1 | PASS | **"learned parker took the wheel 16.3 m from the slot" ... "INSIDE slot #1: YES (0.47 m front/back, 0.21 m side), 1 deg"** - the trained brain's first park inside the van software |
+| 2 | PASS | a re-scan moved the target behind the van and the parker reported an "83 m overshoot"; the rules finished the park |
+| 3, 4 | PASS, FAIL (pole) | driven by the RULES: the parker's done flag never cleared between missions |
+| 5 | GAP | rules again (the parker switch timed out after a restart); gridlock |
+| 6 | FAIL | learned parker held 180 s behind a stopped vehicle, then "timed out" |
+
+Fixed (c87854f): every one-shot parking flag and the parker now reset at every mission
+start (the stop-short and lidar-retry flags were not resetting either); overshoot only
+counts after the van has actually reached the bay; the 45 s counts time at the wheel; lidar
+slots sit 0.6 m off the kerb (run 4's pole); the rig waits 40 s for the brain to load.
+Re-running.
