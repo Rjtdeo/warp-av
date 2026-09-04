@@ -116,6 +116,20 @@ def main():
 
             kerb = fit_kerb(pts)
             bays = find_bays(pts)
+            # Diagnostic: does the lidar even SEE each decorative vehicle in the
+            # strip, and where does it sit relative to the detected kerb?
+            veh_notes = []
+            for outline in statics:
+                sx = [to_sensor_frame(px, py, tf) for px, py in outline]
+                if not any(-12 < x < 40 and (kerb_truth - 4.0) < y < (kerb_truth + 0.3) for x, y in sx):
+                    continue
+                x0, x1 = min(x for x, _ in sx), max(x for x, _ in sx)
+                y0, y1 = min(y for _, y in sx), max(y for _, y in sx)
+                zz = pts[:, 2] + LIDAR_HEIGHT_M
+                inside = ((pts[:, 0] > x0 - 0.3) & (pts[:, 0] < x1 + 0.3) & (pts[:, 1] > y0 - 0.3)
+                          & (pts[:, 1] < y1 + 0.3) & (zz > 0.35) & (zz < 2.2))
+                lat = kerb.right_of(0.5 * (x0 + x1), 0.5 * (y0 + y1)) if kerb else float("nan")
+                veh_notes.append(f"veh x {x0:5.1f}..{x1:5.1f} m, {lat:+.1f} m road-side of detected kerb, {int(inside.sum()):3d} body pts")
             nearest = bays[0] if bays else None
             side_err = head_err = float("nan")
             overlaps = False
@@ -139,6 +153,8 @@ def main():
                   + (f"nearest at {nearest.x:5.1f} m, len {nearest.length:4.1f} m, side err {side_err:+.2f} m, "
                      f"heading err {head_err:+.1f} deg, overlaps parked vehicle: {overlaps}" if nearest else "no bay")
                   + f"  | decor vehicles in view {len(occ)}")
+            for note in veh_notes:
+                print(f"       {note}")
     finally:
         world.apply_settings(original)
 
