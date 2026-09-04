@@ -146,6 +146,33 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
 # Where an attempt starts, how far it may stray, and how long it gets
 # ---------------------------------------------------------------------------
 
+KEEP_CLEAR_BACK_M = 18.0     # slot frame: how far behind the slot centre must be empty
+KEEP_CLEAR_AHEAD_M = 4.5     # ... and ahead (the slot's own front edge is at +3.5)
+KEEP_CLEAR_SIDE_M = 4.0      # ... and to either side
+
+
+def bay_is_clear(slot_x, slot_y, slot_yaw, static_outlines,
+                 back_m=KEEP_CLEAR_BACK_M, ahead_m=KEEP_CLEAR_AHEAD_M,
+                 side_m=KEEP_CLEAR_SIDE_M):
+    """False if any point of any static outline lies in the bay's keep-clear
+    zone: the slot itself, the bays behind it, and the approach strip.
+
+    Town10 bakes decorative parked cars and motorcycles into the map. They are
+    not actors, the student's five observations carry nothing about them, and
+    it cannot steer round what it cannot see. Round-6 exam, seed 2026: all nine
+    misses were static.car / static.motorcycle — one of them with the van
+    parked dead centre, 0.3 deg off, at 0.02 m/s, on top of a motorcycle.
+    static_outlines is a list of point lists (world x, y), as returned by the
+    main stack's static-vehicle scan.
+    """
+    for outline in static_outlines:
+        for px, py in outline:
+            ax, ay, _ = to_slot_frame(px, py, 0.0, slot_x, slot_y, slot_yaw)
+            if -back_m <= ax <= ahead_m and abs(ay) <= side_m:
+                return False
+    return True
+
+
 def spawn_pose(p, lane_x, lane_y, lane_yaw, slot_x, slot_y, slot_yaw):
     """Start pose for difficulty p, sliding along the ideal pull-in.
 

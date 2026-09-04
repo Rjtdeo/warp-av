@@ -294,3 +294,44 @@ def test_the_ladder_names_a_rung_the_same_way_the_flag_sets_it():
 
 def test_a_fresh_ladder_does_not_pretend_to_have_results():
     assert "no attempts yet" in Curriculum().describe()
+
+
+from rl.parking_math import bay_is_clear
+
+
+def _world_point(ax, ay, slot):
+    """Slot-frame (along, across) -> world (x, y) for a slot at (x, y, yaw)."""
+    sx, sy, syaw = slot
+    c, s = math.cos(syaw), math.sin(syaw)
+    return (sx + c * ax - s * ay, sy + s * ax + c * ay)
+
+
+def test_an_empty_map_leaves_every_bay_clear():
+    assert bay_is_clear(10.0, 5.0, 0.4, [])
+
+
+def test_a_vehicle_in_the_bay_itself_rules_it_out():
+    slot = (30.0, -8.0, 1.1)
+    assert not bay_is_clear(*slot, [[_world_point(0.0, 0.0, slot)]])
+
+
+def test_the_measured_crash_spots_all_rule_a_bay_out():
+    """Round-6 exam, seed 2026: where the van actually touched static vehicles,
+    in the slot frame. Every one of these must be inside the keep-clear zone."""
+    slot = (-12.0, 40.0, 2.6)
+    for along, across in ((-6.34, -0.26), (-14.20, -1.56), (0.05, -0.03),
+                          (-4.73, -0.14), (-11.80, -0.90), (-15.37, -2.29)):
+        assert not bay_is_clear(*slot, [[_world_point(along, across, slot)]]), (along, across)
+
+
+def test_vehicles_well_ahead_or_across_the_road_do_not_matter():
+    slot = (0.0, 0.0, 0.0)
+    ahead = [[_world_point(9.0, 0.0, slot)]]        # the bay after next, in front
+    far_side = [[_world_point(-5.0, 7.5, slot)]]    # other side of the road
+    assert bay_is_clear(*slot, ahead) and bay_is_clear(*slot, far_side)
+
+
+def test_one_corner_inside_is_enough():
+    slot = (0.0, 0.0, 0.0)
+    outline = [_world_point(-25.0, 0.0, slot), _world_point(-17.5, 0.0, slot)]  # centre out, corner in
+    assert not bay_is_clear(*slot, [outline])

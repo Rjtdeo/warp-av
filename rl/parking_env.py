@@ -30,10 +30,39 @@ from gymnasium import spaces
 
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
-                             Curriculum, LANE_START_M, SLOT_LEN, SLOT_WID)
+                             bay_is_clear, Curriculum, LANE_START_M, SLOT_LEN,
+                             SLOT_WID)
 
 FIXED_DT = 0.1
 MAX_SPEED = 3.0
+
+
+def static_vehicle_outlines(world):
+    """2D outlines (centre + four box corners) of the DECORATIVE vehicles baked
+    into the map's static layer. Same scan as the main stack's
+    _static_vehicle_points(): they are not actors, so nothing else sees them."""
+    pts, seen = [], set()
+    try:
+        for name in ("Vehicles", "Car", "Truck", "Bus", "Motorcycle", "Bicycle"):
+            lbl = getattr(carla.CityObjectLabel, name, None)
+            if lbl is None:
+                continue
+            for obj in world.get_environment_objects(lbl):
+                if obj.id in seen:
+                    continue
+                seen.add(obj.id)
+                bb = obj.bounding_box
+                cx, cy, ext = bb.location.x, bb.location.y, bb.extent
+                yaw = math.radians(bb.rotation.yaw)
+                c, s = math.cos(yaw), math.sin(yaw)
+                outline = [(cx, cy)]
+                for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1)):
+                    outline.append((cx + sx * c * ext.x - sy * s * ext.y,
+                                    cy + sx * s * ext.x + sy * c * ext.y))
+                pts.append(outline)
+    except Exception as e:
+        print(f"[ParkingEnv] static vehicle scan failed: {e}")
+    return pts
 
 
 class CarlaParkingEnv(gym.Env):
@@ -62,10 +91,15 @@ class CarlaParkingEnv(gym.Env):
             self.world.apply_settings(settings)
 
             self.cmap = self.world.get_map()
-            self.bays = self._scan_bays()
+            found = self._scan_bays()
+            statics = static_vehicle_outlines(self.world)
+            self.bays = [b for b in found if bay_is_clear(b[1], b[2], b[3], statics)]
             if len(self.bays) < 5:
                 raise RuntimeError(f"only {len(self.bays)} usable bays found")
-            print(f"[ParkingEnv] {len(self.bays)} practice bays ready")
+            print(f"[ParkingEnv] {len(self.bays)} practice bays ready "
+                  f"({len(found) - len(self.bays)} dropped: a decorative parked "
+                  f"vehicle in the bay, behind it, or on the approach; "
+                  f"{len(statics)} such vehicles on this map)")
 
             bps = self.world.get_blueprint_library().filter("vehicle.mercedes.sprinter")
             if not bps:
