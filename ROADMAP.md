@@ -114,23 +114,26 @@ Next: plug it into `planner.find_parking_slots` as the slot source when a "sense
 mode is on (map slots as fallback), re-scan on approach as the stack already does, and
 exam the whole park-from-the-lidar loop with the round-6 parker.
 
-### First whole-loop exam: park from lidar-found bays (4 Sep, 11:02-11:15)
+### First whole-loop exam (4 Sep, 11:02-11:15): the lidar never got asked at the right moment
 
 The bay finder is wired into the stack behind `parking_source` (`/api/parking/source`,
-default `map`); with `lidar` selected, FIND PARKING takes its slots from the live sweep
-at the current pose and falls back to the map if no kerb is seen. `mission_sweep.py
---park-check --parking-source lidar` drove three real missions (camera+lidar
-perception mode, stack 544b1f3), all three using lidar slots:
+default `map`); with `lidar` selected, FIND PARKING runs the bay finder on the live
+sweep at the current pose and falls back to the map if it sees no kerb.
+`mission_sweep.py --park-check --parking-source lidar` drove three real missions
+(camera+lidar perception mode, stack 544b1f3). The stack's own log for all three says
+**"lidar saw no bay - falling back to the map"**: FIND PARKING runs at mission START,
+hundreds of metres from the destination, where the lidar (30 m reach) cannot see the
+parking lane the map is slicing. So these three runs are a **map-slot baseline in
+camera mode**, not a lidar result:
 
-| run | what | result |
+| run | what | result (map slots) |
 |---|---|---|
-| 1 | plain slot parking | **FAIL** - hovered 0.9-1.0 m short of the spot until the clock ran out |
-| 2 | chosen slot stolen by a parked car, re-scan and retarget | **FAIL** - retargeted correctly, finished 0.29 m over the slot's side line, 7.4 deg off |
-| 3 | plain slot parking | **PASS** - inside, side margin -0.06 m (within tolerance), 2.8 deg |
+| 1 | plain slot parking | FAIL - hovered 0.9-1.0 m short of the spot until the clock ran out |
+| 2 | chosen slot stolen, re-scan and retarget | FAIL - retargeted correctly, finished 0.41 m over the slot's side line, 7 deg off |
+| 3 | plain slot parking | PASS - inside within tolerance (side -0.15 m), 3 deg |
 
-No collisions. The loop works end to end - see the kerb, find the free stretch,
-choose, drive in - and the failures are the lidar slot sitting too far towards the
-kerb at some spots (the probe's worst spots were 1.0-1.3 m out at the same kind of
-place), so the van cannot reach the slot centre and stops short. The map-based
-park-check on 21 Aug measured +0.17 / -0.02 m at the same job. Next: bound the slot's
-lateral position against the lane the van is driving in, and re-examine.
+No collisions. Note the baseline itself is worse than the 21 Aug park-check
+(+0.17 / -0.02 m side margins, ground-truth mode) - the camera-mode stutter near bays
+is still open. The lidar belongs at the moment the van reaches the bay: the next step
+is to run the bay finder in the approach re-scan (`_recheck_parking_on_approach`),
+replace the map slot with the nearest free lidar slot, and re-examine.
