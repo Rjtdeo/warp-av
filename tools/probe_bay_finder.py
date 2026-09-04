@@ -58,6 +58,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--samples", type=int, default=40)
     ap.add_argument("--seed", type=int, default=11)
+    ap.add_argument("--from-left-lane", action="store_true",
+                    help="place the sensor one driving lane further LEFT where one exists - the rig's 'set-back' bays are this: the van in the left lane of a two-lane road, kerb 7-9 m out")
     a = ap.parse_args()
 
     client = carla.Client("localhost", 2000)
@@ -84,6 +86,11 @@ def main():
                        f"{datetime.date.today().isoformat()}_bay_finder_probe.csv")
     try:
         for k, (wp, lane) in enumerate(candidate_spots(cmap, rng, a.samples), 1):
+            if a.from_left_lane:
+                left = wp.get_left_lane()
+                if (left is not None and left.lane_type == carla.LaneType.Driving
+                        and abs((left.transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180) < 60):
+                    wp = left
             tf = carla.Transform(
                 carla.Location(wp.transform.location.x, wp.transform.location.y,
                                wp.transform.location.z + LIDAR_HEIGHT_M),

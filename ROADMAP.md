@@ -238,3 +238,15 @@ the road-surface boundary); and fix the parker's stolen-slot handling (re-check 
 commit 91ba2d9, deployed after this experiment). Then the whole-loop comparison is worth
 re-running. The component result stands: 36 of 40 probe spots, 0 slots on a parked car, and
 two end-to-end parks in bays the van found itself.
+
+### Finder v2 (4 Sep, ~12:50): set-back bays, cambered roads, curving kerbs
+
+Search widened to 11 m; heights taken from a road plane fitted to the lidar instead of an
+assumed flat road; the kerb edge fitted as a gentle curve (radius > ~40 m) with the slot
+heading from the local tangent; and the edge taken as the nearest CLUSTER of raised points
+per strip rather than the nearest single point (road noise a few centimetres high was
+winning once the kerb was 9 m out). Probe on 60 fresh roadside spots: kerb at 45, a bay at 42,
+**0 on a parked vehicle**, side error mean 0.44 m (17 of 42 beyond 0.5 m; one 4 m outlier that
+the stack's gate would reject), heading mean 2.7 deg. What the rig calls a set-back bay is the
+van driving one lane further left on a two-lane road; the probe gains --from-left-lane to test
+that geometry directly.
