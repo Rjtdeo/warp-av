@@ -2104,6 +2104,15 @@ class WarpAV:
             return {"success": False, "reason": "Parker must be rules or rl", "parker": self.parker}
         if who == "rl" and not os.path.exists(self.rl_parker.model_path):
             return {"success": False, "reason": f"no brain at {self.rl_parker.model_path}", "parker": self.parker}
+        if who == "rl":
+            # Loading the brain's libraries takes ~10 s the first time: do it
+            # now, between missions, never at the hand-over on the road.
+            t0 = time.time()
+            try:
+                self.rl_parker._load()
+            except Exception as e:
+                return {"success": False, "reason": f"could not load the brain: {e}", "parker": self.parker}
+            print(f"[Parking] learned parker loaded in {time.time() - t0:.1f} s")
         self.parker = who
         self.logger.log_event("parker", f"the last 16 m are now driven by the {'learned' if who == 'rl' else 'hand-written'} parker")
         return {"success": True, "parker": who}
