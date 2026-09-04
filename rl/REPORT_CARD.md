@@ -56,3 +56,32 @@ evidence on the sensor question: the skill tolerates 25 cm / 3 deg of jitter in
 its inputs without retraining, while parking less neatly. Neither the noise nor
 the harder starts change the two caveats above: no obstacles are observed, and
 the inputs are still ground truth with noise added rather than a real sensor.
+
+## The two final exams (2026-09-03 20:20-20:31): finding the edge
+
+Pass marks were set BEFORE running. Clean bays, new seeds, same brain, no retraining.
+Rows in `rl/exams/2026-09-03_round6_final_*.csv` (now also recording the spawn heading
+error and sideways offset actually drawn).
+
+| tier | start | what it sees | pass mark | parked | failures | side clearance mean / worst | heading mean / worst |
+|---|---|---|---|---|---|---|---|
+| harder | 27-35 m back, up to +/-25 deg crooked, up to +/-1.5 m off the lane centre | noise 0.5 m / 6 deg / 0.4 m/s | 90%+, no collisions | **42/60 (70%) - FAIL** | 11 timeouts, 4 collisions, 3 wandered off | 0.10 / **0.00** m | 1.6 / 4.4 deg |
+| hardest | 29-43 m back, up to +/-40 deg, up to +/-2 m off | noise 1 m / 10 deg / 0.6 m/s, view frozen 1 step in 5, everything 0.3 s late | none - built to break it | **3/100** | 40 collisions, 37 timeouts, 20 wandered off | 0.10 / 0.05 m | 1.9 / 2.5 deg |
+
+**Verdict, stated as an envelope rather than a yes/no.** The skill is learnt and it
+generalises well past its training: 150/150 at 1.5x the distance, 5x the start
+angle, 1 m off-centre and 0.25 m / 3 deg of noise on its inputs. Doubling all of
+that at once drops it to 70% with parks that touch the line; quadrupling the
+noise and adding sensor freezes and 0.3 s of delay collapses it to 3%. Failures in
+the harder tier do not correlate with start angle (11 deg failed vs 12 deg parked)
+or start distance (31.7 vs 31.7 m), so it is the combined load, not one knob.
+Which knob matters most is not answerable from these two runs - the hardest tier
+changed six things at once by design; single-factor runs at these levels are the
+next step if the envelope needs to be mapped.
+
+Two things to keep honest. The collisions at 32-40 m are mostly vegetation,
+poles, kerbs and buildings - the van driving off the road under large heading
+errors and noisy inputs, which is a real failure. One (harder #32) was a
+decorative car 30 m back, outside the 18 m keep-clear zone the arena checks;
+starts beyond ~24 m are past what the arena was cleaned for. And the student
+still observes no obstacles at all; nothing in these exams changes that.
