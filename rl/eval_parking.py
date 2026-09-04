@@ -76,10 +76,11 @@ def _write_card(results, mode, episodes, seed):
     with open(RAW, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["episode", "p", "start_dist_m", "result",
-                    "m_len", "m_wid", "herr_deg"])
+                    "m_len", "m_wid", "herr_deg", "hit", "ax", "ay", "speed"])
         for i, r in enumerate(results, 1):
             w.writerow([i, r.get("p"), r.get("start_dist"), r.get("result"),
-                        r.get("m_len", ""), r.get("m_wid", ""), r.get("herr_deg", "")])
+                        r.get("m_len", ""), r.get("m_wid", ""), r.get("herr_deg", ""),
+                        r.get("hit", ""), r.get("ax", ""), r.get("ay", ""), r.get("speed", "")])
 
 
 def main():
@@ -115,11 +116,15 @@ def main():
                 action, _ = model.predict(obs, deterministic=True)
                 obs, _r, done, _tr, info = env.step(action)
             results.append(info)
-            print(f"episode {ep + 1:3d}: p={info.get('p')} "
-                  f"{info.get('result'):13s} "
-                  + (f"margins {info.get('m_len')}/{info.get('m_wid')} m, "
-                     f"heading {info.get('herr_deg')} deg"
-                     if info.get("result") == "parked" else ""))
+            detail = ""
+            if info.get("result") == "parked":
+                detail = (f"margins {info.get('m_len')}/{info.get('m_wid')} m, "
+                          f"heading {info.get('herr_deg')} deg")
+            elif info.get("result") == "collision":
+                detail = (f"hit {info.get('hit')} at {info.get('ax')} m along / "
+                          f"{info.get('ay')} m across, {info.get('herr_deg')} deg, "
+                          f"{info.get('speed')} m/s")
+            print(f"episode {ep + 1:3d}: p={info.get('p')} {info.get('result'):13s} {detail}")
     finally:
         env.close()
 

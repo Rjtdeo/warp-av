@@ -84,6 +84,7 @@ class CarlaParkingEnv(gym.Env):
         self.van_bp = bp
         self.col_sensor = None
         self._collided = False
+        self._hit = None            # what the last collision was with (diagnostics)
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(5,), dtype=np.float32)
@@ -132,8 +133,12 @@ class CarlaParkingEnv(gym.Env):
         self.col_sensor = None
         self.van = None
 
-    def _on_col(self, _event):
+    def _on_col(self, event):
         self._collided = True
+        try:
+            self._hit = event.other_actor.type_id
+        except Exception:
+            self._hit = "unknown"
 
     def _next_p(self):
         if self.exam_p is not None:
@@ -145,6 +150,7 @@ class CarlaParkingEnv(gym.Env):
         super().reset(seed=seed)
         self._destroy()
         self._collided = False
+        self._hit = None
         self._t = 0.0
         self._steer_prev = 0.0
 
@@ -225,6 +231,13 @@ class CarlaParkingEnv(gym.Env):
         if done:
             info["p"] = round(self._p, 2)
             info["start_dist"] = round(self._start_dist, 1)
+            if info.get("result") == "collision":
+                # Where it was and what it touched, so a crash is a fact, not a guess.
+                info["hit"] = self._hit or "unknown"
+                info["ax"] = round(ax, 2)
+                info["ay"] = round(ay, 2)
+                info["herr_deg"] = round(math.degrees(herr), 1)
+                info["speed"] = round(speed, 2)
             if self.curriculum is not None:
                 moved = self.curriculum.record(self._p,
                                                info.get("result") == "parked")
