@@ -206,3 +206,17 @@ collision en route) and by luck of the random destination, so three runs cannot 
 the lidar's effect. The clean experiment is to run map-vs-lidar bays in ground-truth
 perception mode, where the parker itself is known good (21 Aug: +0.17 / -0.02 m), over
 more than three runs.
+
+### The clean experiment (4 Sep, from 12:17): map bays vs lidar bays, ground-truth perception
+
+Same 3-run park-check twice over (6 runs), the van's obstacle perception on ground truth
+in both arms so the parker itself is the known-good one, and only the bay source differs.
+Perception mode and bay source are set by the rig before every run (`--perception-mode`,
+`--parking-source`, `--repeat`).
+
+**Arm A - map bays:** 3 of 6. Run 1 slipped through in camera mode (the stack had just
+booted; the mode switch did not take for that run) and stalled 0.8 m from the spot. In
+ground-truth mode the three plain parkings all finished inside (side margins -0.03 to
+-0.10 m within the 0.10 m tolerance, headings 1-3 deg); both stolen-slot runs failed - one
+sat behind the thief until the clock ran out (the stop-short rule fired too late, now fixed
+to re-check from 30 m out), one hit a decorative car on the approach.
