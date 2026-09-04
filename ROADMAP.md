@@ -157,3 +157,24 @@ in, and also when it is blocked near the destination (run 2 is exactly the case 
 real occupancy from the lidar would have found the way out); and the finder should say
 why it found nothing (points in the kerb band, edge strips) so a "no bay" is
 diagnosable.
+
+### Third and fourth exams (4 Sep, 11:28-11:43): the re-scan works; the stolen-slot run now collides
+
+Stack ab76c1e added a retrying approach re-scan (every 2 s from 22 m down to 6 m) with
+a logged reason for every miss; 57b547a added the consistency gate after run 1 of the
+third exam, watched live, showed the lidar locking onto a **bus-stop platform kerb**
+(slot 1.1 m right of the van; the real bay was set back 6.5 m) and the van stopping for
+the shelter as a "vehicle".
+
+| exam | run 1 | run 2 (slot stolen, 2 parked cars) | run 3 |
+|---|---|---|---|
+| third (ab76c1e) | GAP - bus-stop slot, stuck | **FAIL - collision with a street prop**, stack restarted by the rig | PASS - re-scan moved the target 2.38 m onto a lidar slot, inside, 0.01 m side |
+| fourth (57b547a) | PASS - map slot; re-scan saw "no straight line fits (curve or clutter)" | **FAIL - collision with the parked Tesla**, stack restarted by the rig | PASS |
+
+The lidar path has now parked the van twice in bays it found itself (0.12 m and 0.01 m
+side margins) and has never caused a collision: in both run-2 collisions the log shows
+"lidar saw no bay - falling back to the map" and no approach re-scan line at all, so
+those runs were map-only. The stolen-slot manoeuvre colliding twice in a row is new
+compared with the 21 Aug park-check (which passed it in ground-truth mode) and is being
+checked with a map-only control run on today's stack. The bus-stop gate has not yet been
+exercised live (run 1 of the fourth exam drew a different bay).
