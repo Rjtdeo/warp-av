@@ -45,7 +45,7 @@ from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
-from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with
+from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .perception.bay_finder import why_no_kerb
 
 
@@ -154,6 +154,7 @@ class WarpAV:
         self._parking_spot = None
         self._lidar_rescan_done = False
         self._lidar_rescan_tries = 0
+        self._hold_short_done = False
         self._traffic_vehicles = []
         self._traffic_walkers = []      # (walker, controller) pairs
         self._scenario_jaywalkers = []  # (walker, start_location)
@@ -609,6 +610,9 @@ class WarpAV:
                 d = math.hypot(pose.x - sp["x"], pose.y - sp["y"])
                 herr = abs((pose.yaw - sp["yaw"] + math.pi) % (2 * math.pi) - math.pi)
                 detail = f"Parked {d:.2f} m from the kerbside spot, heading off {math.degrees(herr):.0f} deg"
+                if sp.get("kind") == "hold":
+                    detail = (f"Held short of the taken bay, {d:.2f} m from the hold point "
+                              f"(slot #{sp.get('slot_index')} was occupied, none free ahead)")
                 _sl_list = getattr(self, "_parking_slots", None)
                 if (sp.get("kind") == "slot" and _sl_list
                         and sp.get("slot_index", 1 << 30) < len(_sl_list)):
@@ -1935,9 +1939,28 @@ class WarpAV:
                     new_idx = i
                     break
         if new_idx is None:
-            self.logger.log_event("parking_rescan",
-                                  f"chosen slot #{idx} now occupied and NO free slot remains AHEAD")
-            print("[Parking] chosen slot taken, no free slot ahead — obstacle logic will hold")
+            # Do not keep aiming at a slot we KNOW is taken and hope the
+            # obstacle logic stops us: in camera mode it did not, twice (4 Sep,
+            # third and fourth park-checks - collisions with the parked car).
+            # Stop short of it, in the lane, like a driver would.
+            if getattr(self, "_hold_short_done", False):
+                return
+            hold = hold_short_point(slots[idx], pose.x, pose.y, back_m=5.0)
+            ahead = (hold["x"] - pose.x) * fwd[0] + (hold["y"] - pose.y) * fwd[1]
+            self._hold_short_done = True
+            if ahead > 3.0 and self.planner.retarget_to_slot(self._route, hold):
+                self._parking_spot = {"x": hold["x"], "y": hold["y"], "yaw": hold["yaw"],
+                                      "offset_m": None, "moved_back_m": 0, "kind": "hold",
+                                      "slot_index": idx}
+                self.behavior._park_best_d = None
+                self.logger.log_event("parking_rescan",
+                                      f"chosen slot #{idx} now occupied and NO free slot remains AHEAD — "
+                                      f"holding {ahead:.1f} m ahead, short of the taken bay")
+                print(f"[Parking] slot #{idx} taken, none free ahead — stopping short of it")
+            else:
+                self.logger.log_event("parking_rescan",
+                                      f"chosen slot #{idx} now occupied and NO free slot remains AHEAD "
+                                      f"(too close to stop short — obstacle logic must hold)")
             return
         slots[idx]["chosen"] = False
         slots[new_idx]["chosen"] = True

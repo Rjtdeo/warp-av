@@ -87,3 +87,21 @@ def test_a_slot_far_along_or_twisted_is_rejected():
     ref = dict(x=0.0, y=0.0, yaw=0.0)
     assert consistent_with(ref, dict(x=20.0, y=0.0, yaw=0.0)) is not None
     assert consistent_with(ref, dict(x=2.0, y=0.0, yaw=math.radians(30))) is not None
+
+
+from warp_av.planning.sensed_slots import hold_short_point
+
+
+def test_hold_point_is_in_the_lane_short_of_the_taken_slot():
+    slot = dict(x=50.0, y=0.0, yaw=0.0, length=7.0, width=2.5)     # bay along +x
+    van_x, van_y = 30.0, -3.0                                       # in the lane, 3 m to the slot's left
+    h = hold_short_point(slot, van_x, van_y, back_m=5.0)
+    assert abs(h["x"] - (50.0 - 3.5 - 5.0)) < 1e-6, "5 m before the slot's rear edge"
+    assert abs(h["y"] - (-3.0)) < 1e-6, "at the van's own sideways offset - in the lane, not the bay"
+    assert h["source"] == "hold" and abs(h["yaw"]) < 1e-9
+
+
+def test_hold_point_follows_a_rotated_slot():
+    slot = dict(x=0.0, y=0.0, yaw=math.radians(90), length=7.0, width=2.5)  # bay along +y
+    h = hold_short_point(slot, 3.0, -20.0, back_m=5.0)              # van 3 m to the right (+x), behind
+    assert abs(h["y"] - (-8.5)) < 1e-6 and abs(h["x"] - 3.0) < 1e-6

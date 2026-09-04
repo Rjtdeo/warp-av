@@ -117,3 +117,19 @@ def consistent_with(reference: Dict, slot: Dict, max_side_m: float = 1.5,
     if abs(dyaw) > max_yaw_deg:
         return f"{abs(dyaw):.0f} deg off the reference heading (limit {max_yaw_deg:.0f})"
     return None
+
+
+def hold_short_point(slot: Dict, van_x: float, van_y: float, back_m: float = 5.0) -> Dict:
+    """A stop point in the LANE, back_m before the rear edge of a taken slot,
+    at the van's own sideways offset from the slot line - a driver who finds
+    the space taken stops short of it in the lane, they do not drive into it.
+    Returned as a slot-shaped dict so the route can be re-targeted to it."""
+    c, s = math.cos(slot["yaw"]), math.sin(slot["yaw"])
+    dx, dy = van_x - slot["x"], van_y - slot["y"]
+    side = -dx * s + dy * c                          # van's offset across the slot line
+    along = -(slot.get("length", SLOT_LEN_M) / 2.0 + back_m)
+    hx = slot["x"] + along * c - side * s
+    hy = slot["y"] + along * s + side * c
+    d = dict(slot_dict(hx, hy, slot["yaw"], slot.get("width", SLOT_WID_M)))
+    d["source"] = "hold"
+    return d
