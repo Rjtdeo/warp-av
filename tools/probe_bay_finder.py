@@ -1,4 +1,4 @@
-"""
+r"""
 Put the lidar bay finder in front of the real simulator and mark it.
 
     python tools\probe_bay_finder.py --samples 40
