@@ -44,6 +44,10 @@ class RLParker:
         self.done = False            # parked or gave up: hand-written parker owns the rest
         self.prev_steer = 0.0
         self.t0: Optional[float] = None
+        self.active_s = 0.0          # seconds actually at the wheel (stops for obstacles do not count)
+        self._last_act: Optional[float] = None
+        self._slot_ref = None        # (x, y) of the slot we engaged on
+        self._closest_ax = None      # nearest we have been to the slot centre, along the bay
         self.result = ""
 
     def _load(self):
@@ -63,13 +67,24 @@ class RLParker:
     def act(self, x: float, y: float, yaw: float, speed: float, slot: Dict) -> Dict:
         """One step at the wheel. Returns steering/throttle/brake plus
         parked / gave_up flags and a reason."""
+        now = time.time()
         if self.t0 is None:
-            self.t0 = time.time()
-        self.engaged = True
+            self.t0 = now
         sx, sy, syaw = slot["x"], slot["y"], slot["yaw"]
+        if self._slot_ref is None or math.hypot(sx - self._slot_ref[0], sy - self._slot_ref[1]) > 1.0:
+            # a new target (a re-scan moved it): start the approach afresh
+            self._slot_ref = (sx, sy)
+            self._closest_ax = None
+            self.prev_steer = 0.0
+        if self._last_act is not None and now - self._last_act < 1.0:
+            self.active_s += now - self._last_act
+        self._last_act = now
+        self.engaged = True
         ax, ay, herr = to_slot_frame(x, y, yaw, sx, sy, syaw)
         inside, m_len, m_wid = van_corners_in_slot(ax, ay, herr)
-        elapsed = time.time() - self.t0
+        if self._closest_ax is None or abs(ax) < abs(self._closest_ax):
+            self._closest_ax = ax
+        elapsed = self.active_s
 
         if inside and abs(speed) < SUCCESS_SPEED:
             self.done = True
@@ -78,7 +93,9 @@ class RLParker:
             return dict(steering=0.0, throttle=0.0, brake=1.0, parked=True, gave_up=False,
                         reason=self.result)
         why = None
-        if ax > OVERSHOOT_M:
+        # overshoot only counts once we have actually been near the slot -
+        # a target that jumps behind us is not an 83 m overshoot
+        if ax > OVERSHOOT_M and self._closest_ax is not None and self._closest_ax < 3.0:
             why = f"overshot the slot by {ax:.1f} m"
         elif abs(ay) > LATERAL_LOST_M:
             why = f"wandered {abs(ay):.1f} m off the slot line"

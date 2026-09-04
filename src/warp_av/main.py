@@ -271,6 +271,9 @@ class WarpAV:
             print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
             self._parking_spot = None
             self._lidar_rescan_done = False
+            self._lidar_rescan_tries = 0
+            self._hold_short_done = False
+            self.rl_parker.reset()
         if self._parking_spot:
             moved = self._parking_spot.get("moved_back_m", 0)
             kind = self._parking_spot.get("kind", "kerb")

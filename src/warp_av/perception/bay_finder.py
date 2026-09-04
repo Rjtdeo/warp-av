@@ -40,7 +40,8 @@ OCCUPIED_POINTS = 2           # a bin with this many body points is taken (near)
 OCCUPIED_FAR_M = 15.0         # ... and beyond this range a single point is enough:
                               # a parked car 25 m away returns 2-5 points in total
 END_MARGIN_M = 0.5            # a bay needs this much clear beyond each end
-KERB_GAP_M = 0.3              # a parked van sits this far off the kerb face
+KERB_GAP_M = 0.6              # a parked van sits this far off the kerb face (0.3 put the
+                              # van's side within reach of a pole on the kerb: arm C, run 4)
 
 
 @dataclass

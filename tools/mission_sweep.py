@@ -416,9 +416,9 @@ def execute_run(spec, rng, points, out_dir, log):
         # set before EVERY run: a watchdog restart of the stack resets it to "map"
         api_post("/api/parking/source", {"source": PARKING_SOURCE})
     if PARKER:
-        r = api_post("/api/parking/parker", {"parker": PARKER})
-        if not r.get("success", True):
-            log(f"parker NOT set: {r.get('reason')}")
+        r = api_post("/api/parking/parker", {"parker": PARKER}, timeout=40.0)
+        if r.get("success") is not True:
+            log(f"parker NOT set: {r.get('reason', 'no answer')}")
     st0 = api_get("/api/state")
     res["parking_source"] = st0.get("parking_source")
     res["parker"] = st0.get("parker")
