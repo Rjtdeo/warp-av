@@ -113,3 +113,24 @@ two 6-degree headings are bad fits at spots with a 2.0 m map lane; still open.
 Next: plug it into `planner.find_parking_slots` as the slot source when a "sensed bays"
 mode is on (map slots as fallback), re-scan on approach as the stack already does, and
 exam the whole park-from-the-lidar loop with the round-6 parker.
+
+### First whole-loop exam: park from lidar-found bays (4 Sep, 11:02-11:15)
+
+The bay finder is wired into the stack behind `parking_source` (`/api/parking/source`,
+default `map`); with `lidar` selected, FIND PARKING takes its slots from the live sweep
+at the current pose and falls back to the map if no kerb is seen. `mission_sweep.py
+--park-check --parking-source lidar` drove three real missions (camera+lidar
+perception mode, stack 544b1f3), all three using lidar slots:
+
+| run | what | result |
+|---|---|---|
+| 1 | plain slot parking | **FAIL** - hovered 0.9-1.0 m short of the spot until the clock ran out |
+| 2 | chosen slot stolen by a parked car, re-scan and retarget | **FAIL** - retargeted correctly, finished 0.29 m over the slot's side line, 7.4 deg off |
+| 3 | plain slot parking | **PASS** - inside, side margin -0.06 m (within tolerance), 2.8 deg |
+
+No collisions. The loop works end to end - see the kerb, find the free stretch,
+choose, drive in - and the failures are the lidar slot sitting too far towards the
+kerb at some spots (the probe's worst spots were 1.0-1.3 m out at the same kind of
+place), so the van cannot reach the slot centre and stops short. The map-based
+park-check on 21 Aug measured +0.17 / -0.02 m at the same job. Next: bound the slot's
+lateral position against the lane the van is driving in, and re-examine.
