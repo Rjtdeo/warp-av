@@ -30,10 +30,12 @@ KERB_HIGH_M = 0.35            # ... up to this (kerbs are 10-25 cm; bumpers star
 BODY_LOW_M = 0.35             # parked-car candidates: from here ...
 BODY_HIGH_M = 2.2             # ... to here above the road
 SEARCH_RIGHT_MIN_M = 0.8      # look for the kerb this far to the right of the van ...
-SEARCH_RIGHT_MAX_M = 8.0      # ... out to here
+SEARCH_RIGHT_MAX_M = 11.0     # ... out to here (a set-back bay's kerb sits 7-9 m out)
 SEARCH_BACK_M = 12.0          # and this far behind ...
 SEARCH_AHEAD_M = 30.0         # ... to this far ahead (beyond ~25 m a car is 2-5 points)
 BIN_M = 0.5                   # occupancy bins along the kerb
+MAX_CURVE = 0.012             # |c| in y = a + b x + c x^2: a gentle bend (radius > ~40 m)
+ROAD_FIT_HALF_WIDTH_M = 3.5   # road-surface plane is fitted from points this close beside the van
 OCCUPIED_POINTS = 2           # a bin with this many body points is taken (near) ...
 OCCUPIED_FAR_M = 15.0         # ... and beyond this range a single point is enough:
                               # a parked car 25 m away returns 2-5 points in total
@@ -55,77 +57,91 @@ class Bay:
 
 @dataclass
 class Kerb:
-    a: float            # kerb line, sensor frame: y_right = a + b * x
+    a: float            # kerb edge, sensor frame: y_right = a + b * x + c * x^2
     b: float
+    c: float
     n_points: int
+
+    def y_at(self, x):
+        return self.a + self.b * x + self.c * x * x
+
+    def yaw_at(self, x):
+        return math.atan(self.b + 2.0 * self.c * x)
 
     @property
     def yaw(self) -> float:
-        return math.atan(self.b)
+        return self.yaw_at(0.0)
 
     def right_of(self, x, y_right):
-        """Signed distance from the kerb line; positive = road side (van side)."""
-        return (self.a + self.b * x - y_right) / math.sqrt(1.0 + self.b * self.b)
+        """Signed distance from the kerb edge; positive = road side (van side)."""
+        slope = self.b + 2.0 * self.c * x
+        return (self.y_at(x) - y_right) / np.sqrt(1.0 + slope * slope)
+
+
+def fit_road_plane(points: np.ndarray):
+    """(a, b, c) of the road surface z = a + b x + c y, fitted from the lowest
+    points beside and ahead of the van. Heights are measured from THIS, not
+    from an assumed flat road: on a cambered street the pavement 8 m out can
+    sit below a fixed 'kerb height' band and vanish."""
+    x, y, z = points[:, 0], points[:, 1], points[:, 2]
+    m = (np.abs(y) < ROAD_FIT_HALF_WIDTH_M) & (x > -6.0) & (x < 20.0) & (z < -LIDAR_HEIGHT_M + 0.6)
+    if m.sum() < 50:
+        return (-LIDAR_HEIGHT_M, 0.0, 0.0)
+    xs, ys, zs = x[m], y[m], z[m]
+    keep = zs <= np.percentile(zs, 60)          # the lowest 60 % are the road
+    A = np.stack([np.ones(keep.sum()), xs[keep], ys[keep]], axis=1)
+    try:
+        (a, b, c), *_ = np.linalg.lstsq(A, zs[keep], rcond=None)
+    except Exception:
+        return (-LIDAR_HEIGHT_M, 0.0, 0.0)
+    if abs(b) > 0.15 or abs(c) > 0.15:          # nonsense slope: fall back to flat
+        return (-LIDAR_HEIGHT_M, 0.0, 0.0)
+    return (float(a), float(b), float(c))
+
+
+def heights_above_road(points: np.ndarray, plane=None):
+    if plane is None:
+        plane = fit_road_plane(points)
+    a, b, c = plane
+    return points[:, 2] - (a + b * points[:, 0] + c * points[:, 1])
 
 
 def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optional[Kerb]:
-    """Straight line along the kerb FACE: the road-side edge of the pavement.
-
-    The lidar sees the whole pavement surface at kerb height, so a plain fit
-    through every low point runs down the middle of the pavement, a metre or
-    more beyond the kerb (first probe: +1.2 m, at all 40 spots). So: in each
-    half-metre strip along the van, keep only the nearest low point to the van;
-    those are the edge; fit the line through them, trimming stragglers."""
+    """Kerb edge as a gentle curve through the nearest raised points in each
+    half-metre strip to the van's right (the pavement's near edge), with
+    heights taken from a fitted road plane. A straight line is the special
+    case c = 0; a bend tighter than MAX_CURVE is refused."""
     if points is None or len(points) == 0:
         return None
-    x, y, z = points[:, 0], points[:, 1], points[:, 2] + LIDAR_HEIGHT_M
+    x, y = points[:, 0], points[:, 1]
+    h = heights_above_road(points)
     m = ((y > SEARCH_RIGHT_MIN_M) & (y < SEARCH_RIGHT_MAX_M) & (x > -SEARCH_BACK_M)
-         & (x < SEARCH_AHEAD_M) & (z > KERB_LOW_M) & (z < KERB_HIGH_M))
+         & (x < SEARCH_AHEAD_M) & (h > KERB_LOW_M) & (h < KERB_HIGH_M))
     xs, ys = x[m], y[m]
     if len(xs) < 20:
         return None
-    # nearest low point per along-strip = the pavement's near edge
     strip = np.floor((xs + SEARCH_BACK_M) / BIN_M).astype(int)
     order = np.lexsort((ys, strip))
-    strip_sorted, first = np.unique(strip[order], return_index=True)
+    _, first = np.unique(strip[order], return_index=True)
     ex, ey = xs[order][first], ys[order][first]
-    if len(ex) < 8:
+    if len(ex) < 6:
         return None
     keep = np.ones(len(ex), dtype=bool)
-    a = b = 0.0
+    a = b = c = 0.0
     for _ in range(rounds):
-        if keep.sum() < 6:
+        if keep.sum() < 5:
             return None
-        A = np.stack([np.ones(keep.sum()), ex[keep]], axis=1)
-        (a, b), *_ = np.linalg.lstsq(A, ey[keep], rcond=None)
-        resid = np.abs(ey - (a + b * ex))
+        A = np.stack([np.ones(keep.sum()), ex[keep], ex[keep] ** 2], axis=1)
+        (a, b, c), *_ = np.linalg.lstsq(A, ey[keep], rcond=None)
+        if abs(c) > MAX_CURVE:                     # too bent: straight line instead
+            A = np.stack([np.ones(keep.sum()), ex[keep]], axis=1)
+            (a, b), *_ = np.linalg.lstsq(A, ey[keep], rcond=None)
+            c = 0.0
+        resid = np.abs(ey - (a + b * ex + c * ex ** 2))
         keep = resid < trim_m
-    if keep.sum() < 6 or abs(b) > math.tan(math.radians(35)):
+    if keep.sum() < 5 or abs(b) > math.tan(math.radians(35)):
         return None
-    return Kerb(float(a), float(b), int(keep.sum()))
-
-
-def along_of(x, y_right, kerb: Kerb):
-    """Along-kerb coordinate of sensor-frame points (what Bay.along_* and
-    Bay.slot_* are measured in)."""
-    c, s = math.cos(kerb.yaw), math.sin(kerb.yaw)
-    return x * c + y_right * s
-
-
-def why_no_kerb(points: np.ndarray) -> str:
-    """One line saying why fit_kerb would give up on this sweep - for logs."""
-    if points is None or len(points) == 0:
-        return "no lidar points"
-    x, y, z = points[:, 0], points[:, 1], points[:, 2] + LIDAR_HEIGHT_M
-    band = ((y > SEARCH_RIGHT_MIN_M) & (y < SEARCH_RIGHT_MAX_M) & (x > -SEARCH_BACK_M)
-            & (x < SEARCH_AHEAD_M) & (z > KERB_LOW_M) & (z < KERB_HIGH_M))
-    n = int(band.sum())
-    if n < 20:
-        return f"only {n} kerb-height points to the right (need 20)"
-    strips = len(np.unique(np.floor((x[band] + SEARCH_BACK_M) / BIN_M).astype(int)))
-    if strips < 8:
-        return f"{n} kerb-height points but only {strips} strips along (need 8)"
-    return f"{n} kerb-height points in {strips} strips, but no straight line fits (curve or clutter)"
+    return Kerb(float(a), float(b), float(c), int(keep.sum()))
 
 
 def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
@@ -134,11 +150,13 @@ def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
     kerb = fit_kerb(points)
     if kerb is None:
         return []
-    x, y, z = points[:, 0], points[:, 1], points[:, 2] + LIDAR_HEIGHT_M
+    x, y = points[:, 0], points[:, 1]
+    z = heights_above_road(points)
     d = kerb.right_of(x, y)                       # + towards the van
     body = ((z > BODY_LOW_M) & (z < BODY_HIGH_M) & (d > -0.3) & (d < SLOT_WID_M + 1.0)
             & (x > -SEARCH_BACK_M) & (x < SEARCH_AHEAD_M))
-    # along-kerb coordinate: project onto the kerb direction
+    # along-kerb coordinate: for a gentle curve, x along the tangent at the
+    # sensor is within a few centimetres of arc length over 30 m
     c, s = math.cos(kerb.yaw), math.sin(kerb.yaw)
     along = x * c + y * s
     edges = np.arange(-SEARCH_BACK_M, SEARCH_AHEAD_M + BIN_M, BIN_M)
@@ -161,15 +179,15 @@ def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
             # centre the slot in the free stretch, one slot back from the kerb
             mid = 0.5 * (free_start + free_end)
             off = KERB_GAP_M + SLOT_WID_M / 2.0          # from the kerb face, road side
-            kx = mid * c                                    # a point on the kerb line
-            ky = kerb.a + kerb.b * kx
-            # step off the kerb towards the van (perpendicular, road side)
-            nx, ny = -s, c                                  # unit normal in sensor frame (y right)
-            # choose the normal that points towards the van (decreasing y_right)
-            if ny > 0:
+            kx = mid * c                                    # a point on the kerb edge
+            ky = kerb.y_at(kx)
+            yaw_here = kerb.yaw_at(kx)                      # the edge's direction there
+            cc, ss = math.cos(yaw_here), math.sin(yaw_here)
+            nx, ny = -ss, cc                                # unit normal (sensor frame, y right)
+            if ny > 0:                                      # towards the van = decreasing y_right
                 nx, ny = -nx, -ny
             sx, sy = kx + nx * off, ky + ny * off
-            bays.append(Bay(x=float(sx), y=float(-sy), yaw=float(kerb.yaw),
+            bays.append(Bay(x=float(sx), y=float(-sy), yaw=float(yaw_here),
                             length=float(free_end - free_start),
                             along_start=float(free_start), along_end=float(free_end),
                             slot_start=float(mid - SLOT_LEN_M / 2.0),

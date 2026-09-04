@@ -150,6 +150,7 @@ def main():
                 overlaps = any(not (nearest.slot_end < s or nearest.slot_start > e) for s, e in occ)
             free_truth = any(True for _ in [0]) and not occ   # no decoration within view = free
             rows.append(dict(sample=k, kerb_found=kerb is not None, kerb_err_m=round(kerb_err, 2) if kerb else "",
+                             bay_offset_m=round(ly, 2),
                              bays_found=len(bays),
                              nearest_x=round(nearest.x, 2) if nearest else "",
                              nearest_len=round(nearest.length, 1) if nearest else "",
@@ -171,6 +172,12 @@ def main():
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             w.writeheader(); w.writerows(rows)
         found = [r for r in rows if r["bays_found"] > 0]
+        for label, sel in (("lane-side bays (< 4 m right)", [r for r in rows if r["bay_offset_m"] < 4.0]),
+                           ("set-back bays (>= 4 m right)", [r for r in rows if r["bay_offset_m"] >= 4.0])):
+            if sel:
+                print(f"{label}: {len(sel)} spots, kerb found at {sum(1 for r in sel if r['kerb_found'])}, "
+                      f"a bay at {sum(1 for r in sel if r['bays_found'] > 0)}, "
+                      f"on a parked vehicle {sum(1 for r in sel if r['overlaps_parked_vehicle'])}")
         se = [abs(float(r["side_err_m"])) for r in found]
         he = [abs(float(r["heading_err_deg"])) for r in found]
         print(f"\n{len(rows)} spots: kerb found at {sum(1 for r in rows if r['kerb_found'])}, "
