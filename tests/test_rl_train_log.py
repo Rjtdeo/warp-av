@@ -24,7 +24,7 @@ def test_a_brand_new_log_gets_a_header(tmp_path):
 
 def test_a_matching_log_is_appended_to_untouched(tmp_path):
     log = str(tmp_path / "train_log.csv")
-    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1", "1"]])
+    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1", "1", "0", "0"]])
     needs_header, backup = prepare_log(log)
     assert not needs_header and backup is None
     assert header_of(log) == COLUMNS, "the existing log is left alone"
@@ -56,7 +56,7 @@ def test_every_row_still_matches_the_header_after_rotation(tmp_path):
         w = csv.writer(f)
         if needs_header:
             w.writerow(COLUMNS)
-        w.writerow(["9", "10", "1", "201.3", "parked", "0.0", "16.3", "1"])
+        w.writerow(["9", "10", "1", "201.3", "parked", "0.0", "16.3", "1", "1", "12"])
 
     with open(log, newline="") as f:
         rows = list(csv.reader(f))
@@ -86,7 +86,7 @@ def test_a_fresh_run_never_appends_to_the_previous_runs_log(tmp_path):
     in one CSV with the episode counter restarting mid-file. A new run must
     always start its own file, whatever the old header looks like."""
     log = str(tmp_path / "train_log.csv")
-    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1", "1"]])
+    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1", "1", "0", "0"]])
     needs_header, backup = prepare_log(log, fresh=True)
     assert needs_header and backup and os.path.exists(backup)
     assert not os.path.exists(log)
@@ -96,5 +96,5 @@ def test_a_fresh_run_never_appends_to_the_previous_runs_log(tmp_path):
 
 def test_a_resumed_run_keeps_appending_to_its_own_log(tmp_path):
     log = str(tmp_path / "train_log.csv")
-    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1", "1"]])
+    _write(log, COLUMNS, [["1", "2", "3", "4.0", "parked", "0.45", "7.1", "1", "0", "0"]])
     assert prepare_log(log, fresh=False) == (False, None)

@@ -32,7 +32,7 @@ from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
                              bay_is_clear, feelers, neighbour_pose,
                              neighbour_behind_fits, neighbour_ahead_fits,
-                             NEIGHBOUR_BEHIND_BAYS, FEELER_SECTORS, Curriculum,
+                             NEIGHBOUR_BEHIND_BAYS, FEELER_SECTORS, Curriculum, Stages,
                              LANE_START_M, SLOT_LEN, SLOT_WID)
 
 FIXED_DT = 0.1
@@ -73,7 +73,9 @@ class CarlaParkingEnv(gym.Env):
     def __init__(self, host="localhost", port=2000, seed=7, exam_p=None,
                  curriculum=None, lane_start_m=LANE_START_M, yaw_noise_deg=3.0,
                  lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0,
-                 neighbour_p=0.5, neighbour_ahead_p=0.3, use_feelers=True):
+                 neighbour_p=0.5, neighbour_ahead_p=0.3, use_feelers=True,
+                 reverse=False, obstacles=False, neighbour_behind_bays=NEIGHBOUR_BEHIND_BAYS,
+                 stages=None):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
         yaw_noise_deg    random heading error at spawn, +/- (train: 3)
@@ -89,7 +91,11 @@ class CarlaParkingEnv(gym.Env):
                          back not to be born touching it)
         neighbour_ahead_p  chance of one in the bay ahead
         use_feelers      False reproduces the round-6 five-number view, so an
-                         older brain can sit the same exam as a newer one"""
+                         older brain can sit the same exam as a newer one
+        reverse          a third control: > 0.5 selects reverse gear (round 8)
+        obstacles        hazards in stages (parking_math.Stages) instead of the
+                         flat neighbour_p / neighbour_ahead_p chances
+        neighbour_behind_bays  how many bays back the practice car sits (1 or 2)"""
         super().__init__()
         self.rng = random.Random(seed)
         self.exam_p = exam_p
@@ -104,6 +110,13 @@ class CarlaParkingEnv(gym.Env):
         self.neighbours = []
         self.use_feelers = bool(use_feelers)
         self._feelers_now = None
+        self.reverse = bool(reverse)
+        self.obstacles = bool(obstacles)
+        self.neighbour_behind_bays = int(neighbour_behind_bays)
+        self.stages = (stages or Stages()) if obstacles else None
+        self._ax_prev = 0.0
+        self._reverse_steps = 0
+        self._reversing = False
         self._obs_queue = []            # for obs_delay
         self._obs_last = None           # for obs_dropout
         self._spawn_yaw_off = 0.0
@@ -165,7 +178,8 @@ class CarlaParkingEnv(gym.Env):
         self._collided = False
         self._hit = None            # what the last collision was with (diagnostics)
 
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0,
+                                       shape=(3 if self.reverse else 2,), dtype=np.float32)
         # 5 pose numbers + 4 feelers (see parking_math.feelers)
         n_obs = 5 + (len(FEELER_SECTORS) if self.use_feelers else 0)
         self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(n_obs,),
@@ -232,6 +246,35 @@ class CarlaParkingEnv(gym.Env):
                 pass
             self.neighbours.append(actor)
         return actor is not None
+
+    def _place_hazards(self, drive_wp, planned_start):
+        """Which neighbours this attempt gets. With obstacle stages: stage 0
+        none; stage 1 a car two bays back (50%) or one ahead (30%), never both;
+        stage 2 also a car RIGHT behind (30%, bay ahead free) - only a
+        pull-past-and-reverse gets in. Without stages: the flat chances."""
+        if self.stages is not None:
+            lvl = self.stages.level
+            if lvl == 0:
+                return
+            if lvl >= 2 and neighbour_behind_fits(planned_start) and self.rng.random() < 0.3:
+                self._spawn_neighbour(drive_wp, -1)
+                return
+            behind = False
+            if neighbour_behind_fits(planned_start) and self.rng.random() < 0.5:
+                behind = self._spawn_neighbour(drive_wp, -2)
+            if not behind and neighbour_ahead_fits(planned_start) and self.rng.random() < 0.3:
+                self._spawn_neighbour(drive_wp, +1)
+            return
+        behind = False
+        if (self.neighbour_p and neighbour_behind_fits(planned_start)
+                and self.rng.random() < self.neighbour_p):
+            behind = self._spawn_neighbour(drive_wp, -self.neighbour_behind_bays)
+        # Never both without a reverse gear: a gap between two parked cars is
+        # not a lesson, it is a wall.
+        if (not behind and self.neighbour_ahead_p
+                and neighbour_ahead_fits(planned_start)
+                and self.rng.random() < self.neighbour_ahead_p):
+            self._spawn_neighbour(drive_wp, +1)
 
     def _obstacle_points(self):
         """Outline points of everything the feelers may touch: the real
@@ -302,16 +345,7 @@ class CarlaParkingEnv(gym.Env):
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
                 planned_start = math.hypot(px - sx, py - sy)
-                behind = False
-                if (self.neighbour_p and neighbour_behind_fits(planned_start)
-                        and self.rng.random() < self.neighbour_p):
-                    behind = self._spawn_neighbour(drive_wp, -NEIGHBOUR_BEHIND_BAYS)
-                # Never both: with no reverse gear, nosing into a gap between two
-                # parked cars is not a lesson, it is a wall.
-                if (not behind and self.neighbour_ahead_p
-                        and neighbour_ahead_fits(planned_start)
-                        and self.rng.random() < self.neighbour_ahead_p):
-                    self._spawn_neighbour(drive_wp, +1)
+                self._place_hazards(drive_wp, planned_start)
                 break
         if self.van is None:
             raise RuntimeError("could not spawn the practice van anywhere")
@@ -326,6 +360,9 @@ class CarlaParkingEnv(gym.Env):
         ax, ay, herr = self._slot_frame()
         self._dist_prev = math.hypot(ax, ay)
         self._align_prev = lateral_error(ay, herr)
+        self._ax_prev = ax
+        self._reverse_steps = 0
+        self._reversing = False
         # Room to stray and time allowed both scale with where this attempt
         # began — a flat limit punished far starts for existing.
         self._p = p
@@ -373,11 +410,16 @@ class CarlaParkingEnv(gym.Env):
     def step(self, action):
         steer = float(np.clip(action[0], -1, 1))
         accel = float(np.clip(action[1], -1, 1))
+        gear_rev = bool(self.reverse and len(action) > 2 and float(action[2]) > 0.5)
         _, _, _, speed = self._pose()
-        throttle = max(0.0, accel) * 0.7 if speed < MAX_SPEED else 0.0
+        cap = 1.5 if gear_rev else MAX_SPEED          # reversing is slow
+        throttle = max(0.0, accel) * 0.7 if speed < cap else 0.0
         brake = max(0.0, -accel)
         self.van.apply_control(carla.VehicleControl(
-            throttle=throttle, steer=steer * 0.8, brake=brake))
+            throttle=throttle, steer=steer * 0.8, brake=brake, reverse=gear_rev))
+        self._reversing = gear_rev
+        if gear_rev:
+            self._reverse_steps += 1
         self.world.tick()
         self._t += FIXED_DT
 
@@ -387,9 +429,11 @@ class CarlaParkingEnv(gym.Env):
             ax, ay, herr, speed, self._dist_prev, steer, self._steer_prev,
             self._t, self._collided, timeout_s=self._timeout_s,
             bounds_m=self._bounds_m, align_prev=self._align_prev,
-            feeler_readings=self._feelers_now)
+            feeler_readings=self._feelers_now, ax_prev=self._ax_prev,
+            overshoot_m=12.0 if self.reverse else None, reversing=self._reversing)
         self._dist_prev = math.hypot(ax, ay)
         self._align_prev = lateral_error(ay, herr)
+        self._ax_prev = ax
         self._steer_prev = steer
         if done:
             info["p"] = round(self._p, 2)
@@ -397,6 +441,12 @@ class CarlaParkingEnv(gym.Env):
             info["spawn_yaw_off_deg"] = round(self._spawn_yaw_off, 1)
             info["spawn_lat_off_m"] = round(self._spawn_lat_off, 2)
             info["neighbours"] = len(self.neighbours)
+            info["reverse_steps"] = self._reverse_steps
+            info["stage"] = self.stages.level if self.stages is not None else ""
+            if self.stages is not None:
+                moved = self.stages.record(info.get("result") == "parked")
+                if moved is not None:
+                    print(f"[stages] {self.stages.describe()}")
             if info.get("result") == "collision":
                 # Where it was and what it touched, so a crash is a fact, not a guess.
                 info["hit"] = self._hit or "unknown"

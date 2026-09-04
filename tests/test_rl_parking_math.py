@@ -457,3 +457,48 @@ def test_side_feelers_cover_the_rear_quarters():
     al, ar, left, right = feelers(0.0, 0.0, 0.0, [(-2.0, -2.0)])      # behind-left
     assert left < 1.0 and right == 1.0
     assert feelers(0.0, 0.0, 0.0, [(-4.0, 0.0)]) == [1.0] * 4, "straight behind still unseen"
+
+
+from rl.parking_math import Stages, ALIGN_ZONE_M, REVERSE_COST
+
+
+def test_progress_along_the_bay_ignores_a_sideways_cut_in():
+    """Round 7: centre-distance progress paid for cutting in early - the
+    crash path. Along the bay, closing sideways earns nothing by itself."""
+    cut_in, _, _ = step_outcome(-12.0, -1.0, 0.0, 1.0, 12.4, 0.0, 0.0, 3.0, False, ax_prev=-12.0)
+    ahead, _, _ = step_outcome(-11.0, -3.0, 0.0, 1.0, 12.4, 0.0, 0.0, 3.0, False, ax_prev=-12.0)
+    assert ahead > cut_in + 5.0
+
+
+def test_reversing_into_the_slot_is_paid_like_driving_into_it():
+    fwd, _, _ = step_outcome(-2.0, 0.0, 0.0, 1.0, 3.0, 0.0, 0.0, 3.0, False, ax_prev=-3.0)
+    rev, _, _ = step_outcome(2.0, 0.0, 0.0, 1.0, 3.0, 0.0, 0.0, 3.0, False, ax_prev=3.0, reversing=True)
+    assert abs(fwd - rev - REVERSE_COST) < 1e-9
+
+
+def test_lining_up_only_pays_near_the_bay():
+    far, _, _ = step_outcome(-14.0, -2.0, 0.1, 1.0, 14.1, 0.0, 0.0, 3.0, False, ax_prev=-14.0, align_prev=2.5)
+    near, _, _ = step_outcome(-6.0, -2.0, 0.1, 1.0, 6.3, 0.0, 0.0, 3.0, False, ax_prev=-6.0, align_prev=2.5)
+    assert near > far + 1.0 and ALIGN_ZONE_M < 10.0
+
+
+def test_a_reversing_parker_may_pull_past_the_slot():
+    _, done_fwd, info_fwd = step_outcome(8.0, -3.0, 0.0, 1.0, 8.5, 0.0, 0.0, 3.0, False)
+    _, done_rev, info_rev = step_outcome(8.0, -3.0, 0.0, 1.0, 8.5, 0.0, 0.0, 3.0, False, overshoot_m=12.0)
+    assert done_fwd and info_fwd["result"] == "overshoot"
+    assert not done_rev
+
+
+def test_hazard_stages_unlock_with_success_and_fall_back_with_failure():
+    st = Stages(window=4)
+    assert st.level == 0
+    for _ in range(4):
+        st.record(True)
+    assert st.level == 1
+    for _ in range(4):
+        st.record(False)
+    assert st.level == 0
+    top = Stages(window=4, start=2)
+    for _ in range(8):
+        top.record(True)
+    assert top.level == 2 and "right behind" in top.describe()

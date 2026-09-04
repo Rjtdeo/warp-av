@@ -81,13 +81,13 @@ def _write_rows(results):
         w = csv.writer(f)
         w.writerow(["episode", "p", "start_dist_m", "result",
                     "m_len", "m_wid", "herr_deg", "hit", "ax", "ay", "speed",
-                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours"])
+                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours", "reverse_steps"])
         for i, r in enumerate(results, 1):
             w.writerow([i, r.get("p"), r.get("start_dist"), r.get("result"),
                         r.get("m_len", ""), r.get("m_wid", ""), r.get("herr_deg", ""),
                         r.get("hit", ""), r.get("ax", ""), r.get("ay", ""), r.get("speed", ""),
                         r.get("spawn_yaw_off_deg", ""), r.get("spawn_lat_off_m", ""),
-                        r.get("neighbours", "")])
+                        r.get("neighbours", ""), r.get("reverse_steps", "")])
 
 
 def main():
@@ -118,6 +118,10 @@ def main():
                     help="brain file to examine (default rl/models/parking_ppo.zip)")
     ap.add_argument("--no-feelers", action="store_true",
                     help="give the student the round-6 five-number view (needed for brains trained before round 7)")
+    ap.add_argument("--reverse", action="store_true",
+                    help="the brain has the reverse-gear control (round 8 and later)")
+    ap.add_argument("--behind-bays", type=int, default=2,
+                    help="how many bays back the practice car sits when --neighbour-p is set (1 = right behind)")
     ap.add_argument("--tag", type=str, default="",
                     help="name this exam; rows go to rl/exams/<date>_<tag>.csv and the main report card is left alone")
     a = ap.parse_args()
@@ -140,7 +144,8 @@ def main():
                           obs_noise=obs_noise, obs_dropout=a.obs_dropout,
                           obs_delay=a.obs_delay, neighbour_p=a.neighbour_p,
                           neighbour_ahead_p=a.neighbour_ahead_p,
-                          use_feelers=not a.no_feelers)   # different bays than training
+                          use_feelers=not a.no_feelers, reverse=a.reverse,
+                          neighbour_behind_bays=a.behind_bays)   # different bays than training
     if a.tag:
         print(f"[eval] harder-exam settings: lane start {a.lane_start} m, yaw +/-{a.yaw_noise} deg, "
               f"lateral +/-{a.lateral_noise} m, obs noise {obs_noise}, "

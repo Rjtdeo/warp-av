@@ -18,7 +18,7 @@ import csv
 import os
 
 COLUMNS = ["wall_s", "steps", "episode", "reward", "result", "p", "start_dist_m",
-           "neighbours"]
+           "neighbours", "stage", "reverse_steps"]
 
 
 def header_of(path):

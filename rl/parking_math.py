@@ -103,14 +103,24 @@ def lateral_error(ay, herr):
     return abs(ay) + VAN_HALF_LEN * abs(math.sin(herr))
 
 
+ALIGN_ZONE_M = 9.5           # lining-up only pays inside the last slot-and-a-bit; paid
+                             # everywhere it rewarded the early cut-in that clips a car
+REVERSE_COST = 0.02          # per step in reverse: reversing is allowed, dithering is not
+
+
 def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
                  collided, timeout_s=30.0, bounds_m=None, align_prev=None,
-                 feeler_readings=None):
+                 feeler_readings=None, ax_prev=None, overshoot_m=None, reversing=False):
     """One training step's (reward, done, info).
 
-    dist_prev is last step's distance-to-centre (progress shaping).
+    dist_prev is last step's distance-to-centre (progress shaping); when
+    ax_prev is given, progress is paid ALONG THE BAY (|ax| shrinking) instead -
+    round 7 showed centre-distance progress rewards the early cut-in that
+    clips a parked car, and reversing into a slot shrinks |ax| just as well.
     align_prev is last step's lateral_error; pass it to also pay for getting
     straighter and more centred, not only closer. None disables that term.
+    overshoot_m overrides OVERSHOOT_M (a reversing parker must be allowed to
+    pull past the slot first).
     bounds_m is how far out this attempt is allowed to stray; pass
     bounds_for(start_dist) so a far start is not disqualified for barely
     moving. None keeps the old fixed limit.
@@ -123,7 +133,7 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
         return COLLISION_PENALTY, True, {"result": "collision"}
     if dist > limit or abs(ay) > LATERAL_LOST_M:
         return -50.0, True, {"result": "out_of_bounds"}
-    if ax > OVERSHOOT_M:
+    if ax > (OVERSHOOT_M if overshoot_m is None else overshoot_m):
         return -40.0, True, {"result": "overshoot"}
     if t_s > timeout_s:
         return -30.0, True, {"result": "timeout"}
@@ -141,11 +151,16 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     # Ongoing: pay for getting closer AND for getting lined up; charge for
     # time and jerky steering. Both shaping terms are differences, so hovering
     # in place earns nothing — only improving does.
-    r = APPROACH_PAY * (dist_prev - dist)
-    if align_prev is not None:
+    if ax_prev is not None:
+        r = APPROACH_PAY * (abs(ax_prev) - abs(ax))
+    else:
+        r = APPROACH_PAY * (dist_prev - dist)
+    if align_prev is not None and abs(ax) <= ALIGN_ZONE_M:
         r += ALIGN_PAY * (align_prev - lateral_error(ay, herr))
     if feeler_readings is not None:
         r += proximity_penalty(feeler_readings)
+    if reversing:
+        r -= REVERSE_COST
     r -= 0.05
     r -= 0.10 * abs(steer - steer_prev)
     if inside:
@@ -388,3 +403,35 @@ class Curriculum:
             return (f"{head}, just {verb} after {m['rate'] * 100:.0f}% parked "
                     f"over {m['n']} attempts")
         return f"{head}, no attempts yet"
+
+
+class Stages:
+    """Hazards in stages, unlocked by success: 0 = an empty bay, 1 = a car two
+    bays back (avoidable forward) and sometimes a car ahead, 2 = also a car
+    right behind, with the bay ahead free - only a pull-past-and-reverse gets
+    in. Round 7 put a car right behind on day one and the student froze."""
+
+    NAMES = ("empty", "car two bays back", "car right behind")
+
+    def __init__(self, window=40, promote_at=0.6, demote_at=0.2, start=0):
+        self.window, self.promote_at, self.demote_at = window, promote_at, demote_at
+        self.level = max(0, min(len(self.NAMES) - 1, start))
+        self._recent = []
+
+    def record(self, parked):
+        self._recent.append(bool(parked))
+        if len(self._recent) < self.window:
+            return None
+        rate = sum(self._recent) / float(len(self._recent))
+        if rate >= self.promote_at and self.level < len(self.NAMES) - 1:
+            self.level += 1
+        elif rate <= self.demote_at and self.level > 0:
+            self.level -= 1
+        else:
+            self._recent = self._recent[len(self._recent) // 2:]
+            return None
+        self._recent = []
+        return self.level
+
+    def describe(self):
+        return f"obstacle stage {self.level}: {self.NAMES[self.level]}"

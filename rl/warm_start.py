@@ -28,11 +28,13 @@ MODEL = os.path.join(os.path.dirname(__file__), "models", "parking_ppo.zip")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="src", required=True)
+    ap.add_argument("--reverse", action="store_true",
+                    help="build the new brain with the reverse-gear control (a third action, born asleep)")
     a = ap.parse_args()
 
     old = PPO.load(a.src)
     n_old = old.observation_space.shape[0]
-    env = CarlaParkingEnv()
+    env = CarlaParkingEnv(reverse=a.reverse)
     try:
         n_new = env.observation_space.shape[0]
         assert n_new > n_old, f"new view has {n_new} numbers, old had {n_old}"
@@ -49,7 +51,14 @@ def main():
                     v.copy_(o); copied += 1
                 elif o.dim() == 2 and v.dim() == 2 and v.shape[0] == o.shape[0] \
                         and v.shape[1] == n_new and o.shape[1] == n_old:
-                    v.zero_(); v[:, :n_old] = o; widened.append(k)
+                    v.zero_(); v[:, :n_old] = o; widened.append(k)          # wider INPUT
+                elif o.dim() == 2 and v.dim() == 2 and v.shape[1] == o.shape[1] \
+                        and v.shape[0] > o.shape[0]:
+                    v.zero_(); v[:o.shape[0], :] = o; widened.append(k)     # extra OUTPUT (gear)
+                elif o.dim() == 1 and v.dim() == 1 and v.shape[0] > o.shape[0]:
+                    v.zero_(); v[:o.shape[0]] = o; widened.append(k)        # its bias / log_std
+                    if k.endswith("log_std"):
+                        v[o.shape[0]:] = -1.5     # the new control explores gently at first
                 else:
                     raise RuntimeError(f"cannot map {k}: {tuple(o.shape)} -> {tuple(v.shape)}")
         new.policy.load_state_dict(nsd)
@@ -62,7 +71,9 @@ def main():
         obs9 = np.concatenate([obs5, np.zeros(n_new - n_old, np.float32)])
         a_old, _ = old.predict(obs5, deterministic=True)
         a_new, _ = new.predict(obs9, deterministic=True)
-        assert np.allclose(a_old, a_new, atol=1e-5), (a_old, a_new)
+        assert np.allclose(a_old, a_new[:len(a_old)], atol=1e-5), (a_old, a_new)
+        if len(a_new) > len(a_old):
+            assert a_new[-1] < 0.5, "the reverse control must be asleep at birth"
         print(f"[warm] check passed: same action {np.round(a_old, 3)} on the same view")
         new.save(MODEL)
         print(f"[warm] saved {MODEL}")
