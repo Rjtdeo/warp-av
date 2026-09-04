@@ -128,3 +128,25 @@ nothing, which points at the scoring's shape, not the sensing.
 than towards the centre, so cutting in early is not rewarded; and/or a reverse
 gear, which is how parallel parking is actually done. Round 6 remains the
 deliverable for empty bays.
+
+### Round 7 on round 6's full exam battery (4 Sep, 10:26-10:45)
+
+Same seeds, same settings, same clean bays. Round 7 kept round 6's skill on clean
+information and is slightly straighter there (0.2-0.3 deg vs 0.8-0.9 deg), but it
+is markedly worse whenever what it sees is noisy: the misses are timeouts, not
+crashes. Overnight it was taught to be wary when a feeler reads "close"; jittered
+inputs make the feelers flicker, and it hesitates until the clock runs out. Round 6,
+which has no feelers and no such rule, cannot be spooked that way.
+
+| exam | round 6 | round 7 | round 7 failures |
+|---|---|---|---|
+| 24 m start | 30/30 | **30/30** | - |
+| up to 15 deg crooked | 30/30 | **30/30** | - |
+| up to 1 m off-centre | 30/30 | **30/30** | - |
+| noisy eyes | 30/30 | **24/30** | 6 timeout |
+| all four at once | 30/30 | **20/30** | 10 timeout |
+| HARDER tier (2x) | 42/60 | **28/60** | 27 timeout, 4 wandered, 1 crash |
+| HARDEST tier | 3/100 | **10/100** | 37 timeout, 27 crash, 26 wandered |
+
+Round 6 remains the better brain for anything with imperfect inputs; round 7 is
+marginally the better one on clean, empty bays. Rows in .
