@@ -178,3 +178,11 @@ those runs were map-only. The stolen-slot manoeuvre colliding twice in a row is 
 compared with the 21 Aug park-check (which passed it in ground-truth mode) and is being
 checked with a map-only control run on today's stack. The bus-stop gate has not yet been
 exercised live (run 1 of the fourth exam drew a different bay).
+
+**Control run (11:44-11:54, map slots only, stack 57b547a): PASS, FAIL (collision with the
+parked Tesla in the stolen-slot run), PASS.** Same failure without the lidar in the loop, so
+the collision is the stack's own: with the chosen slot taken and no free slot ahead it kept
+the taken slot as its target and relied on camera-mode obstacle logic to hold, which did not.
+Fix e4f025f: the van re-targets to a hold point in the lane 5 m short of the taken bay
+("Held short of the taken bay" at completion) - a safe failure of the parking task instead
+of a collision. The proper answer (reverse gear or a kerb-side fallback slot) stays open.
