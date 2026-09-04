@@ -81,3 +81,17 @@ def sensed_parking_slots(points: Optional[np.ndarray], ex: float, ey: float, eya
     slots = bays_to_slots(bays, ex, ey, eyaw)
     slots.sort(key=lambda sl: -((sl["x"] - ex) * math.cos(eyaw) + (sl["y"] - ey) * math.sin(eyaw)))
     return slots
+
+
+def nearest_free_slot(slots: List[Dict], tx: float, ty: float, max_dist_m: float = 12.0) -> Optional[int]:
+    """Index of the free slot whose centre is nearest (tx, ty), preferring one
+    whose predecessor is also free (the approach sweeps through it), and
+    ignoring anything farther than max_dist_m. None if nothing qualifies."""
+    def dist(i):
+        return math.hypot(slots[i]["x"] - tx, slots[i]["y"] - ty)
+    ok = [i for i, sl in enumerate(slots) if not sl.get("occupied") and dist(i) <= max_dist_m]
+    if not ok:
+        return None
+    good = [i for i in ok if i == 0 or not slots[i - 1].get("occupied")]
+    pool = good or ok
+    return min(pool, key=dist)

@@ -45,7 +45,7 @@ from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
-from .planning.sensed_slots import sensed_parking_slots
+from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot
 
 
 class WarpAV:
@@ -151,6 +151,7 @@ class WarpAV:
         self._scenario_type = None
         self._scenario_lights_frozen = False
         self._parking_spot = None
+        self._lidar_rescan_done = False
         self._traffic_vehicles = []
         self._traffic_walkers = []      # (walker, controller) pairs
         self._scenario_jaywalkers = []  # (walker, start_location)
@@ -259,6 +260,7 @@ class WarpAV:
         except Exception as e:
             print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
             self._parking_spot = None
+            self._lidar_rescan_done = False
         if self._parking_spot:
             moved = self._parking_spot.get("moved_back_m", 0)
             kind = self._parking_spot.get("kind", "kerb")
@@ -494,6 +496,14 @@ class WarpAV:
                 and time.time() - getattr(self, "_last_blocked_rescan", 0.0) > 5.0):
             self._last_blocked_rescan = time.time()
             rescan_now = True
+        # With the lidar as the slot source, look for the real bay once the map's
+        # slot is within reach (the finder sees ~30 m ahead) and swap onto it.
+        if (self.parking_source == "lidar" and not getattr(self, "_lidar_rescan_done", False)
+                and dest_dist is not None and dest_dist < 22.0):
+            try:
+                self._lidar_rescan_on_approach(pose)
+            except Exception as e:
+                print(f"[Parking] lidar approach re-scan failed: {e}")
         if rescan_now:
             self._parking_rechecked = True
             try:
@@ -1934,6 +1944,54 @@ class WarpAV:
             self.behavior._park_best_d = None
             self.logger.log_event("parking_rescan", f"slot #{idx} was taken — re-targeted to slot #{new_idx}")
             print(f"[Parking] slot #{idx} taken — switching to slot #{new_idx}")
+
+    def _lidar_rescan_on_approach(self, pose):
+        """Near the bay, with parking_source == "lidar": look with the lidar,
+        mark occupancy on what it found, and swap the map's slot for the free
+        real one nearest the current target. Runs once per mission. FIND
+        PARKING itself runs at mission start, out of lidar reach, so this is
+        the moment the lidar can actually see the bay."""
+        if self.parking_source != "lidar" or getattr(self, "_lidar_rescan_done", False):
+            return
+        sp = getattr(self, "_parking_spot", None)
+        if not sp or sp.get("kind") != "slot":
+            return
+        self._lidar_rescan_done = True
+        scan = getattr(self.sensor_adapter, "latest_lidar", None)
+        if scan is None:
+            self.logger.log_event("parking_lidar", "approach re-scan: no lidar data")
+            return
+        try:
+            slots = sensed_parking_slots(scan.points, pose.x, pose.y, pose.yaw)
+        except Exception as e:
+            self.logger.log_event("parking_lidar", f"approach re-scan failed: {e}")
+            return
+        if not slots:
+            self.logger.log_event("parking_lidar", "approach re-scan: lidar saw no bay - keeping the map slot")
+            return
+        self._mark_slot_occupancy(slots)
+        new_idx = nearest_free_slot(slots, sp["x"], sp["y"], max_dist_m=12.0)
+        if new_idx is None:
+            self.logger.log_event("parking_lidar",
+                                  f"approach re-scan: {len(slots)} lidar slots, none free within 12 m of the target - keeping the map slot")
+            return
+        sl = slots[new_idx]
+        shift = math.hypot(sl["x"] - sp["x"], sl["y"] - sp["y"])
+        if not self.planner.retarget_to_slot(self._route, sl):
+            self.logger.log_event("parking_lidar", "approach re-scan: could not retarget to the lidar slot")
+            return
+        for s_ in slots:
+            s_["chosen"] = False
+        sl["chosen"] = True
+        self._parking_slots = slots
+        self._parking_spot = {"x": sl["x"], "y": sl["y"], "yaw": sl["yaw"],
+                              "offset_m": None, "moved_back_m": 0, "kind": "slot",
+                              "slot_index": new_idx}
+        self.behavior._park_best_d = None
+        self.logger.log_event("parking_lidar",
+                              f"approach re-scan: {len(slots)} lidar slots, re-targeted to lidar slot #{new_idx} "
+                              f"({shift:.2f} m from the map slot)")
+        print(f"[Parking] lidar re-scan: target moved {shift:.2f} m onto a lidar-found slot")
 
     def api_set_parking_source(self, source):
         """Where FIND PARKING gets its slots: "map" (CARLA lane data) or

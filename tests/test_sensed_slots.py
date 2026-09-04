@@ -45,3 +45,22 @@ def test_slot_heading_follows_the_kerb_and_the_ego():
     b = bay(x=10.0, y_left=-3.0, yaw=math.radians(5), start=6.0, end=14.0)
     slots = bays_to_slots([b], 0.0, 0.0, math.radians(30))
     assert len(slots) == 1 and abs(slots[0]["yaw"] - math.radians(35)) < 1e-3
+
+
+from warp_av.planning.sensed_slots import nearest_free_slot
+
+
+def test_nearest_free_slot_prefers_one_with_a_free_slot_before_it():
+    slots = [dict(x=0.0, y=0.0, occupied=True), dict(x=7.0, y=0.0, occupied=False),
+             dict(x=14.0, y=0.0, occupied=False)]
+    # target sits on slot 1, but slot 1's predecessor is taken; slot 2's is free
+    assert nearest_free_slot(slots, 7.5, 0.0) == 2
+    # with slot 0 free too, the nearest wins
+    slots[0]["occupied"] = False
+    assert nearest_free_slot(slots, 7.5, 0.0) == 1
+
+
+def test_nearest_free_slot_ignores_far_and_occupied_slots():
+    slots = [dict(x=0.0, y=0.0, occupied=False), dict(x=40.0, y=0.0, occupied=False)]
+    assert nearest_free_slot(slots, 30.0, 0.0, max_dist_m=5.0) is None
+    assert nearest_free_slot([dict(x=1.0, y=0.0, occupied=True)], 0.0, 0.0) is None
