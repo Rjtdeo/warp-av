@@ -194,6 +194,14 @@ class WarpAV:
 
         # Fresh mission — the parking approach re-scan may fire again.
         self._parking_rechecked = False
+        # One-shot parking flags and the learned parker reset for EVERY mission,
+        # not only on the branch that finds a kerbside spot (arm C: a parker
+        # left engaged by a stopped mission judged the next mission's slot
+        # 183 m away and gave up on the spot).
+        self._lidar_rescan_done = False
+        self._lidar_rescan_tries = 0
+        self._hold_short_done = False
+        self.rl_parker.reset()
 
         # Create mission
         mission = self.mission_manager.start_mission(
@@ -2143,9 +2151,15 @@ class WarpAV:
                 except Exception as e:
                     self.logger.log_event("parking_slots", f"lidar bay finder failed: {e}")
                     slots = []
-                if slots:
-                    self.logger.log_event("parking_slots", f"{len(slots)} slots from the LIDAR")
-                    return slots, "lidar"
+                if slots and self._route and self._route.waypoints:
+                    dest = self._route.waypoints[-1]
+                    near = [sl for sl in slots if math.hypot(sl["x"] - dest.x, sl["y"] - dest.y) <= 40.0]
+                    if near:
+                        self.logger.log_event("parking_slots", f"{len(near)} slots from the LIDAR near the destination")
+                        return near, "lidar"
+                    self.logger.log_event("parking_slots",
+                                          f"lidar saw {len(slots)} bays beside the START, none within 40 m of the destination - using the map")
+                    slots = []
             self.logger.log_event("parking_slots", "lidar saw no bay - falling back to the map")
         slots = self.planner.find_parking_slots(self._route)
         for sl in slots:
