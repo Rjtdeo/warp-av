@@ -73,6 +73,10 @@ def _write_card(results, mode, episodes, seed):
     with open(CARD, "w") as f:
         f.write("\n".join(lines) + "\n")
 
+    _write_rows(results)
+
+
+def _write_rows(results):
     with open(RAW, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["episode", "p", "start_dist_m", "result",
@@ -91,7 +95,18 @@ def main():
     ap.add_argument("--mixed", action="store_true",
                     help="draw difficulty at random like rounds 1-3 did")
     ap.add_argument("--seed", type=int, default=123)
+    ap.add_argument("--lane-start", type=float, default=16.0,
+                    help="metres back down the lane for a full-distance start (trained at 16)")
+    ap.add_argument("--yaw-noise", type=float, default=3.0,
+                    help="random heading error at the start, +/- degrees (trained at 3)")
+    ap.add_argument("--lateral-noise", type=float, default=0.0,
+                    help="random sideways offset of the start, +/- metres (trained at 0)")
+    ap.add_argument("--obs-noise", type=str, default="",
+                    help="noise on what the student SEES: pos_m,yaw_deg,speed e.g. 0.25,3,0.2")
+    ap.add_argument("--tag", type=str, default="",
+                    help="name this exam; rows go to rl/exams/<date>_<tag>.csv and the main report card is left alone")
     a = ap.parse_args()
+    obs_noise = tuple(float(v) for v in a.obs_noise.split(",")) if a.obs_noise else None
 
     if not os.path.exists(MODEL):
         sys.exit(f"no trained model at {MODEL} — train one first")
@@ -103,7 +118,12 @@ def main():
     model = PPO.load(MODEL)
     mode = "mixed difficulty" if a.mixed else f"full distance (p={a.p:.2f})"
     print(f"[eval] {mode}, {a.episodes} attempts")
-    env = CarlaParkingEnv(seed=a.seed, exam_p=a.p)   # different bays than training
+    env = CarlaParkingEnv(seed=a.seed, exam_p=a.p, lane_start_m=a.lane_start,
+                          yaw_noise_deg=a.yaw_noise, lateral_noise_m=a.lateral_noise,
+                          obs_noise=obs_noise)   # different bays than training
+    if a.tag:
+        print(f"[eval] harder-exam settings: lane start {a.lane_start} m, yaw +/-{a.yaw_noise} deg, "
+              f"lateral +/-{a.lateral_noise} m, obs noise {obs_noise}")
     results = []
     try:
         for ep in range(a.episodes):
@@ -142,8 +162,17 @@ def main():
             fails[r.get("result")] = fails.get(r.get("result"), 0) + 1
     if fails:
         print("failures:", fails)
-    _write_card(results, mode, a.episodes, a.seed)
-    print(f"\nwritten: {CARD}\n         {RAW}")
+    if a.tag:
+        os.makedirs(os.path.join(HERE, "exams"), exist_ok=True)
+        path = os.path.join(HERE, "exams",
+                            f"{datetime.date.today().isoformat()}_{a.tag}.csv")
+        global RAW
+        RAW = path
+        _write_rows(results)
+        print(f"\nwritten: {path}")
+    else:
+        _write_card(results, mode, a.episodes, a.seed)
+        print(f"\nwritten: {CARD}\n         {RAW}")
 
 
 if __name__ == "__main__":

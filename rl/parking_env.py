@@ -69,10 +69,22 @@ class CarlaParkingEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, host="localhost", port=2000, seed=7, exam_p=None,
-                 curriculum=None):
+                 curriculum=None, lane_start_m=LANE_START_M, yaw_noise_deg=3.0,
+                 lateral_noise_m=0.0, obs_noise=None):
+        """Harder-exam knobs (all default to how training ran):
+        lane_start_m     how far back down the lane a p=0 start is (train: 16)
+        yaw_noise_deg    random heading error at spawn, +/- (train: 3)
+        lateral_noise_m  random sideways offset of the spawn point, +/- (train: 0)
+        obs_noise        (pos_m, yaw_deg, speed_mps) gaussian noise added to what
+                         the student SEES each step - never to the physics or the
+                         score. A preview of real sensors."""
         super().__init__()
         self.rng = random.Random(seed)
         self.exam_p = exam_p
+        self.lane_start_m = float(lane_start_m)
+        self.yaw_noise_deg = float(yaw_noise_deg)
+        self.lateral_noise_m = float(lateral_noise_m)
+        self.obs_noise = tuple(obs_noise) if obs_noise else None
         self.curriculum = None if exam_p is not None else (curriculum or Curriculum())
         self.client = carla.Client(host, port)
         self.client.set_timeout(15.0)
@@ -193,16 +205,21 @@ class CarlaParkingEnv(gym.Env):
             p = self._next_p()      # only draw when the caller did not fix it
         for _ in range(40):
             drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
-            back = drive_wp.previous(LANE_START_M)
+            back = drive_wp.previous(self.lane_start_m)
             if not back:
                 continue
             lane_tf = back[0].transform
-            px, py, pyaw = spawn_pose(
-                p, lane_tf.location.x, lane_tf.location.y,
-                math.radians(lane_tf.rotation.yaw), sx, sy, syaw)
+            lyaw = math.radians(lane_tf.rotation.yaw)
+            lx, ly = lane_tf.location.x, lane_tf.location.y
+            if self.lateral_noise_m:
+                off = self.rng.uniform(-self.lateral_noise_m, self.lateral_noise_m)
+                lx += -math.sin(lyaw) * off
+                ly += math.cos(lyaw) * off
+            px, py, pyaw = spawn_pose(p, lx, ly, lyaw, sx, sy, syaw)
             tf = carla.Transform(
                 carla.Location(px, py, lane_tf.location.z + 0.3),
-                carla.Rotation(yaw=math.degrees(pyaw) + self.rng.uniform(-3, 3)))
+                carla.Rotation(yaw=math.degrees(pyaw)
+                               + self.rng.uniform(-self.yaw_noise_deg, self.yaw_noise_deg)))
             self.van = self.world.try_spawn_actor(self.van_bp, tf)
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
@@ -240,6 +257,14 @@ class CarlaParkingEnv(gym.Env):
 
     def _obs(self):
         x, y, yaw, speed = self._pose()
+        if self.obs_noise:
+            # What the student sees, not where the van is: the reward and the
+            # exam still judge the true pose.
+            sp, syaw, sv = self.obs_noise
+            x += self.rng.gauss(0.0, sp)
+            y += self.rng.gauss(0.0, sp)
+            yaw += math.radians(self.rng.gauss(0.0, syaw))
+            speed = max(0.0, speed + self.rng.gauss(0.0, sv))
         return observation(x, y, yaw, speed, self._steer_prev, *self.slot)
 
     def step(self, action):
