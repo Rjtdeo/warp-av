@@ -81,3 +81,35 @@ exam a fixed full distance (`--p 0.0`, the default) and writes `rl/REPORT_CARD.m
    mixes in 25% easy revision so old skills are not forgotten. A student that keeps winning
    walks from "already in the box" to the full exam in ~250 attempts; one that plateaus
    around 45% takes 500-2,000 and is carried up by variance rather than held for ever.
+
+
+## Sensed bays — finding the parking space with the lidar (started 4 Sep)
+
+Town10's parking lanes are unmarked strips along the kerb (the planner slices them
+into 7 m slots itself), and a real test course has no map, so the bay must be seen.
+`src/warp_av/perception/bay_finder.py` (pure numpy, 10 synthetic tests) fits the kerb
+face as a line through the nearest low lidar points in each half-metre strip, bins
+the higher points along it, and calls a free stretch of 7 m plus margins a bay,
+returning the slot pose in the vehicle frame. `tools/probe_bay_finder.py` marks it on
+the simulator at 40 spots beside parking lanes against the map's lane centre and the
+map's decorative parked vehicles (`rl/exams/2026-09-04_bay_finder_probe.csv`).
+
+Fourth probe (after three fixes: kerb face not pavement middle; sparse far cars
+count; the slot itself is what is checked):
+
+| measure | result |
+|---|---|
+| kerb line found | 37 of 40 spots |
+| a bay found | 36 of 40 |
+| slot overlapping a parked vehicle | **0** of 36 |
+| slot centre vs the map's lane centre | median -0.01 m, 27 of 36 within 0.5 m, worst 1.34 m |
+| heading vs the lane | median 0.9 deg, 33 of 36 within 3 deg, worst 6.3 deg |
+
+The detected kerb sits a consistent ~0.6 m beyond the map's lane edge; the slot centre
+lands on the map's lane centre in the median, so the map's edge is not the physical
+kerb and the lidar is the one to trust. The worst side errors (about 1 m) and the
+two 6-degree headings are bad fits at spots with a 2.0 m map lane; still open.
+
+Next: plug it into `planner.find_parking_slots` as the slot source when a "sensed bays"
+mode is on (map slots as fallback), re-scan on approach as the stack already does, and
+exam the whole park-from-the-lidar loop with the round-6 parker.
