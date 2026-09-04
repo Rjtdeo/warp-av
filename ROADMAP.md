@@ -186,3 +186,23 @@ the taken slot as its target and relied on camera-mode obstacle logic to hold, w
 Fix e4f025f: the van re-targets to a hold point in the lane 5 m short of the taken bay
 ("Held short of the taken bay" at completion) - a safe failure of the parking task instead
 of a collision. The proper answer (reverse gear or a kerb-side fallback slot) stays open.
+
+### Fifth exam (12:00-12:09, stack e4f025f: gate + stop-short): 0 of 3
+
+Run 1 collided with a street prop 58 s into the mission (before any parking logic;
+log being read). Run 2 (slot stolen): the approach re-scan moved the target **10.12 m
+along the bay** onto a lidar slot behind the parked cars and the van sat 180 s behind
+one of them - the gate allowed 12 m along; it now allows 4 m unless the map's target
+is itself taken. Run 3 fell back to the map (no re-scan fired) and finished 0.17 m over
+the slot's side line - the camera-mode parking stutter seen in every map-slot run today.
+
+**Where the whole-loop stands after five lidar park-checks and one control.** The bay
+finder is a sound component (probe: 36 of 40 spots, 0 slots on a parked vehicle, median
+side error ~0). End to end it has parked the van in a bay it found twice (0.12 m and
+0.01 m side margins) and has caused no collision. But the three-run park-check on
+today's stack is dominated by the stack's own camera-mode parking behaviour (finishing
+0.1-0.4 m over the side line; driving into a bay it knows is taken; a street-prop
+collision en route) and by luck of the random destination, so three runs cannot show
+the lidar's effect. The clean experiment is to run map-vs-lidar bays in ground-truth
+perception mode, where the parker itself is known good (21 Aug: +0.17 / -0.02 m), over
+more than three runs.
