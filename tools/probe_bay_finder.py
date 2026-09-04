@@ -104,11 +104,14 @@ def main():
             lx, ly = to_sensor_frame(lane.transform.location.x, lane.transform.location.y, tf)
             lane_yaw = math.radians(lane.transform.rotation.yaw - wp.transform.rotation.yaw)
             lane_yaw = (lane_yaw + math.pi) % (2 * math.pi) - math.pi
-            # decorative vehicles as along-intervals near the lane (occupied truth)
+            # the map's kerb face: lane centre + half the lane width, to the right
+            kerb_truth = ly + lane.lane_width / 2.0
+            # decorative vehicles IN THE PARKING STRIP as along-intervals (occupied truth);
+            # anything beyond the pavement is not in the bay and must not count
             occ = []
             for outline in statics:
                 sx = [to_sensor_frame(px, py, tf) for px, py in outline]
-                if any(-12 < x < 40 and 0.5 < y < 7.0 for x, y in sx):
+                if any(-12 < x < 40 and (kerb_truth - 4.0) < y < (kerb_truth + 0.3) for x, y in sx):
                     occ.append((min(x for x, _ in sx), max(x for x, _ in sx)))
 
             kerb = fit_kerb(pts)
@@ -116,21 +119,23 @@ def main():
             nearest = bays[0] if bays else None
             side_err = head_err = float("nan")
             overlaps = False
+            kerb_err = float("nan")
+            if kerb is not None:
+                kerb_err = (kerb.a + kerb.b * 0.0) - kerb_truth   # detected kerb face vs the map's, beside the sensor
             if nearest is not None:
-                # detected slot centre line is offset SLOT_WID/2 + gap from the kerb;
-                # the map's lane centre is lane_width/2 from the kerb - compare edges
-                side_err = (-nearest.y) - ly           # + = further right than the lane centre
+                side_err = (-nearest.y) - ly           # slot centre vs lane centre, + = further right
                 head_err = math.degrees(nearest.yaw - lane_yaw)
                 overlaps = any(not (nearest.along_end < s or nearest.along_start > e) for s, e in occ)
             free_truth = any(True for _ in [0]) and not occ   # no decoration within view = free
-            rows.append(dict(sample=k, kerb_found=kerb is not None, bays_found=len(bays),
+            rows.append(dict(sample=k, kerb_found=kerb is not None, kerb_err_m=round(kerb_err, 2) if kerb else "",
+                             bays_found=len(bays),
                              nearest_x=round(nearest.x, 2) if nearest else "",
                              nearest_len=round(nearest.length, 1) if nearest else "",
                              side_err_m=round(side_err, 2) if nearest else "",
                              heading_err_deg=round(head_err, 1) if nearest else "",
                              overlaps_parked_vehicle=overlaps, decor_vehicles_in_view=len(occ),
                              lane_width=round(lane.lane_width, 2), points=len(pts)))
-            print(f"#{k:2d} kerb {'yes' if kerb else 'NO '}  bays {len(bays):2d}  "
+            print(f"#{k:2d} kerb {'yes' if kerb else 'NO '} (err {kerb_err:+.2f} m)  bays {len(bays):2d}  "
                   + (f"nearest at {nearest.x:5.1f} m, len {nearest.length:4.1f} m, side err {side_err:+.2f} m, "
                      f"heading err {head_err:+.1f} deg, overlaps parked vehicle: {overlaps}" if nearest else "no bay")
                   + f"  | decor vehicles in view {len(occ)}")
@@ -147,8 +152,11 @@ def main():
         print(f"\n{len(rows)} spots: kerb found at {sum(1 for r in rows if r['kerb_found'])}, "
               f"a bay found at {len(found)}, of which {sum(1 for r in found if r['overlaps_parked_vehicle'])} "
               f"overlap a decorative parked vehicle (bad)")
+        ke = [abs(float(r["kerb_err_m"])) for r in rows if r["kerb_found"]]
+        if ke:
+            print(f"kerb face    mean {np.mean(ke):.2f} m off the map's  worst {max(ke):.2f} m")
         if found:
-            print(f"side error   mean {np.mean(se):.2f} m  worst {max(se):.2f} m")
+            print(f"side error   mean {np.mean(se):.2f} m  worst {max(se):.2f} m   (slot centre vs the map's lane centre)")
             print(f"heading err  mean {np.mean(he):.1f} deg worst {max(he):.1f} deg")
         print(f"written: {out}")
 

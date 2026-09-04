@@ -9,7 +9,7 @@ from warp_av.perception.bay_finder import (find_bays, fit_kerb, LIDAR_HEIGHT_M,
 RNG = np.random.default_rng(3)
 
 
-def scene(kerb_y=3.0, kerb_yaw_deg=0.0, cars=(), noise=0.02, ground=True):
+def scene(kerb_y=3.0, kerb_yaw_deg=0.0, cars=(), noise=0.02, ground=True, pavement_m=0.0):
     """Sensor-frame points (x fwd, y right, z up from the sensor): a road,
     a kerb line at y_right = kerb_y (+ slope), and parked-car boxes given as
     (along_centre, length) on the kerb side."""
@@ -22,6 +22,11 @@ def scene(kerb_y=3.0, kerb_yaw_deg=0.0, cars=(), noise=0.02, ground=True):
     ky = kerb_y + t * kx + RNG.normal(0, noise, 600)
     kz = -LIDAR_HEIGHT_M + RNG.uniform(0.05, 0.18, 600)
     pts.append(np.stack([kx, ky, kz], 1))
+    if pavement_m:
+        # the pavement surface beyond the kerb face, at kerb height - the lidar sees all of it
+        px = RNG.uniform(-15, 45, 2500); pw = RNG.uniform(0.0, pavement_m, 2500)
+        pts.append(np.stack([px, kerb_y + t * px + pw + RNG.normal(0, noise, 2500),
+                             -LIDAR_HEIGHT_M + RNG.uniform(0.10, 0.18, 2500)], 1))
     for along, length in cars:
         n = 400
         cx = RNG.uniform(along - length / 2, along + length / 2, n)
@@ -66,3 +71,16 @@ def test_the_bay_follows_a_slanted_kerb():
 def test_an_empty_kerb_is_one_long_bay_nearest_first():
     bays = find_bays(scene(kerb_y=3.0))
     assert bays and bays[0].length > 20.0
+
+
+def test_the_kerb_line_hugs_the_pavement_edge_not_its_middle():
+    """First real probe: +1.2 m side error at all 40 spots, because the whole
+    pavement surface sits at kerb height and a plain fit ran down its middle."""
+    k = fit_kerb(scene(kerb_y=3.0, pavement_m=2.5))
+    assert k is not None and abs(k.a - 3.0) < 0.15
+
+
+def test_a_bay_beside_a_wide_pavement_is_still_placed_against_the_kerb():
+    bays = find_bays(scene(kerb_y=3.0, pavement_m=2.5, cars=((2.0, 4.5), (15.0, 4.5))))
+    b = next(bay for bay in bays if 4.0 < bay.x < 13.0)
+    assert abs(-b.y - (3.0 - KERB_GAP_M - SLOT_WID_M / 2)) < 0.3

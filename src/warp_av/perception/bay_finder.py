@@ -65,9 +65,13 @@ class Kerb:
 
 
 def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optional[Kerb]:
-    """Straight kerb line through the low points to the van's right.
-    Least squares with a couple of trimming passes so a bumper or a bin does
-    not drag the line."""
+    """Straight line along the kerb FACE: the road-side edge of the pavement.
+
+    The lidar sees the whole pavement surface at kerb height, so a plain fit
+    through every low point runs down the middle of the pavement, a metre or
+    more beyond the kerb (first probe: +1.2 m, at all 40 spots). So: in each
+    half-metre strip along the van, keep only the nearest low point to the van;
+    those are the edge; fit the line through them, trimming stragglers."""
     if points is None or len(points) == 0:
         return None
     x, y, z = points[:, 0], points[:, 1], points[:, 2] + LIDAR_HEIGHT_M
@@ -76,16 +80,23 @@ def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optio
     xs, ys = x[m], y[m]
     if len(xs) < 20:
         return None
-    keep = np.ones(len(xs), dtype=bool)
+    # nearest low point per along-strip = the pavement's near edge
+    strip = np.floor((xs + SEARCH_BACK_M) / BIN_M).astype(int)
+    order = np.lexsort((ys, strip))
+    strip_sorted, first = np.unique(strip[order], return_index=True)
+    ex, ey = xs[order][first], ys[order][first]
+    if len(ex) < 8:
+        return None
+    keep = np.ones(len(ex), dtype=bool)
     a = b = 0.0
     for _ in range(rounds):
-        if keep.sum() < 10:
+        if keep.sum() < 6:
             return None
-        A = np.stack([np.ones(keep.sum()), xs[keep]], axis=1)
-        (a, b), *_ = np.linalg.lstsq(A, ys[keep], rcond=None)
-        resid = np.abs(ys - (a + b * xs))
+        A = np.stack([np.ones(keep.sum()), ex[keep]], axis=1)
+        (a, b), *_ = np.linalg.lstsq(A, ey[keep], rcond=None)
+        resid = np.abs(ey - (a + b * ex))
         keep = resid < trim_m
-    if keep.sum() < 10 or abs(b) > math.tan(math.radians(35)):
+    if keep.sum() < 6 or abs(b) > math.tan(math.radians(35)):
         return None
     return Kerb(float(a), float(b), int(keep.sum()))
 
