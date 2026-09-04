@@ -31,7 +31,8 @@ from gymnasium import spaces
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
                              bay_is_clear, feelers, neighbour_pose,
-                             neighbour_behind_fits, FEELER_SECTORS, Curriculum,
+                             neighbour_behind_fits, neighbour_ahead_fits,
+                             FEELER_SECTORS, Curriculum,
                              LANE_START_M, SLOT_LEN, SLOT_WID)
 
 FIXED_DT = 0.1
@@ -300,7 +301,8 @@ class CarlaParkingEnv(gym.Env):
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
                 planned_start = math.hypot(px - sx, py - sy)
-                if self.neighbour_ahead_p and self.rng.random() < self.neighbour_ahead_p:
+                if (self.neighbour_ahead_p and neighbour_ahead_fits(planned_start)
+                        and self.rng.random() < self.neighbour_ahead_p):
                     self._spawn_neighbour(drive_wp, +1)
                 if (self.neighbour_p and neighbour_behind_fits(planned_start)
                         and self.rng.random() < self.neighbour_p):

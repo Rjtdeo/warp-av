@@ -41,6 +41,14 @@ INSIDE_PAY = 0.4             # per step spent inside the box while still moving.
                              # it learned to enter the box it would learn never to
                              # stop. 0.4 keeps the taste below the smallest prize.
 
+IDLE_COST = 0.2              # extra charge per step for standing still OUTSIDE the
+IDLE_SPEED = 0.2             # box (below this speed). Round 7a relearned round 3's
+                             # standstill within 1,200 attempts once a parked car
+                             # ahead turned overshoots into -80 crashes: sitting
+                             # still cost -40, so it sat. With this, standing still
+                             # for a whole easy-rung attempt costs about -80 too -
+                             # never the safe option.
+
 SUCCESS_SPEED = 0.3          # must be (nearly) stopped to count as parked
 OUT_OF_BOUNDS_M = 18.0       # FLOOR only — see bounds_for(). The real limit is
                              # measured from where THIS attempt started, because
@@ -139,6 +147,8 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     r -= 0.10 * abs(steer - steer_prev)
     if inside:
         r += INSIDE_PAY   # being IN the box pays a little every moment
+    elif speed < IDLE_SPEED:
+        r -= IDLE_COST    # standing still outside the box is never the safe play
     return r, False, {"result": "driving", "dist": round(dist, 2)}
 
 
@@ -215,12 +225,21 @@ def feelers(van_x, van_y, van_yaw, points, reach_m=FEELER_REACH_M):
 NEIGHBOUR_BAY_PITCH_M = 7.0          # the next bay along is one slot length away
 NEIGHBOUR_BEHIND_MIN_START_M = 13.0  # a car in the bay behind spans -9.3..-4.7 m
                                      # along; the van must spawn clear of it
+NEIGHBOUR_AHEAD_MIN_START_M = 9.0    # hazards after the skill, not before: round 7a
+                                     # put a car 7 m ahead on a third of its 4 m
+                                     # starts and the student learned to freeze
 
 
 def neighbour_pose(slot_x, slot_y, slot_yaw, bays_away):
     """Pose of the bay `bays_away` slots along (negative = behind the target)."""
     d = bays_away * NEIGHBOUR_BAY_PITCH_M
     return (slot_x + d * math.cos(slot_yaw), slot_y + d * math.sin(slot_yaw), slot_yaw)
+
+
+def neighbour_ahead_fits(start_dist_m):
+    """A car in the bay ahead only once the van starts far enough back to have
+    a real approach to practise, so an overshoot is a lesson and not a trap."""
+    return start_dist_m >= NEIGHBOUR_AHEAD_MIN_START_M
 
 
 def neighbour_behind_fits(start_dist_m):
