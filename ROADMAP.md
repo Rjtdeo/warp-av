@@ -137,3 +137,23 @@ No collisions. Note the baseline itself is worse than the 21 Aug park-check
 is still open. The lidar belongs at the moment the van reaches the bay: the next step
 is to run the bay finder in the approach re-scan (`_recheck_parking_on_approach`),
 replace the map slot with the nearest free lidar slot, and re-examine.
+
+### Second whole-loop exam (4 Sep, 11:19-11:26): first park in a lidar-found bay
+
+Stack 90fdc82 adds the approach re-scan: with `parking_source = lidar`, once the
+destination is within 22 m the bay finder runs on the live sweep and the target moves
+to the nearest free lidar slot. Same three-mission park-check, `--parking-source lidar`:
+
+| run | what | slot source | result |
+|---|---|---|---|
+| 1 | plain slot parking | map (lidar saw no bay at start; approach re-scan at 22 m also saw none) | PASS - inside, 0.11 m side, 3 deg |
+| 2 | chosen slot stolen | map; stuck 180 s behind the thief, "no free slot ahead" (the known thief-with-no-slot-ahead gap); the lidar re-scan never got its turn | FAIL |
+| 3 | plain slot parking | **lidar - "2 slots from the LIDAR"** (the start was already beside the bay) | **PASS - inside a lidar-found slot, margins 0.01 m front/back, 0.12 m side, 2 deg** |
+
+2 of 3 against the map baseline's 1 of 3, no collisions, and the first end-to-end park
+in a bay the van found for itself. Two things to fix next: the approach re-scan is a
+single shot at 22 m and saw nothing in run 1 - it should keep trying as the van closes
+in, and also when it is blocked near the destination (run 2 is exactly the case where
+real occupancy from the lidar would have found the way out); and the finder should say
+why it found nothing (points in the kerb band, edge strips) so a "no bay" is
+diagnosable.
