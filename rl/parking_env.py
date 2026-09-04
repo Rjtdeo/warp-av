@@ -31,7 +31,7 @@ from gymnasium import spaces
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
                              bay_is_clear, feelers, neighbour_pose,
-                             neighbour_behind_fits, neighbour_ahead_fits,
+                             neighbour_behind_fits, neighbour_ahead_fits, lane_start_for,
                              NEIGHBOUR_BEHIND_BAYS, FEELER_SECTORS, Curriculum, Stages,
                              LANE_START_M, SLOT_LEN, SLOT_WID)
 
@@ -248,41 +248,44 @@ class CarlaParkingEnv(gym.Env):
             self.neighbours.append(actor)
         return actor is not None
 
-    def _place_hazards(self, drive_wp, planned_start):
-        """Which neighbours this attempt gets. With obstacle stages: stage 0
-        none; stage 1 a car two bays back (50%) or one ahead (30%), never both;
-        stage 2 also a car RIGHT behind (30%, bay ahead free) - only a
-        pull-past-and-reverse gets in. Without stages: the flat chances."""
-        self._hazard = ""
+    def _plan_hazard(self):
+        """Decide which car this attempt gets BEFORE the van is placed, so the
+        far start can be set back far enough to be born behind it. With
+        obstacle stages: stage 0 none; stage 1 a car `bays_back` bays back
+        (50%) or one ahead (30%), never both; stage 2 also a car RIGHT behind
+        (30%, bay ahead free). Without stages: the flat chances.
+        Returns ("behind", bays) / ("ahead", 1) / None."""
         if self.stages is not None:
             lvl = self.stages.level
             if lvl == 0:
-                return
-            if lvl >= 2 and neighbour_behind_fits(planned_start, 1) and self.rng.random() < 0.3:
-                if self._spawn_neighbour(drive_wp, -1):
-                    self._hazard = "behind1"
-                    return
-            if neighbour_behind_fits(planned_start, 2) and self.rng.random() < 0.5:
-                if self._spawn_neighbour(drive_wp, -2):
-                    self._hazard = "behind2"
-                    return
-            if neighbour_ahead_fits(planned_start) and self.rng.random() < 0.3:
-                if self._spawn_neighbour(drive_wp, +1):
-                    self._hazard = "ahead"
-            return
-        behind = False
-        if (self.neighbour_p and neighbour_behind_fits(planned_start, self.neighbour_behind_bays)
-                and self.rng.random() < self.neighbour_p):
-            behind = self._spawn_neighbour(drive_wp, -self.neighbour_behind_bays)
-            if behind:
-                self._hazard = f"behind{self.neighbour_behind_bays}"
+                return None
+            if lvl >= 2 and self.rng.random() < 0.3:
+                return ("behind", 1)
+            if self.rng.random() < 0.5:
+                return ("behind", self.stages.bays_back)
+            if self.rng.random() < 0.3:
+                return ("ahead", 1)
+            return None
+        if self.neighbour_p and self.rng.random() < self.neighbour_p:
+            return ("behind", self.neighbour_behind_bays)
         # Never both without a reverse gear: a gap between two parked cars is
         # not a lesson, it is a wall.
-        if (not behind and self.neighbour_ahead_p
-                and neighbour_ahead_fits(planned_start)
-                and self.rng.random() < self.neighbour_ahead_p):
-            if self._spawn_neighbour(drive_wp, +1):
-                self._hazard = "ahead"
+        if self.neighbour_ahead_p and self.rng.random() < self.neighbour_ahead_p:
+            return ("ahead", 1)
+        return None
+
+    def _place_hazards(self, drive_wp, planned_start, plan):
+        """Spawn the planned car, but only if this start is far enough back for
+        it (a revision attempt that begins close to the bay gets no car)."""
+        self._hazard = ""
+        if plan is None:
+            return
+        kind, bays = plan
+        if kind == "behind":
+            if neighbour_behind_fits(planned_start, bays) and self._spawn_neighbour(drive_wp, -bays):
+                self._hazard = f"behind{bays}"
+        elif neighbour_ahead_fits(planned_start) and self._spawn_neighbour(drive_wp, +1):
+            self._hazard = "ahead"
 
     def _obstacle_points(self):
         """Outline points of everything the feelers may touch: the real
@@ -330,9 +333,13 @@ class CarlaParkingEnv(gym.Env):
         p = (options or {}).get("p")
         if p is None:
             p = self._next_p()      # only draw when the caller did not fix it
+        plan = self._plan_hazard()
+        lane_m = self.lane_start_m
+        if plan is not None and plan[0] == "behind":
+            lane_m = lane_start_for(plan[1], self.lane_start_m)   # born BEHIND the car
         for _ in range(40):
             drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
-            back = drive_wp.previous(self.lane_start_m)
+            back = drive_wp.previous(lane_m)
             if not back:
                 continue
             lane_tf = back[0].transform
@@ -353,7 +360,7 @@ class CarlaParkingEnv(gym.Env):
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
                 planned_start = math.hypot(px - sx, py - sy)
-                self._place_hazards(drive_wp, planned_start)
+                self._place_hazards(drive_wp, planned_start, plan)
                 break
         if self.van is None:
             raise RuntimeError("could not spawn the practice van anywhere")
@@ -457,7 +464,8 @@ class CarlaParkingEnv(gym.Env):
                 # Counting the easy empty and car-ahead attempts too unlocked
                 # "car right behind" while the two-bays-back skill was at 25%.
                 lvl = self.stages.level
-                counts = (lvl == 0) or (lvl == 1 and self._hazard == "behind2") \
+                counts = (lvl == 0) \
+                    or (lvl == 1 and self._hazard == f"behind{self.stages.bays_back}") \
                     or (lvl >= 2 and self._hazard == "behind1")
                 if counts:
                     moved = self.stages.record(info.get("result") == "parked")

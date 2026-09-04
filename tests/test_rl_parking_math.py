@@ -510,11 +510,38 @@ def test_hazard_stages_unlock_with_success_and_fall_back_with_failure():
     assert st.level == 0
     for _ in range(4):
         st.record(True)
-    assert st.level == 1
+    assert st.level == 1 and st.rung == 0 and st.bays_back == 4
     for _ in range(4):
         st.record(False)
-    assert st.level == 0
+    # the easiest car stays: no falling back to empty bays (8b flip-flopped)
+    assert st.level == 1 and st.rung == 0
     top = Stages(window=4, start=2)
     for _ in range(8):
         top.record(True)
     assert top.level == 2 and "right behind" in top.describe()
+
+
+def test_the_approach_car_walks_closer_one_bay_at_a_time():
+    st = Stages(window=2, start=1)
+    assert st.bays_back == 4 and "4 bays back" in st.describe()
+    st.record(True); st.record(True)
+    assert st.level == 1 and st.bays_back == 3
+    st.record(True); st.record(True)
+    assert st.level == 1 and st.bays_back == 2
+    st.record(True); st.record(True)
+    assert st.level == 2 and st.bays_back == 2          # stage 2 keeps the hardest rung
+    st.record(False); st.record(False)
+    assert st.level == 1 and st.bays_back == 2          # back to the top rung, not to empty
+    st.record(False); st.record(False)
+    assert st.level == 1 and st.bays_back == 3
+
+
+def test_far_start_is_set_back_behind_the_approach_car():
+    from rl.parking_math import lane_start_for
+    assert lane_start_for(2, 16.0) == 22.0
+    assert lane_start_for(3, 16.0) == 29.0
+    assert lane_start_for(4, 16.0) == 36.0
+    assert lane_start_for(1, 16.0) == 16.0             # one bay back already fits a 16 m start
+    assert lane_start_for(2, 30.0) == 30.0             # an explicit longer lane start is kept
+    for bays in (1, 2, 3, 4):
+        assert neighbour_behind_fits(lane_start_for(bays, 16.0), bays)

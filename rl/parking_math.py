@@ -296,6 +296,15 @@ def neighbour_pose(slot_x, slot_y, slot_yaw, bays_away):
     return (slot_x + d * math.cos(slot_yaw), slot_y + d * math.sin(slot_yaw), slot_yaw)
 
 
+def lane_start_for(bays_back, base_m):
+    """Far-start distance for an attempt with a car `bays_back` bays behind the
+    target: never less than the caller's lane start, and always far enough back
+    to be born behind the car with 2 m of road to spare (36 / 29 / 22 m for a
+    car 4 / 3 / 2 bays back)."""
+    return max(float(base_m),
+               bays_back * NEIGHBOUR_BAY_PITCH_M + NEIGHBOUR_BEHIND_CLEARANCE_M + 2.0)
+
+
 def neighbour_ahead_fits(start_dist_m):
     """A car in the bay ahead only once the van starts far enough back to have
     a real approach to practise, so an overshoot is a lesson and not a trap."""
@@ -421,32 +430,73 @@ class Curriculum:
 
 
 class Stages:
-    """Hazards in stages, unlocked by success: 0 = an empty bay, 1 = a car two
-    bays back (avoidable forward) and sometimes a car ahead, 2 = also a car
-    right behind, with the bay ahead free - only a pull-past-and-reverse gets
-    in. Round 7 put a car right behind on day one and the student froze."""
+    """Hazards in stages, unlocked by success: 0 = an empty bay; 1 = a car in
+    the parking lane on the approach, first FOUR bays back, then three, then
+    two (and sometimes a car ahead); 2 = also a car right behind, with the bay
+    ahead free - only a pull-past-and-reverse gets in.
 
-    NAMES = ("empty", "car two bays back", "car right behind")
+    Why the ladder inside stage 1: the round-6 habit is to swing into the
+    parking lane at once and drive along it to the bay. A car two bays back
+    (14 m) sits exactly on that path: rounds 8a-8c crashed into it 470 times
+    out of 470 and never once saw a success to copy. Four bays back (28 m,
+    from a 36 m start) the same swing still clears the car, so the learner
+    parks, feels the near-miss charge, and is drawn to turn in later. Each
+    rung then moves the car a bay closer. Round 7 put a car right behind on
+    day one and the student froze."""
 
-    def __init__(self, window=40, promote_at=0.6, demote_at=0.2, start=0):
+    NAMES = ("empty", "car behind on the approach", "car right behind")
+    BEHIND_RUNGS = (4, 3, 2)    # bays back, easiest first
+
+    def __init__(self, window=40, promote_at=0.6, demote_at=0.2, start=0, start_rung=0):
         self.window, self.promote_at, self.demote_at = window, promote_at, demote_at
         self.level = max(0, min(len(self.NAMES) - 1, start))
+        self.rung = max(0, min(len(self.BEHIND_RUNGS) - 1, start_rung))
         self._recent = []
+
+    @property
+    def bays_back(self):
+        """Where the approach car sits for the current rung (stage 2 keeps it
+        at the hardest rung)."""
+        return self.BEHIND_RUNGS[self.rung] if self.level == 1 else self.BEHIND_RUNGS[-1]
 
     def record(self, parked):
         self._recent.append(bool(parked))
         if len(self._recent) < self.window:
             return None
         rate = sum(self._recent) / float(len(self._recent))
-        if rate >= self.promote_at and self.level < len(self.NAMES) - 1:
-            self.level += 1
-        elif rate <= self.demote_at and self.level > 0:
-            self.level -= 1
+        top_rung = len(self.BEHIND_RUNGS) - 1
+        moved = True
+        if rate >= self.promote_at:
+            if self.level == 0:
+                self.level, self.rung = 1, 0
+            elif self.level == 1 and self.rung < top_rung:
+                self.rung += 1
+            elif self.level == 1:
+                self.level = 2
+            else:
+                moved = False
+        elif rate <= self.demote_at:
+            if self.level == 2:
+                self.level, self.rung = 1, top_rung
+            elif self.level == 1 and self.rung > 0:
+                self.rung -= 1
+            else:
+                moved = False   # stage 0, or the easiest car: nowhere easier to go.
+                                # (Falling back to empty bays made 8b flip 0<->1
+                                # every 40 attempts and spend half its time on a
+                                # skill already at 96%.)
         else:
+            moved = False
+        if not moved:
             self._recent = self._recent[len(self._recent) // 2:]
             return None
         self._recent = []
         return self.level
 
     def describe(self):
+        if self.level == 1:
+            return (f"obstacle stage 1: car {self.bays_back} bays back "
+                    f"(rung {self.rung + 1}/{len(self.BEHIND_RUNGS)})")
         return f"obstacle stage {self.level}: {self.NAMES[self.level]}"
+
+

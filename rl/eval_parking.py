@@ -146,6 +146,10 @@ def main():
                           neighbour_ahead_p=a.neighbour_ahead_p,
                           use_feelers=not a.no_feelers, reverse=a.reverse,
                           neighbour_behind_bays=a.behind_bays)   # different bays than training
+    if a.neighbour_p:
+        from rl.parking_math import lane_start_for
+        print(f"[eval] car {a.behind_bays} bay(s) back: those attempts start "
+              f"{lane_start_for(a.behind_bays, a.lane_start):.0f} m back (born behind the car)")
     if a.tag:
         print(f"[eval] harder-exam settings: lane start {a.lane_start} m, yaw +/-{a.yaw_noise} deg, "
               f"lateral +/-{a.lateral_noise} m, obs noise {obs_noise}, "

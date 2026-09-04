@@ -87,6 +87,11 @@ def main():
     ap.add_argument("--reverse", action="store_true", help="third control: reverse gear (round 8)")
     ap.add_argument("--obstacles", action="store_true", help="hazards in stages (round 8)")
     ap.add_argument("--start-stage", type=int, default=0, help="obstacle stage to begin on (0-2)")
+    ap.add_argument("--start-rung", type=int, default=0,
+                    help="stage-1 rung to begin on: 0 = car 4 bays back, 1 = 3, 2 = 2")
+    ap.add_argument("--explore-std", type=float, default=0.0,
+                    help="on resume, raise steer/throttle action noise to at least this "
+                         "(a trained brain barely explores; a new skill needs variety)")
     ap.add_argument("--lane-start", type=float, default=16.0,
                     help="metres back along the lane the far starts begin (22 for the car two bays back)")
     a = ap.parse_args()
@@ -96,7 +101,8 @@ def main():
     from rl.parking_math import Stages
     env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles,
                           lane_start_m=a.lane_start,
-                          stages=Stages(start=a.start_stage) if a.obstacles else None)
+                          stages=Stages(start=a.start_stage, start_rung=a.start_rung)
+                          if a.obstacles else None)
     if a.obstacles:
         print(f"[train] {env.stages.describe()}")
     print(f"[train] curriculum: {curriculum.describe()}")
@@ -104,6 +110,16 @@ def main():
         if a.resume and os.path.exists(MODEL):
             print(f"[train] resuming from {MODEL}")
             model = PPO.load(MODEL, env=env)
+            if a.explore_std > 0:
+                import math
+                import torch
+                with torch.no_grad():
+                    ls = model.policy.log_std
+                    before = [round(v, 3) for v in ls.exp().tolist()]
+                    n = min(2, ls.shape[0])           # steer and throttle only; the gear keeps its own
+                    ls[:n] = torch.maximum(ls[:n], torch.full_like(ls[:n], math.log(a.explore_std)))
+                    after = [round(v, 3) for v in ls.exp().tolist()]
+                print(f"[train] exploration: action noise {before} -> {after}")
         else:
             model = PPO("MlpPolicy", env, verbose=1, seed=7,
                         n_steps=1024, batch_size=256, learning_rate=3e-4)
