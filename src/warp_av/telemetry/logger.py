@@ -33,6 +33,14 @@ class TelemetryLogger:
     def start_mission_log(self, mission_id: str):
         self._mission_id = mission_id
         filename = os.path.join(self.log_dir, f"{mission_id}.jsonl")
+        # Mission numbering restarts at 0001 with every process, and the test
+        # rig restarts the stack after a collision - so mission_0001.jsonl was
+        # being overwritten and the evidence of the run that crashed was lost.
+        # Never overwrite: give a clashing name a time stamp.
+        if os.path.exists(filename):
+            stamp = time.strftime("%H%M%S")
+            filename = os.path.join(self.log_dir, f"{mission_id}_{stamp}.jsonl")
+            self._mission_id = f"{mission_id}_{stamp}"
         self._file = open(filename, "w")
         print(f"[Logger] Logging to {filename}")
 
