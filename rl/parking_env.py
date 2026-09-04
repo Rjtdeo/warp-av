@@ -70,14 +70,17 @@ class CarlaParkingEnv(gym.Env):
 
     def __init__(self, host="localhost", port=2000, seed=7, exam_p=None,
                  curriculum=None, lane_start_m=LANE_START_M, yaw_noise_deg=3.0,
-                 lateral_noise_m=0.0, obs_noise=None):
+                 lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
         yaw_noise_deg    random heading error at spawn, +/- (train: 3)
         lateral_noise_m  random sideways offset of the spawn point, +/- (train: 0)
         obs_noise        (pos_m, yaw_deg, speed_mps) gaussian noise added to what
                          the student SEES each step - never to the physics or the
-                         score. A preview of real sensors."""
+                         score. A preview of real sensors.
+        obs_dropout      chance per step that the student's view FREEZES (it is
+                         handed last step's numbers again) - a sensor dropout
+        obs_delay        steps of lag between the world and what it sees"""
         super().__init__()
         self.rng = random.Random(seed)
         self.exam_p = exam_p
@@ -85,6 +88,12 @@ class CarlaParkingEnv(gym.Env):
         self.yaw_noise_deg = float(yaw_noise_deg)
         self.lateral_noise_m = float(lateral_noise_m)
         self.obs_noise = tuple(obs_noise) if obs_noise else None
+        self.obs_dropout = float(obs_dropout)
+        self.obs_delay = int(obs_delay)
+        self._obs_queue = []            # for obs_delay
+        self._obs_last = None           # for obs_dropout
+        self._spawn_yaw_off = 0.0
+        self._spawn_lat_off = 0.0
         self.curriculum = None if exam_p is not None else (curriculum or Curriculum())
         self.client = carla.Client(host, port)
         self.client.set_timeout(15.0)
@@ -197,6 +206,8 @@ class CarlaParkingEnv(gym.Env):
         self._destroy()
         self._collided = False
         self._hit = None
+        self._obs_queue = []
+        self._obs_last = None
         self._t = 0.0
         self._steer_prev = 0.0
 
@@ -211,15 +222,17 @@ class CarlaParkingEnv(gym.Env):
             lane_tf = back[0].transform
             lyaw = math.radians(lane_tf.rotation.yaw)
             lx, ly = lane_tf.location.x, lane_tf.location.y
+            off = 0.0
             if self.lateral_noise_m:
                 off = self.rng.uniform(-self.lateral_noise_m, self.lateral_noise_m)
                 lx += -math.sin(lyaw) * off
                 ly += math.cos(lyaw) * off
             px, py, pyaw = spawn_pose(p, lx, ly, lyaw, sx, sy, syaw)
+            yaw_off = self.rng.uniform(-self.yaw_noise_deg, self.yaw_noise_deg)
             tf = carla.Transform(
                 carla.Location(px, py, lane_tf.location.z + 0.3),
-                carla.Rotation(yaw=math.degrees(pyaw)
-                               + self.rng.uniform(-self.yaw_noise_deg, self.yaw_noise_deg)))
+                carla.Rotation(yaw=math.degrees(pyaw) + yaw_off))
+            self._spawn_yaw_off, self._spawn_lat_off = yaw_off, off
             self.van = self.world.try_spawn_actor(self.van_bp, tf)
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
@@ -265,7 +278,18 @@ class CarlaParkingEnv(gym.Env):
             y += self.rng.gauss(0.0, sp)
             yaw += math.radians(self.rng.gauss(0.0, syaw))
             speed = max(0.0, speed + self.rng.gauss(0.0, sv))
-        return observation(x, y, yaw, speed, self._steer_prev, *self.slot)
+        obs = observation(x, y, yaw, speed, self._steer_prev, *self.slot)
+        if self.obs_delay > 0:
+            # The world moves on; the student sees where things WERE.
+            self._obs_queue.append(obs)
+            while len(self._obs_queue) < self.obs_delay + 1:
+                self._obs_queue.insert(0, obs)      # first frames: nothing older to show
+            obs = self._obs_queue.pop(0)
+        if self.obs_dropout > 0 and self._obs_last is not None \
+                and self.rng.random() < self.obs_dropout:
+            obs = self._obs_last                    # the view froze this step
+        self._obs_last = obs
+        return obs
 
     def step(self, action):
         steer = float(np.clip(action[0], -1, 1))
@@ -290,6 +314,8 @@ class CarlaParkingEnv(gym.Env):
         if done:
             info["p"] = round(self._p, 2)
             info["start_dist"] = round(self._start_dist, 1)
+            info["spawn_yaw_off_deg"] = round(self._spawn_yaw_off, 1)
+            info["spawn_lat_off_m"] = round(self._spawn_lat_off, 2)
             if info.get("result") == "collision":
                 # Where it was and what it touched, so a crash is a fact, not a guess.
                 info["hit"] = self._hit or "unknown"
