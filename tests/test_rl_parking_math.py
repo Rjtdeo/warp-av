@@ -335,3 +335,54 @@ def test_one_corner_inside_is_enough():
     slot = (0.0, 0.0, 0.0)
     outline = [_world_point(-25.0, 0.0, slot), _world_point(-17.5, 0.0, slot)]  # centre out, corner in
     assert not bay_is_clear(*slot, [outline])
+
+
+from rl.parking_math import (FEELER_REACH_M, FEELER_SECTORS, feelers, neighbour_pose,
+                             neighbour_behind_fits, NEIGHBOUR_BAY_PITCH_M)
+
+
+def test_feelers_read_full_reach_when_nothing_is_near():
+    assert feelers(3.0, -4.0, 1.2, []) == [1.0] * len(FEELER_SECTORS)
+    far = [(3.0 + 30.0, -4.0)]
+    assert feelers(3.0, -4.0, 0.0, far) == [1.0] * len(FEELER_SECTORS)
+
+
+def test_something_dead_ahead_shows_in_both_ahead_feelers():
+    ahead_left, ahead_right, left, right = feelers(0.0, 0.0, 0.0, [(3.0, 0.0)])
+    assert abs(ahead_left - 0.3) < 1e-9 and abs(ahead_right - 0.3) < 1e-9
+    assert left == 1.0 and right == 1.0
+
+
+def test_side_feelers_see_only_their_side_and_nothing_sees_behind():
+    al, ar, left, right = feelers(0.0, 0.0, 0.0, [(0.0, 5.0)])     # +y = the van's right
+    assert right == 0.5 and left == 1.0 and al == 1.0 and ar == 1.0
+    al, ar, left, right = feelers(0.0, 0.0, 0.0, [(0.0, -2.0)])
+    assert left == 0.2 and right == 1.0
+    assert feelers(0.0, 0.0, 0.0, [(-4.0, 0.0)]) == [1.0] * 4, "no reverse gear, no rear feeler"
+
+
+def test_feelers_turn_with_the_van():
+    """The same world point must read as 'ahead' when the van faces it and as
+    'right' when the van has turned 90 degrees left of it."""
+    pt = [(4.0, 0.0)]
+    assert feelers(0.0, 0.0, 0.0, pt)[0] < 1.0
+    turned = feelers(0.0, 0.0, math.radians(-90), pt)      # now the point is on the van's right
+    assert turned[3] == 0.4 and turned[0] == 1.0 and turned[1] == 1.0
+
+
+def test_the_nearest_point_wins_in_a_sector():
+    al, ar, _, _ = feelers(0.0, 0.0, 0.0, [(6.0, 0.5), (2.0, 0.5), (9.0, 0.5)])
+    assert abs(ar - math.hypot(2.0, 0.5) / FEELER_REACH_M) < 1e-9
+
+
+def test_neighbour_bays_sit_one_slot_length_along_the_slot():
+    x, y, yaw = neighbour_pose(10.0, 20.0, math.radians(90), -1)
+    assert abs(x - 10.0) < 1e-9 and abs(y - (20.0 - NEIGHBOUR_BAY_PITCH_M)) < 1e-9
+    assert yaw == math.radians(90)
+
+
+def test_a_car_behind_is_only_placed_when_the_van_starts_clear_of_it():
+    """The bay behind spans -9.3..-4.7 m along; a van starting at 11 m has its
+    front bumper at about -8.7 m, inside that car. It must start farther back."""
+    assert not neighbour_behind_fits(11.0)
+    assert neighbour_behind_fits(13.5)

@@ -173,6 +173,62 @@ def bay_is_clear(slot_x, slot_y, slot_yaw, static_outlines,
     return True
 
 
+# ---------------------------------------------------------------------------
+# Round 7: eyes for obstacles, and neighbours to practise against
+# ---------------------------------------------------------------------------
+
+FEELER_REACH_M = 10.0
+# Four sectors in the van's own frame, degrees, 0 = straight ahead, positive =
+# the van's right. The two ahead sectors overlap by 20 deg so something dead
+# ahead shows up in both. Nothing looks behind: the van has no reverse gear.
+FEELER_SECTORS = ((-70.0, 10.0),     # ahead-left
+                  (-10.0, 70.0),     # ahead-right
+                  (-110.0, -70.0),   # left
+                  (70.0, 110.0))     # right
+
+
+def feelers(van_x, van_y, van_yaw, points, reach_m=FEELER_REACH_M):
+    """Distance to the nearest obstacle point in each sector, as a fraction of
+    reach_m: 1.0 means nothing within reach, 0.3 means something 3 m away.
+
+    Rounds 1-6 gave the student five numbers, none of them about anything
+    around it. It parked dead centre on top of a motorcycle once, and would hit
+    a real neighbour every time. These four numbers are the fix - measured from
+    the van's centre, so the student learns its own half-length.
+    """
+    best = [reach_m] * len(FEELER_SECTORS)
+    c, s = math.cos(-van_yaw), math.sin(-van_yaw)
+    for px, py in points:
+        dx, dy = px - van_x, py - van_y
+        lx = dx * c - dy * s
+        ly = dx * s + dy * c
+        d = math.hypot(lx, ly)
+        if d == 0.0 or d >= reach_m:
+            continue
+        ang = math.degrees(math.atan2(ly, lx))
+        for i, (lo, hi) in enumerate(FEELER_SECTORS):
+            if lo <= ang <= hi and d < best[i]:
+                best[i] = d
+    return [b / reach_m for b in best]
+
+
+NEIGHBOUR_BAY_PITCH_M = 7.0          # the next bay along is one slot length away
+NEIGHBOUR_BEHIND_MIN_START_M = 13.0  # a car in the bay behind spans -9.3..-4.7 m
+                                     # along; the van must spawn clear of it
+
+
+def neighbour_pose(slot_x, slot_y, slot_yaw, bays_away):
+    """Pose of the bay `bays_away` slots along (negative = behind the target)."""
+    d = bays_away * NEIGHBOUR_BAY_PITCH_M
+    return (slot_x + d * math.cos(slot_yaw), slot_y + d * math.sin(slot_yaw), slot_yaw)
+
+
+def neighbour_behind_fits(start_dist_m):
+    """A car in the bay behind may only be placed when the van starts far enough
+    back not to be born touching it (front bumper at start = along + 2.35 m)."""
+    return start_dist_m >= NEIGHBOUR_BEHIND_MIN_START_M
+
+
 def spawn_pose(p, lane_x, lane_y, lane_yaw, slot_x, slot_y, slot_yaw):
     """Start pose for difficulty p, sliding along the ideal pull-in.
 

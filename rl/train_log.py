@@ -17,7 +17,8 @@ from __future__ import annotations
 import csv
 import os
 
-COLUMNS = ["wall_s", "steps", "episode", "reward", "result", "p", "start_dist_m"]
+COLUMNS = ["wall_s", "steps", "episode", "reward", "result", "p", "start_dist_m",
+           "neighbours"]
 
 
 def header_of(path):

@@ -30,8 +30,9 @@ from gymnasium import spaces
 
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
-                             bay_is_clear, Curriculum, LANE_START_M, SLOT_LEN,
-                             SLOT_WID)
+                             bay_is_clear, feelers, neighbour_pose,
+                             neighbour_behind_fits, FEELER_SECTORS, Curriculum,
+                             LANE_START_M, SLOT_LEN, SLOT_WID)
 
 FIXED_DT = 0.1
 MAX_SPEED = 3.0
@@ -70,7 +71,8 @@ class CarlaParkingEnv(gym.Env):
 
     def __init__(self, host="localhost", port=2000, seed=7, exam_p=None,
                  curriculum=None, lane_start_m=LANE_START_M, yaw_noise_deg=3.0,
-                 lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0):
+                 lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0,
+                 neighbour_p=0.5, neighbour_ahead_p=0.3):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
         yaw_noise_deg    random heading error at spawn, +/- (train: 3)
@@ -80,7 +82,11 @@ class CarlaParkingEnv(gym.Env):
                          score. A preview of real sensors.
         obs_dropout      chance per step that the student's view FREEZES (it is
                          handed last step's numbers again) - a sensor dropout
-        obs_delay        steps of lag between the world and what it sees"""
+        obs_delay        steps of lag between the world and what it sees
+        neighbour_p      chance per attempt of a REAL parked car in the bay
+                         behind the target (only when the van starts far enough
+                         back not to be born touching it)
+        neighbour_ahead_p  chance of one in the bay ahead"""
         super().__init__()
         self.rng = random.Random(seed)
         self.exam_p = exam_p
@@ -90,6 +96,9 @@ class CarlaParkingEnv(gym.Env):
         self.obs_noise = tuple(obs_noise) if obs_noise else None
         self.obs_dropout = float(obs_dropout)
         self.obs_delay = int(obs_delay)
+        self.neighbour_p = float(neighbour_p)
+        self.neighbour_ahead_p = float(neighbour_ahead_p)
+        self.neighbours = []
         self._obs_queue = []            # for obs_delay
         self._obs_last = None           # for obs_dropout
         self._spawn_yaw_off = 0.0
@@ -114,6 +123,8 @@ class CarlaParkingEnv(gym.Env):
             self.cmap = self.world.get_map()
             found = self._scan_bays()
             statics = static_vehicle_outlines(self.world)
+            self.static_outlines = statics
+            self._static_points = [pt for outline in statics for pt in outline]
             self.bays = [b for b in found if bay_is_clear(b[1], b[2], b[3], statics)]
             if len(self.bays) < 5:
                 raise RuntimeError(f"only {len(self.bays)} usable bays found")
@@ -128,6 +139,14 @@ class CarlaParkingEnv(gym.Env):
                                    "this CARLA build")
             bp = bps[0]
             bp.set_attribute("role_name", "warp_rl")
+            big = ("bus", "truck", "carlamotors", "ambulance", "firetruck", "sprinter")
+            self.neighbour_bps = [
+                b for b in self.world.get_blueprint_library().filter("vehicle.*")
+                if b.has_attribute("number_of_wheels")
+                and b.get_attribute("number_of_wheels").as_int() == 4
+                and not any(k in b.id for k in big)]
+            if not self.neighbour_bps:
+                self.neighbour_bps = [bp]
         except BaseException:
             try:
                 self.world.apply_settings(self._original_settings)
@@ -142,7 +161,10 @@ class CarlaParkingEnv(gym.Env):
         self._hit = None            # what the last collision was with (diagnostics)
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(5,), dtype=np.float32)
+        # 5 pose numbers + 4 feelers (see parking_math.feelers)
+        self.observation_space = spaces.Box(low=-2.0, high=2.0,
+                                            shape=(5 + len(FEELER_SECTORS),),
+                                            dtype=np.float32)
         self.slot = None
         self._t = 0.0
         self._steer_prev = 0.0
@@ -179,7 +201,7 @@ class CarlaParkingEnv(gym.Env):
         return bays
 
     def _destroy(self):
-        for a in (self.col_sensor, self.van):
+        for a in [self.col_sensor, self.van] + list(self.neighbours):
             try:
                 if a is not None:
                     a.destroy()
@@ -187,6 +209,44 @@ class CarlaParkingEnv(gym.Env):
                 pass
         self.col_sensor = None
         self.van = None
+        self.neighbours = []
+
+    def _spawn_neighbour(self, drive_wp, bays_away):
+        """A real, physics-off parked car in the bay `bays_away` slots along.
+        Skipped quietly if the spot is taken."""
+        sx, sy, syaw = self.slot
+        nx, ny, nyaw = neighbour_pose(sx, sy, syaw, bays_away)
+        tf = carla.Transform(
+            carla.Location(nx, ny, drive_wp.transform.location.z + 0.3),
+            carla.Rotation(yaw=math.degrees(nyaw)))
+        actor = self.world.try_spawn_actor(self.rng.choice(self.neighbour_bps), tf)
+        if actor is not None:
+            try:
+                actor.set_simulate_physics(False)
+            except Exception:
+                pass
+            self.neighbours.append(actor)
+        return actor is not None
+
+    def _obstacle_points(self):
+        """Outline points of everything the feelers may touch: the real
+        neighbours (centre, corners, edge midpoints) plus the map's decorative
+        vehicles."""
+        pts = list(self._static_points)
+        for a in self.neighbours:
+            try:
+                tf = a.get_transform()
+                ext = a.bounding_box.extent
+            except Exception:
+                continue
+            cx, cy = tf.location.x, tf.location.y
+            yaw = math.radians(tf.rotation.yaw)
+            c, s = math.cos(yaw), math.sin(yaw)
+            for fx, fy in ((0, 0), (1, 1), (1, -1), (-1, -1), (-1, 1),
+                           (1, 0), (-1, 0), (0, 1), (0, -1)):
+                pts.append((cx + fx * c * ext.x - fy * s * ext.y,
+                            cy + fx * s * ext.x + fy * c * ext.y))
+        return pts
 
     def _on_col(self, event):
         self._collided = True
@@ -236,6 +296,12 @@ class CarlaParkingEnv(gym.Env):
             self.van = self.world.try_spawn_actor(self.van_bp, tf)
             if self.van is not None:
                 self.slot = (sx, sy, syaw)
+                planned_start = math.hypot(px - sx, py - sy)
+                if self.neighbour_ahead_p and self.rng.random() < self.neighbour_ahead_p:
+                    self._spawn_neighbour(drive_wp, +1)
+                if (self.neighbour_p and neighbour_behind_fits(planned_start)
+                        and self.rng.random() < self.neighbour_p):
+                    self._spawn_neighbour(drive_wp, -1)
                 break
         if self.van is None:
             raise RuntimeError("could not spawn the practice van anywhere")
@@ -278,7 +344,8 @@ class CarlaParkingEnv(gym.Env):
             y += self.rng.gauss(0.0, sp)
             yaw += math.radians(self.rng.gauss(0.0, syaw))
             speed = max(0.0, speed + self.rng.gauss(0.0, sv))
-        obs = observation(x, y, yaw, speed, self._steer_prev, *self.slot)
+        obs = (observation(x, y, yaw, speed, self._steer_prev, *self.slot)
+               + feelers(x, y, yaw, self._obstacle_points()))
         if self.obs_delay > 0:
             # The world moves on; the student sees where things WERE.
             self._obs_queue.append(obs)
@@ -316,6 +383,7 @@ class CarlaParkingEnv(gym.Env):
             info["start_dist"] = round(self._start_dist, 1)
             info["spawn_yaw_off_deg"] = round(self._spawn_yaw_off, 1)
             info["spawn_lat_off_m"] = round(self._spawn_lat_off, 2)
+            info["neighbours"] = len(self.neighbours)
             if info.get("result") == "collision":
                 # Where it was and what it touched, so a crash is a fact, not a guess.
                 info["hit"] = self._hit or "unknown"

@@ -81,12 +81,13 @@ def _write_rows(results):
         w = csv.writer(f)
         w.writerow(["episode", "p", "start_dist_m", "result",
                     "m_len", "m_wid", "herr_deg", "hit", "ax", "ay", "speed",
-                    "spawn_yaw_off_deg", "spawn_lat_off_m"])
+                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours"])
         for i, r in enumerate(results, 1):
             w.writerow([i, r.get("p"), r.get("start_dist"), r.get("result"),
                         r.get("m_len", ""), r.get("m_wid", ""), r.get("herr_deg", ""),
                         r.get("hit", ""), r.get("ax", ""), r.get("ay", ""), r.get("speed", ""),
-                        r.get("spawn_yaw_off_deg", ""), r.get("spawn_lat_off_m", "")])
+                        r.get("spawn_yaw_off_deg", ""), r.get("spawn_lat_off_m", ""),
+                        r.get("neighbours", "")])
 
 
 def main():
@@ -109,6 +110,10 @@ def main():
                     help="chance per step that what the student sees freezes on last step's numbers")
     ap.add_argument("--obs-delay", type=int, default=0,
                     help="steps of lag (0.1 s each) between the world and what the student sees")
+    ap.add_argument("--neighbour-p", type=float, default=0.0,
+                    help="chance of a real parked car in the bay BEHIND the target (training uses 0.5)")
+    ap.add_argument("--neighbour-ahead-p", type=float, default=0.0,
+                    help="chance of one in the bay AHEAD (training uses 0.3)")
     ap.add_argument("--tag", type=str, default="",
                     help="name this exam; rows go to rl/exams/<date>_<tag>.csv and the main report card is left alone")
     a = ap.parse_args()
@@ -127,11 +132,13 @@ def main():
     env = CarlaParkingEnv(seed=a.seed, exam_p=a.p, lane_start_m=a.lane_start,
                           yaw_noise_deg=a.yaw_noise, lateral_noise_m=a.lateral_noise,
                           obs_noise=obs_noise, obs_dropout=a.obs_dropout,
-                          obs_delay=a.obs_delay)   # different bays than training
+                          obs_delay=a.obs_delay, neighbour_p=a.neighbour_p,
+                          neighbour_ahead_p=a.neighbour_ahead_p)   # different bays than training
     if a.tag:
         print(f"[eval] harder-exam settings: lane start {a.lane_start} m, yaw +/-{a.yaw_noise} deg, "
               f"lateral +/-{a.lateral_noise} m, obs noise {obs_noise}, "
-              f"dropout {a.obs_dropout}, delay {a.obs_delay} steps")
+              f"dropout {a.obs_dropout}, delay {a.obs_delay} steps, "
+              f"neighbours behind {a.neighbour_p} / ahead {a.neighbour_ahead_p}")
     results = []
     try:
         for ep in range(a.episodes):

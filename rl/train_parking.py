@@ -63,7 +63,8 @@ class EpisodeLogger(BaseCallback):
                 self._w.writerow([int(time.time() - self._t0), self.num_timesteps,
                                   self._episodes, round(ep["r"], 1),
                                   info.get("result", "?"),
-                                  info.get("p", ""), info.get("start_dist", "")])
+                                  info.get("p", ""), info.get("start_dist", ""),
+                                  info.get("neighbours", "")])
                 self._f.flush()
                 if self._episodes % 25 == 0:
                     print(f"[train] {self._episodes} episodes, "
