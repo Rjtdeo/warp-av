@@ -45,7 +45,7 @@ from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
-from warp_av.planning.sensed_slots import sensed_parking_slots
+from .planning.sensed_slots import sensed_parking_slots
 
 
 class WarpAV:
