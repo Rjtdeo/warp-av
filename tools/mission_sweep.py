@@ -35,9 +35,11 @@ import urllib.error
 # ----------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------
-API = "http://192.168.1.101:5000"
-SSH_HOST = "Rajat@192.168.1.101"
+# The CARLA box moved to .103 on 2026-09-03 (DHCP); override with env vars.
+API = os.environ.get("WARP_API", "http://192.168.1.103:5000")
+SSH_HOST = os.environ.get("WARP_SSH_HOST", "Rajat@192.168.1.103")
 SSH_KEY = os.path.expanduser("~/.ssh/warp_av_ed25519")
+PARKING_SOURCE = None        # set from --parking-source
 WIN_REPO = r"C:\Users\Rajat\Desktop\warp-av"
 WIN_PY = r"C:\Users\Rajat\AppData\Local\Programs\Python\Python310\python.exe"
 CARLA_EXE = r"C:\CARLA\WindowsNoEditor\CarlaUE4.exe"
@@ -403,7 +405,11 @@ def execute_run(spec, rng, points, out_dir, log):
     frames_dir = os.path.join(out_dir, "frames")
 
     reset_world(spec, log)
+    if PARKING_SOURCE:
+        # set before EVERY run: a watchdog restart of the stack resets it to "map"
+        api_post("/api/parking/source", {"source": PARKING_SOURCE})
     st0 = api_get("/api/state")
+    res["parking_source"] = st0.get("parking_source")
     res["collision_base"] = (st0.get("collision") or {}).get("count", 0)
     res["start_pose"] = st0.get("pose")
     res["version"] = st0.get("version")
@@ -889,12 +895,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shakedown", action="store_true")
     ap.add_argument("--park-check", action="store_true")
+    ap.add_argument("--parking-source", choices=("map", "lidar"), default=None,
+                    help="where FIND PARKING gets its slots for every run (default: leave the stack as it is)")
     ap.add_argument("--showdown", action="store_true")
     ap.add_argument("--full", action="store_true")
     ap.add_argument("--out", default=None)
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--expect-version", default=None)
     a = ap.parse_args()
+    global PARKING_SOURCE
+    PARKING_SOURCE = a.parking_source
 
     plan = (shakedown_plan() if a.shakedown
             else park_check_plan() if a.park_check
