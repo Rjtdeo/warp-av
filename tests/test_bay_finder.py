@@ -137,3 +137,15 @@ def test_a_gently_curving_kerb_is_followed():
 def test_a_tight_bend_is_refused_as_a_curve_but_still_gives_a_line_nearby():
     k = fit_kerb(scene(kerb_y=3.0, curve=0.03))
     assert k is None or k.c == 0.0
+
+
+def test_every_name_the_stack_and_probe_import_exists():
+    """The rewrite of the fitter silently dropped two helpers the van software
+    imports; it crashed on start. Import them all here so a test catches it."""
+    from warp_av.perception.bay_finder import (find_bays, fit_kerb, why_no_kerb, along_of,
+                                               fit_road_plane, heights_above_road, edge_per_strip,
+                                               LIDAR_HEIGHT_M, SLOT_WID_M, KERB_GAP_M, Bay, Kerb)
+    pts = scene(kerb_y=3.0)
+    assert isinstance(why_no_kerb(pts[:10]), str)
+    k = fit_kerb(pts)
+    assert k is not None and abs(float(along_of(5.0, 3.0, k)) - 5.0) < 0.2

@@ -171,6 +171,30 @@ def fit_kerb(points: np.ndarray, trim_m: float = 0.25, rounds: int = 3) -> Optio
     return Kerb(float(a), float(b), float(c), int(keep.sum()))
 
 
+def why_no_kerb(points: np.ndarray) -> str:
+    """One line saying why fit_kerb would give up on this sweep - for logs."""
+    if points is None or len(points) == 0:
+        return "no lidar points"
+    x, y = points[:, 0], points[:, 1]
+    h = heights_above_road(points)
+    band = ((y > SEARCH_RIGHT_MIN_M) & (y < SEARCH_RIGHT_MAX_M) & (x > -SEARCH_BACK_M)
+            & (x < SEARCH_AHEAD_M) & (h > KERB_LOW_M) & (h < KERB_HIGH_M))
+    n = int(band.sum())
+    if n < 20:
+        return f"only {n} kerb-height points to the right (need 20)"
+    ex, _ = edge_per_strip(x[band], y[band])
+    if len(ex) < 6:
+        return f"{n} kerb-height points but a clustered edge in only {len(ex)} strips (need 6)"
+    return f"{n} kerb-height points, edge in {len(ex)} strips, but no line or gentle curve fits (bend or clutter)"
+
+
+def along_of(x, y_right, kerb: Kerb):
+    """Along-kerb coordinate of sensor-frame points (what Bay.along_* and
+    Bay.slot_* are measured in)."""
+    c, s = math.cos(kerb.yaw), math.sin(kerb.yaw)
+    return x * c + y_right * s
+
+
 def find_bays(points: np.ndarray, min_len_m: float = SLOT_LEN_M) -> List[Bay]:
     """All free stretches at least min_len_m long beside the kerb, nearest first
     (measured from the van), each with the slot pose a van should aim for."""
