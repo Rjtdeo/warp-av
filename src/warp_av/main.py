@@ -486,8 +486,12 @@ class WarpAV:
             predicted_conflict=predicted,
         )
 
-        rescan_now = (behavior_output.behavior == DrivingBehavior.PARKING
-                      and not getattr(self, "_parking_rechecked", False))
+        # Re-check slot occupancy once the destination is within 30 m, not
+        # only when the parking behaviour begins: by then the van was already
+        # too close to a stolen slot to stop short of it (arm A, 4 Sep).
+        rescan_now = (not getattr(self, "_parking_rechecked", False)
+                      and (behavior_output.behavior == DrivingBehavior.PARKING
+                           or (dest_dist is not None and dest_dist < 30.0)))
         # A car that grabbed OUR slot after selection can also BLOCK the
         # approach before the parking phase ever begins (sweep finding:
         # van held 7 m behind it until timeout). While blocked close to
