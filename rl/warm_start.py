@@ -36,7 +36,7 @@ def main():
     try:
         n_new = env.observation_space.shape[0]
         assert n_new > n_old, f"new view has {n_new} numbers, old had {n_old}"
-        new = PPO("MlpPolicy", env, verbose=0, seed=7,
+        new = PPO("MlpPolicy", env, verbose=1, seed=7,   # verbose is saved with the brain: keep the training table
                   n_steps=1024, batch_size=256, learning_rate=3e-4)
         osd, nsd = old.policy.state_dict(), new.policy.state_dict()
         copied, widened = 0, []
