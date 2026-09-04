@@ -193,11 +193,14 @@ def bay_is_clear(slot_x, slot_y, slot_yaw, static_outlines,
 FEELER_REACH_M = 10.0
 # Four sectors in the van's own frame, degrees, 0 = straight ahead, positive =
 # the van's right. The two ahead sectors overlap by 20 deg so something dead
-# ahead shows up in both. Nothing looks behind: the van has no reverse gear.
+# ahead shows up in both. The side sectors reach back to the rear quarters:
+# round 7c's crashes were the TAIL clipping a car the van had already passed -
+# the right feeler read 2-3 m alongside it, then "clear" while the rear was
+# still beside it, so no warning ever fired. Straight behind stays unseen.
 FEELER_SECTORS = ((-70.0, 10.0),     # ahead-left
                   (-10.0, 70.0),     # ahead-right
-                  (-110.0, -70.0),   # left
-                  (70.0, 110.0))     # right
+                  (-160.0, -70.0),   # left, back to the rear quarter
+                  (70.0, 160.0))     # right, back to the rear quarter
 
 
 def feelers(van_x, van_y, van_yaw, points, reach_m=FEELER_REACH_M):

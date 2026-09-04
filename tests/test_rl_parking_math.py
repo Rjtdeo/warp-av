@@ -448,3 +448,12 @@ def test_the_practice_car_sits_two_bays_back():
     assert NEIGHBOUR_BEHIND_BAYS == 2
     x, y, _ = neighbour_pose(0.0, 0.0, 0.0, -NEIGHBOUR_BEHIND_BAYS)
     assert x == -14.0 and y == 0.0
+
+
+def test_side_feelers_cover_the_rear_quarters():
+    """Round 7c's crashes were rear-quarter clips the feelers never saw."""
+    al, ar, left, right = feelers(0.0, 0.0, 0.0, [(-2.0, 2.0)])       # behind-right
+    assert right < 1.0 and left == 1.0 and al == 1.0 and ar == 1.0
+    al, ar, left, right = feelers(0.0, 0.0, 0.0, [(-2.0, -2.0)])      # behind-left
+    assert left < 1.0 and right == 1.0
+    assert feelers(0.0, 0.0, 0.0, [(-4.0, 0.0)]) == [1.0] * 4, "straight behind still unseen"
