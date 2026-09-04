@@ -64,3 +64,26 @@ def test_nearest_free_slot_ignores_far_and_occupied_slots():
     slots = [dict(x=0.0, y=0.0, occupied=False), dict(x=40.0, y=0.0, occupied=False)]
     assert nearest_free_slot(slots, 30.0, 0.0, max_dist_m=5.0) is None
     assert nearest_free_slot([dict(x=1.0, y=0.0, occupied=True)], 0.0, 0.0) is None
+
+
+from warp_av.planning.sensed_slots import consistent_with
+
+
+def test_a_slot_on_the_bus_stop_kerb_is_rejected():
+    """Third park-check: the map's bay was 6.5 m right of the lane; the lidar
+    slot sat 1.1 m right, beside the bus shelter. 5 m sideways is not the
+    same bay."""
+    ref = dict(x=0.0, y=0.0, yaw=0.0)
+    assert consistent_with(ref, dict(x=3.0, y=-5.4, yaw=0.0)) is not None
+
+
+def test_a_slot_slightly_moved_along_or_across_is_accepted():
+    ref = dict(x=0.0, y=0.0, yaw=0.0)
+    assert consistent_with(ref, dict(x=7.0, y=0.4, yaw=math.radians(4))) is None
+    assert consistent_with(ref, dict(x=-6.0, y=-1.2, yaw=0.0)) is None
+
+
+def test_a_slot_far_along_or_twisted_is_rejected():
+    ref = dict(x=0.0, y=0.0, yaw=0.0)
+    assert consistent_with(ref, dict(x=20.0, y=0.0, yaw=0.0)) is not None
+    assert consistent_with(ref, dict(x=2.0, y=0.0, yaw=math.radians(30))) is not None

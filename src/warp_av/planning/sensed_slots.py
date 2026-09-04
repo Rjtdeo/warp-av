@@ -95,3 +95,25 @@ def nearest_free_slot(slots: List[Dict], tx: float, ty: float, max_dist_m: float
     good = [i for i in ok if i == 0 or not slots[i - 1].get("occupied")]
     pool = good or ok
     return min(pool, key=dist)
+
+
+def consistent_with(reference: Dict, slot: Dict, max_side_m: float = 1.5,
+                    max_along_m: float = 12.0, max_yaw_deg: float = 15.0) -> Optional[str]:
+    """None if `slot` is a plausible refinement of `reference` (the map's or the
+    route's slot): near its centre line, not far along it, roughly the same
+    heading. Otherwise a short reason. The lidar may sharpen where the bay is
+    and whether it is free; it may not move the bay to the next kerb along -
+    a bus-stop platform between the lane and a set-back bay looked like a
+    kerb and put the slot beside the shelter (4 Sep, third park-check)."""
+    dx, dy = slot["x"] - reference["x"], slot["y"] - reference["y"]
+    c, s = math.cos(-reference["yaw"]), math.sin(-reference["yaw"])
+    along = dx * c - dy * s
+    side = dx * s + dy * c
+    dyaw = math.degrees((slot["yaw"] - reference["yaw"] + math.pi) % (2 * math.pi) - math.pi)
+    if abs(side) > max_side_m:
+        return f"{abs(side):.1f} m off the reference bay's line (limit {max_side_m:.1f})"
+    if abs(along) > max_along_m:
+        return f"{abs(along):.1f} m along from the reference slot (limit {max_along_m:.0f})"
+    if abs(dyaw) > max_yaw_deg:
+        return f"{abs(dyaw):.0f} deg off the reference heading (limit {max_yaw_deg:.0f})"
+    return None

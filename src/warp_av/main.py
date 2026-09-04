@@ -45,7 +45,7 @@ from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand
-from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot
+from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with
 from .perception.bay_finder import why_no_kerb
 
 
@@ -1988,6 +1988,15 @@ class WarpAV:
                                   f"approach re-scan: {len(slots)} lidar slots, none free within 12 m of the target - keeping the map slot")
             return
         sl = slots[new_idx]
+        # The lidar sharpens the bay; it does not move it to the next kerb along.
+        why = consistent_with(sp, sl)
+        if why:
+            n = getattr(self, "_lidar_rescan_tries", 0) + 1
+            self._lidar_rescan_tries = n
+            if n in (1, 3, 6, 10):
+                self.logger.log_event("parking_lidar",
+                                      f"approach re-scan #{n}: lidar slot rejected - {why} - keeping the map slot for now")
+            return
         shift = math.hypot(sl["x"] - sp["x"], sl["y"] - sp["y"])
         if not self.planner.retarget_to_slot(self._route, sl):
             self.logger.log_event("parking_lidar", "approach re-scan: could not retarget to the lidar slot")
