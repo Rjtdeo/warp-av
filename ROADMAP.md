@@ -250,3 +250,9 @@ winning once the kerb was 9 m out). Probe on 60 fresh roadside spots: kerb at 45
 the stack's gate would reject), heading mean 2.7 deg. What the rig calls a set-back bay is the
 van driving one lane further left on a two-lane road; the probe gains --from-left-lane to test
 that geometry directly.
+
+**Probe from the left lane (the rig's set-back geometry), 39 spots:** on the 35 set-back spots
+the finder found the kerb at 26 and a bay at 26, **0 on a parked vehicle**, side error mean
+0.32 m (worst 1.57 m), heading mean 3.0 deg (worst 13.3 deg). Before v2 it reported "0
+kerb-height points" at these. Nine misses and the two large headings remain on the list;
+the stack's gate rejects anything more than 1.5 m or 15 deg off the map's line.
