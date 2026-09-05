@@ -18,6 +18,7 @@ Run INSTEAD of the main van program (it owns the simulator while training).
 """
 import argparse
 import csv
+import glob
 import os
 import sys
 import time
@@ -41,6 +42,7 @@ class EpisodeLogger(BaseCallback):
         self._t0 = time.time()
         self._episodes = 0
         self._last_save = 0
+        self._last_snapshot = 0
         # Round 4 widened this log from 5 columns to 7. The CARLA machine still
         # has the rounds 1-3 file, and appending wide rows under a narrow header
         # makes the WHOLE log unreadable (pandas raises, csv.DictReader silently
@@ -75,6 +77,22 @@ class EpisodeLogger(BaseCallback):
             self._last_save = self.num_timesteps
             self.model.save(MODEL)
             print(f"[train] checkpoint saved at {self.num_timesteps} steps")
+            # Keep a rolling history too: round 8g's last five minutes went bad
+            # (every attempt timing out) and the only copy of the brain was
+            # the one saved after them. Every 100k steps, a dated snapshot;
+            # the newest five are kept.
+            if self.num_timesteps - self._last_snapshot >= 100000:
+                self._last_snapshot = self.num_timesteps
+                snap = MODEL.replace(".zip", f"_ckpt_{self.num_timesteps // 1000}k.zip")
+                self.model.save(snap)
+                snaps = sorted(glob.glob(MODEL.replace(".zip", "_ckpt_*k.zip")),
+                               key=lambda f: int(f.rsplit("_ckpt_", 1)[1][:-5]))
+                for old in snaps[:-5]:
+                    try:
+                        os.remove(old)
+                    except OSError:
+                        pass
+                print(f"[train] snapshot {os.path.basename(snap)} (keeping the newest five)")
         return True
 
 
