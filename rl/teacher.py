@@ -41,6 +41,7 @@ APPROACH_SPEED = 2.8
 TURN_SPEED = 1.8
 FINAL_SPEED = 0.9
 REVERSE_SPEED = 1.2
+STANDING_MPS = 0.15      # |speed| below this counts as stopped (CARLA never reads exactly 0)
 STOP_WINDOW_M = 0.35     # |ax| below this while lined up: brake to a stop
 SHUFFLE_FWD_M = 0.9      # correcting a sideways error: forward strokes may run to here (nose 3.25 m, slot 3.5)
 SHUFFLE_TOL_M = 0.3      # sideways error below this: just straighten and stop
@@ -133,9 +134,9 @@ def _teacher_action_right(ax, ay, herr, speed, feeler_readings=None, reverse_ok=
 
     inside, m_len, m_wid = van_corners_in_slot(ax, ay, herr)
     lined_up = abs(ay) < 0.35 and abs(herr) < math.radians(8)
-    standing = abs(speed) <= 0.02
-    moving_fwd = speed > 0.02
-    moving_back = speed < -0.02
+    standing = abs(speed) <= STANDING_MPS
+    moving_fwd = speed > STANDING_MPS
+    moving_back = speed < -STANDING_MPS
 
     # ---- at the bay ----
     if not in_lane:

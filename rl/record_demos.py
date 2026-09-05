@@ -12,6 +12,8 @@ the baseline the copied brain must match.
 """
 import argparse
 import collections
+import math
+import csv
 import os
 import sys
 import time
@@ -44,6 +46,8 @@ def main():
                           neighbour_ahead_p=a.neighbour_ahead_p, neighbour_behind_bays=(1, 2, 3),
                           use_feelers=True, reverse=True)
     obs_all, act_all, rew_all, ep_all, done_all = [], [], [], [], []
+    summary = []                     # per-drive: episode, result, hazard, start, steps, end ax/ay/herr, reverse, hit, end speed, brake steps
+    brake_steps = 0
     results = collections.Counter()
     by_hazard = collections.defaultdict(collections.Counter)
     t0 = time.time()
@@ -58,6 +62,8 @@ def main():
                 if env._reversing:
                     speed = -speed
                 steer, pedal, gear = teacher_action(ax, ay, herr, speed, env._feelers_now, reverse_ok=True)
+                if pedal < -0.5:
+                    brake_steps += 1
                 action = np.array([steer, pedal, 1.0 if gear > 0.5 else -1.0], dtype=np.float32)
                 obs_all.append(np.asarray(obs, dtype=np.float32))
                 act_all.append(action)
@@ -68,6 +74,14 @@ def main():
                 done_all.append(done)
             results[info.get("result", "?")] += 1
             by_hazard[info.get("hazard", "") or "none"][info.get("result", "?")] += 1
+            # one line per drive, so a poor teacher can be diagnosed without replaying it
+            ax, ay, herr = env._slot_frame()
+            _, _, _, end_speed = env._pose()
+            summary.append([ep, info.get("result", "?"), info.get("hazard", ""), info.get("start_dist", ""), 0,
+                            round(ax, 2), round(ay, 2), round(math.degrees(herr), 1),
+                            info.get("reverse_steps", 0), info.get("hit", ""), round(end_speed, 2),
+                            int(sum(1 for x in act_all[-600:] if x[1] < -0.5)) if False else brake_steps])
+            brake_steps = 0
             if (ep + 1) % 25 == 0:
                 print(f"[demos] {ep + 1} episodes, {len(obs_all)} steps, parked {results['parked']}/{ep + 1}, "
                       f"{time.time() - t0:.0f} s")
@@ -79,6 +93,14 @@ def main():
     np.savez_compressed(a.out, obs=np.stack(obs_all), act=np.stack(act_all),
                         rew=np.array(rew_all, dtype=np.float32), ep=np.array(ep_all, dtype=np.int32),
                         done=np.array(done_all, dtype=bool))
+    with open(os.path.splitext(a.out)[0] + "_episodes.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["episode", "result", "hazard", "start_dist_m", "steps", "end_ax", "end_ay", "end_herr_deg",
+                    "reverse_steps", "hit", "end_speed", "brake_steps"])
+        counts = collections.Counter(ep_all)
+        for row in summary:
+            row[4] = counts.get(row[0], 0)
+            w.writerow(row)
     print(f"[demos] DONE: {len(ep_all)} steps from {a.episodes} episodes -> {a.out}")
     print(f"[demos] teacher results: {dict(results)}")
     for hz, c in sorted(by_hazard.items()):

@@ -559,3 +559,17 @@ def mirror_action(act):
     """Steer flips; accelerator/brake and gear stay."""
     a = list(act)
     return [-a[0]] + a[1:]
+
+
+LANE_POINT_MIN_ACROSS_M = 2.0     # a driving-lane start sits 2-4.5 m off the bay line ...
+LANE_POINT_MAX_ACROSS_M = 4.5
+LANE_POINT_MAX_YAW_DEG = 15.0     # ... pointing roughly along it. Waypoints 20-36 m back
+                                  # sometimes land on a side street (recorded starts 9 m off
+                                  # and 98 deg round): those attempts are junk, retry the bay.
+
+
+def lane_point_ok(lane_x, lane_y, lane_yaw, slot_x, slot_y, slot_yaw, min_back_m=8.0):
+    """Is this lane point a sane far start for this slot?"""
+    ax, ay, herr = to_slot_frame(lane_x, lane_y, lane_yaw, slot_x, slot_y, slot_yaw)
+    return (ax <= -min_back_m and LANE_POINT_MIN_ACROSS_M <= abs(ay) <= LANE_POINT_MAX_ACROSS_M
+            and abs(math.degrees(herr)) <= LANE_POINT_MAX_YAW_DEG)

@@ -31,7 +31,7 @@ from gymnasium import spaces
 from rl.parking_math import (observation, to_slot_frame, step_outcome,
                              lateral_error, spawn_pose, bounds_for, timeout_for,
                              bay_is_clear, feelers, neighbour_pose,
-                             neighbour_behind_fits, neighbour_ahead_fits, lane_start_for,
+                             neighbour_behind_fits, neighbour_ahead_fits, lane_start_for, lane_point_ok,
                              NEIGHBOUR_BEHIND_BAYS, FEELER_SECTORS, Curriculum, Stages,
                              LANE_START_M, SLOT_LEN, SLOT_WID)
 
@@ -377,6 +377,8 @@ class CarlaParkingEnv(gym.Env):
             lane_tf = back[0].transform
             lyaw = math.radians(lane_tf.rotation.yaw)
             lx, ly = lane_tf.location.x, lane_tf.location.y
+            if not lane_point_ok(lx, ly, lyaw, sx, sy, syaw):
+                continue                 # the waypoint chain wandered onto another road
             off = 0.0
             if self.lateral_noise_m:
                 off = self.rng.uniform(-self.lateral_noise_m, self.lateral_noise_m)
