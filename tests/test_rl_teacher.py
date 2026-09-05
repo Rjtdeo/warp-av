@@ -96,3 +96,34 @@ def test_the_teacher_can_read_the_brains_own_observation():
     direct = T.teacher_action(ax, ay, herr, speed, [1.0, 0.6, 1.0, 0.4])
     via_obs = T.teacher_from_obs(obs)
     assert all(abs(x - y) < 1e-6 for x, y in zip(direct, via_obs))
+
+
+
+LEFT_SCENARIOS = [
+    ("left bay, empty, 16 m", (-16.0, 3.1, 0.0), ()),
+    ("left bay, empty, 30 m", (-30.0, 3.1, 0.0), ()),
+    ("left bay, car two bays back", (-22.0, 3.1, 0.0), (T.car_box(2),)),
+    ("left bay, car three bays back", (-29.0, 3.1, 0.0), (T.car_box(3),)),
+    ("left bay, car ahead", (-16.0, 3.1, 0.0), (T.car_box(-1),)),
+    ("left bay, car right behind", (-16.0, 3.1, 0.0), (T.car_box(1),)),
+    ("left bay, knocked off course", (-22.0, 3.6, -0.17), (T.car_box(2),)),
+]
+
+
+@pytest.mark.parametrize("name,start,cars", LEFT_SCENARIOS, ids=[s[0] for s in LEFT_SCENARIOS])
+def test_the_teacher_also_parks_into_bays_on_the_left(name, start, cars):
+    r = T.simulate(*start, cars=cars)
+    assert r["result"] == "parked", (name, r["result"], r["t"])
+    assert r["m_len"] >= 0.0 and r["m_wid"] >= 0.0 and abs(r["herr_deg"]) < 6.0
+
+
+def test_left_and_right_are_mirror_images():
+    right = T.teacher_action(-8.0, -3.1, 0.0, 1.8, [1.0, 1.0, 1.0, 1.0])
+    left = T.teacher_action(-8.0, 3.1, 0.0, 1.8, [1.0, 1.0, 1.0, 1.0])
+    assert right[0] > 0.2 and abs(left[0] + right[0]) < 1e-9 and left[1] == right[1]
+    # a car beside us on the LEFT keeps the hold for a left-hand bay (left feeler = index 2)
+    hold = T.teacher_action(-8.0, 3.1, 0.0, 1.8, [1.0, 1.0, 0.2, 1.0])
+    assert abs(hold[0]) < 0.05
+    # ... and a car right behind a LEFT bay is passed and reversed into
+    r = T.simulate(-16.0, 3.1, 0.0, cars=(T.car_box(1),))
+    assert r["result"] == "parked" and r["reverse_steps"] > 20

@@ -120,6 +120,8 @@ def main():
                     help="round 9: pull toward the rule-based teacher after each rollout, fading to 0")
     ap.add_argument("--teacher-fade", type=int, default=1_000_000,
                     help="steps over which --teacher-weight fades to zero")
+    ap.add_argument("--sides", choices=("right", "left", "both"), default="right",
+                    help="which side of the road the practice bays are on")
     ap.add_argument("--lane-start", type=float, default=16.0,
                     help="metres back along the lane the far starts begin (22 for the car two bays back)")
     a = ap.parse_args()
@@ -129,6 +131,7 @@ def main():
     from rl.parking_math import Stages
     env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles,
                           lane_start_m=a.lane_start, lane_start_jitter_m=a.lane_start_jitter,
+                          sides=("right", "left") if a.sides == "both" else (a.sides,),
                           stages=Stages(start=a.start_stage, start_rung=a.start_rung, max_level=a.max_stage)
                           if a.obstacles else None)
     if a.obstacles:

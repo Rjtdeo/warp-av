@@ -109,7 +109,23 @@ def _pedal(speed, target, reverse=False):
 
 def teacher_action(ax, ay, herr, speed, feeler_readings=None, reverse_ok=True):
     """(steer, pedal, gear) for one step. gear is 1.0 for reverse, else 0.0.
-    Stateless: everything is derived from what the brain itself observes."""
+    Stateless: everything is derived from what the brain itself observes.
+
+    Bays on the LEFT of the road are handled by mirroring: the rules below are
+    written for a bay on the right (driving lane at ay = LANE_Y < 0); when the
+    van is on the other side of the bay line (ay > 0) the picture is flipped
+    across the line - sideways offset, heading error, left/right feelers -
+    the right-hand rules run, and the steering answer is flipped back."""
+    if ay > 0.0:
+        f = list(feeler_readings) if feeler_readings is not None else [1.0, 1.0, 1.0, 1.0]
+        mirrored = [f[1], f[0], f[3], f[2]]           # ahead-left<->ahead-right, left<->right
+        steer, pedal, gear = _teacher_action_right(ax, -ay, -herr, speed, mirrored, reverse_ok)
+        return -steer, pedal, gear
+    return _teacher_action_right(ax, ay, herr, speed, feeler_readings, reverse_ok)
+
+
+def _teacher_action_right(ax, ay, herr, speed, feeler_readings=None, reverse_ok=True):
+    """The rules, for a bay on the right of the road."""
     f = list(feeler_readings) if feeler_readings is not None else [1.0, 1.0, 1.0, 1.0]
     ahead_right, right = f[1], f[3]
     lane_side = -1.0 if LANE_Y < 0 else 1.0

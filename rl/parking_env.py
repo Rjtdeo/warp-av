@@ -75,7 +75,7 @@ class CarlaParkingEnv(gym.Env):
                  lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0,
                  neighbour_p=0.5, neighbour_ahead_p=0.3, use_feelers=True,
                  reverse=False, obstacles=False, neighbour_behind_bays=NEIGHBOUR_BEHIND_BAYS,
-                 lane_start_jitter_m=0.0,
+                 lane_start_jitter_m=0.0, sides=("right",),
                  stages=None):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
@@ -101,6 +101,11 @@ class CarlaParkingEnv(gym.Env):
         self.rng = random.Random(seed)
         self.exam_p = exam_p
         self.lane_start_m = float(lane_start_m)
+        # Which side of the road the practice bays may be on: ("right",),
+        # ("left",) or ("right", "left"). A bay on the left puts the driving
+        # lane at +ay in the slot frame; the maths is mirror-symmetric and the
+        # teacher mirrors itself, so one brain can learn both.
+        self.sides = tuple(str(x) for x in sides)
         # Training only: spread every far start over [lane start, lane start +
         # jitter]. Rounds 6-8f were born at exactly 16 m (and, with a car, at
         # exactly bays*7+8 m), so the brain's habits are welded to those
@@ -159,6 +164,8 @@ class CarlaParkingEnv(gym.Env):
             self.bays = [b for b in found if bay_is_clear(b[1], b[2], b[3], statics)]
             if len(self.bays) < 5:
                 raise RuntimeError(f"only {len(self.bays)} usable bays found")
+            per_side = {sd: sum(1 for b in self.bays if b[4] == sd) for sd in self.sides}
+            print(f"[ParkingEnv] bays by side: {per_side}")
             print(f"[ParkingEnv] {len(self.bays)} practice bays ready "
                   f"({len(found) - len(self.bays)} dropped: a decorative parked "
                   f"vehicle in the bay, behind it, or on the approach; "
@@ -214,17 +221,13 @@ class CarlaParkingEnv(gym.Env):
 
     # ------------------------------------------------------------------
     def _scan_bays(self):
-        """(start_transform, slot_x, slot_y, slot_yaw) per usable bay slot:
+        """(start_waypoint, slot_x, slot_y, slot_yaw, side) per usable bay slot:
         straight driving-lane sections with a Parking/Shoulder lane on the
-        right, far from junctions."""
+        chosen side(s), far from junctions. The slot's heading is the driving
+        lane's heading (a left-hand parking lane may be tagged the other way)."""
         bays = []
         for wp in self.cmap.generate_waypoints(4.0):
             if wp.lane_type != carla.LaneType.Driving or wp.is_junction:
-                continue
-            r = wp.get_right_lane()
-            if r is None or r.lane_type not in (carla.LaneType.Parking, carla.LaneType.Shoulder):
-                continue
-            if r.lane_width < 1.8:
                 continue
             back = wp.previous(12.0)
             if not back or back[0].is_junction:
@@ -232,9 +235,15 @@ class CarlaParkingEnv(gym.Env):
             dyaw = abs((back[0].transform.rotation.yaw - wp.transform.rotation.yaw + 180) % 360 - 180)
             if dyaw > 6.0:
                 continue                     # approach must be straight
-            t = r.transform
-            bays.append((wp, t.location.x, t.location.y,
-                         math.radians(t.rotation.yaw)))
+            for side in self.sides:
+                r = wp.get_right_lane() if side == "right" else wp.get_left_lane()
+                if r is None or r.lane_type not in (carla.LaneType.Parking, carla.LaneType.Shoulder):
+                    continue
+                if r.lane_width < 1.8:
+                    continue
+                t = r.transform
+                bays.append((wp, t.location.x, t.location.y,
+                             math.radians(wp.transform.rotation.yaw), side))
         return bays
 
     def _destroy(self):
@@ -360,7 +369,8 @@ class CarlaParkingEnv(gym.Env):
         if self.lane_start_jitter_m > 0:
             lane_m += self.rng.uniform(0.0, self.lane_start_jitter_m)
         for _ in range(40):
-            drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
+            drive_wp, sx, sy, syaw, side = self.rng.choice(self.bays)
+            self._side = side
             back = drive_wp.previous(lane_m)
             if not back:
                 continue
@@ -479,6 +489,7 @@ class CarlaParkingEnv(gym.Env):
             info["spawn_yaw_off_deg"] = round(self._spawn_yaw_off, 1)
             info["spawn_lat_off_m"] = round(self._spawn_lat_off, 2)
             info["neighbours"] = len(self.neighbours)
+            info["side"] = getattr(self, "_side", "right")
             info["reverse_steps"] = self._reverse_steps
             info["hazard"] = self._hazard
             info["stage"] = self.stages.level if self.stages is not None else ""

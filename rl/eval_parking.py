@@ -81,13 +81,13 @@ def _write_rows(results):
         w = csv.writer(f)
         w.writerow(["episode", "p", "start_dist_m", "result",
                     "m_len", "m_wid", "herr_deg", "hit", "ax", "ay", "speed",
-                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours", "reverse_steps", "hazard"])
+                    "spawn_yaw_off_deg", "spawn_lat_off_m", "neighbours", "reverse_steps", "hazard", "side"])
         for i, r in enumerate(results, 1):
             w.writerow([i, r.get("p"), r.get("start_dist"), r.get("result"),
                         r.get("m_len", ""), r.get("m_wid", ""), r.get("herr_deg", ""),
                         r.get("hit", ""), r.get("ax", ""), r.get("ay", ""), r.get("speed", ""),
                         r.get("spawn_yaw_off_deg", ""), r.get("spawn_lat_off_m", ""),
-                        r.get("neighbours", ""), r.get("reverse_steps", ""), r.get("hazard", "")])
+                        r.get("neighbours", ""), r.get("reverse_steps", ""), r.get("hazard", ""), r.get("side", "")])
 
 
 def main():
@@ -120,6 +120,8 @@ def main():
                     help="give the student the round-6 five-number view (needed for brains trained before round 7)")
     ap.add_argument("--reverse", action="store_true",
                     help="the brain has the reverse-gear control (round 8 and later)")
+    ap.add_argument("--side", choices=("right", "left", "both"), default="right",
+                    help="which side of the road the exam bays are on")
     ap.add_argument("--behind-bays", type=int, default=2,
                     help="how many bays back the practice car sits when --neighbour-p is set (1 = right behind)")
     ap.add_argument("--tag", type=str, default="",
@@ -145,7 +147,8 @@ def main():
                           obs_delay=a.obs_delay, neighbour_p=a.neighbour_p,
                           neighbour_ahead_p=a.neighbour_ahead_p,
                           use_feelers=not a.no_feelers, reverse=a.reverse,
-                          neighbour_behind_bays=a.behind_bays)   # different bays than training
+                          neighbour_behind_bays=a.behind_bays,   # different bays than training
+                          sides=("right", "left") if a.side == "both" else (a.side,))
     if a.neighbour_p:
         from rl.parking_math import lane_start_for
         print(f"[eval] car {a.behind_bays} bay(s) back: those attempts start "

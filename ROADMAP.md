@@ -331,3 +331,7 @@ Brain: rl/models/parking_ppo_round8.zip (9 inputs incl. feelers, 3 controls incl
   to be re-tested; open: camera-mode "obstacle at 0.0 m" route block. Details: rl/REPORT_CARD.md.
 - 2026-09-05 02:22: sensor re-test 5/6, 0 collisions; run 5 = car in the chosen slot, re-target, brain parks
   from the sensors. Open: camera-mode false route blocks; hand-over now lands at 7–9 m (alignment gate).
+- 2026-09-05 03:00: parking on the LEFT as well as the right — the teacher mirrors itself (7/7 left-side
+  paper-model scenarios incl. reverse-in), the arena can scan left-hand parking lanes (`--sides both`),
+  exams take `--side`. Whether Town10 has left-hand parking lanes is unknown until the next scan; the
+  lidar bay finder still searches the right only.
