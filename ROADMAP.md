@@ -317,3 +317,12 @@ with DAgger rounds, then fine-tuned with today's rewards plus a fading stay-clos
 Also from the reading: auto-label lidar clusters with CARLA ground truth to train a tiny classifier
 (test with truth off); bucket the scoreboard by difficulty and re-spend runs where it fails; a
 decoy-car robustness exam. Full digest: docs/RESEARCH_DIGEST.md.
+
+## Round 8 result (2026-09-05, 00:56 LA)
+Obstacle awareness learned: empty bay 30/30, car two bays back 29/30, car three bays back 30/30
+(round 6 on the two-bays-back test: 0/30). Car right behind the bay still 0/20 (needs the
+reverse manoeuvre; round 9). The road there: 8a-8d were set-up flaws (van born beside or
+behind the car, then the early swing-in habit), 8e's lane-hold charge cracked it, 8f/8g spread
+the starts, 8g's saved brain collapsed in its last minutes (lesson: rolling snapshots, cap
+unsolvable stages, lower the learning rate late), 8h redid the last stretch cleanly.
+Brain: rl/models/parking_ppo_round8.zip (9 inputs incl. feelers, 3 controls incl. reverse).

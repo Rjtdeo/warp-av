@@ -185,3 +185,24 @@ Brain frozen at 830k round-8 steps (`parking_ppo_round8g_test.zip`), 30 attempts
 | car right behind (`r8g_right_behind`) | 16 m | **0/30** | all crashes at ~12 m, nose into the car's rear; stage 2 (pull past, reverse in) was never reached in training |
 
 Reading: the "stay in your lane" lesson (round 8e) is real and holds for a car three or four bays back. Two bays back fails because the brain's first move is welded to the 16-22 m start distances it trained at; round 8g spreads the starts to unlearn that. Raw rows: `rl/exams/2026-09-04_r8g_*.csv` (hit, ax, ay per crash).
+
+## Round 8 final exam — 2026-09-05 00:56 LA (brain `rl/models/parking_ppo_round8.zip`)
+
+Which brain: round 8h's final. Round 8g had learned the same skills but its last five minutes
+collapsed (every attempt timing out) and the only saved copy was written after that; 8h redid
+the last stretch from the 19:02 snapshot with rolling snapshots, the unsolvable "car right
+behind" stage capped out, and half the learning rate (74 min, 2,276 attempts, no collapse).
+Probe before the exams: 10/10. Exams: seed 2026, clean bays, reverse gear allowed.
+
+| exam | start | round 8 | round 6 (no feelers) |
+|---|---|---|---|
+| empty bay | 16 m | **30/30** | 30/30 (earlier exams) |
+| car two bays back | 22 m | **29/30** (one crash at 12 m) | **0/30** (hits the car at 19 m, every time) |
+| car three bays back | 29 m | **30/30** (24 with the car placed) | — |
+| car right behind the bay | 16 m | 0/20 (all at 12 m, nose into the car) | 0/30 (earlier exam) |
+
+Reading: the van now stays in its lane past a parked car and turns in late, then parks with the
+same margins as on an empty street (1.08 m front/back, 0.16 m sides). The remaining case, a car
+right behind the bay, needs the pull-past-and-reverse manoeuvre: never trained (the stage was
+capped after it caused the 8g collapse); round 9's teacher demonstrates it. Raw rows:
+`rl/exams/2026-09-05_r8_*.csv`, `rl/exams/2026-09-05_r6_two_back.csv`.
