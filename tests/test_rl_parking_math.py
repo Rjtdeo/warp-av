@@ -572,3 +572,27 @@ def test_step_outcome_applies_the_lane_hold_only_when_asked():
     in_lane, _, _ = step_outcome(-16.0, 3.1, 0.0, 2.0, 16.3, 0.0, 0.0, 3.0, False, ax_prev=-16.2, lane_hold=True)
     in_lane_plain, _, _ = step_outcome(-16.0, 3.1, 0.0, 2.0, 16.3, 0.0, 0.0, 3.0, False, ax_prev=-16.2)
     assert abs(in_lane - in_lane_plain) < 1e-9
+
+
+from rl.parking_math import BESIDE_CLOSE
+
+
+def test_hold_the_lane_while_a_car_is_beside_you_even_near_the_bay():
+    beside = [1.0, 1.0, 1.0, 0.12]           # something 1.2 m off the right flank
+    clear = [1.0, 1.0, 1.0, 0.6]
+    assert lane_hold_penalty(-10.0, 1.5, beside) < 0    # inside 12 m, but not yet past the car
+    assert lane_hold_penalty(-10.0, 1.5, clear) == 0.0   # past it: turn in freely
+    assert lane_hold_penalty(-10.0, 3.1, beside) == 0.0  # holding the lane costs nothing
+    # the car AHEAD in the next bay shows on the ahead-right feeler, not the right one:
+    # it must never stop the van turning into its own bay
+    car_ahead = [1.0, 0.2, 1.0, 1.0]
+    assert lane_hold_penalty(-6.0, 0.5, car_ahead) == 0.0
+    assert lane_hold_penalty(-16.0, 1.0, clear) == lane_hold_penalty(-16.0, 1.0)   # far out: as before
+
+
+def test_step_outcome_holds_the_lane_beside_a_car_only_with_lane_hold_on():
+    beside = [1.0, 1.0, 1.0, 0.12]
+    args = (-10.0, 1.5, 0.0, 2.0, 10.1, 0.0, 0.0, 4.0, False)
+    plain, _, _ = step_outcome(*args, ax_prev=-10.2, feeler_readings=beside)
+    held, _, _ = step_outcome(*args, ax_prev=-10.2, feeler_readings=beside, lane_hold=True)
+    assert abs((held - plain) - lane_hold_penalty(-10.0, 1.5, beside)) < 1e-9

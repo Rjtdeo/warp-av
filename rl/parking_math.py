@@ -120,9 +120,21 @@ LANE_HOLD_PAY = 2.0          # line than this, PAY per metre per step. The round
                              # a crash. Never positive, so it cannot be farmed.
 
 
-def lane_hold_penalty(ax, ay, until_m=LANE_HOLD_UNTIL_M, y_m=LANE_HOLD_Y_M, pay=LANE_HOLD_PAY):
-    """Per-step charge for being in the parking lane while still far from the bay."""
-    if ax >= -until_m:
+BESIDE_CLOSE = 0.25          # right-hand feeler reading (x10 m) below which something is
+                             # BESIDE the van: keep holding the lane however near the bay.
+                             # Round 8e: with the car two bays back (14 m) the hold ended
+                             # at 12 m, level with that car's nose, and the turn-in swept
+                             # the van's flank into it - 320/320 crashes - while three
+                             # bays back (fully inside the hold zone) parked 80%.
+
+
+def lane_hold_penalty(ax, ay, feeler_readings=None, until_m=LANE_HOLD_UNTIL_M,
+                      y_m=LANE_HOLD_Y_M, pay=LANE_HOLD_PAY):
+    """Per-step charge for being in the parking lane while still far from the
+    bay, or while something is beside the van on the right (the sector
+    70..160 deg, the car it is passing - not the car ahead in the next bay)."""
+    beside = feeler_readings is not None and feeler_readings[3] < BESIDE_CLOSE
+    if ax >= -until_m and not beside:
         return 0.0
     return -pay * max(0.0, y_m - abs(ay))
 
@@ -182,7 +194,7 @@ def step_outcome(ax, ay, herr, speed, dist_prev, steer, steer_prev, t_s,
     if feeler_readings is not None:
         r += proximity_penalty(feeler_readings)
     if lane_hold:
-        r += lane_hold_penalty(ax, ay)
+        r += lane_hold_penalty(ax, ay, feeler_readings)
     if reversing:
         r -= REVERSE_COST
     r -= 0.05
