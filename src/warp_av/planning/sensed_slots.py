@@ -66,7 +66,9 @@ def bays_to_slots(bays: List[Bay], ex: float, ey: float, eyaw: float,
             if vx < min_ahead_m:
                 continue
             wx, wy = vehicle_to_world(vx, vy_left, ex, ey, eyaw)
-            out.append(slot_dict(wx, wy, eyaw + bay.yaw))
+            d_slot = slot_dict(wx, wy, eyaw + bay.yaw)
+            d_slot["kerb_offset_m"] = round(KERB_GAP_M + SLOT_WID_M / 2.0, 2)   # slot centre line -> kerb face
+            out.append(d_slot)
     return out
 
 

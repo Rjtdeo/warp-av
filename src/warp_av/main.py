@@ -659,6 +659,13 @@ class WarpAV:
                         pose.x, pose.y, pose.yaw, half_len, half_wid, slot)
                     detail += (f" | INSIDE slot #{sp['slot_index']}: {'YES' if inside else 'NO'}"
                                f" (margins {m_along} m front/back, {m_side} m side)")
+                    if slot.get("kerb_offset_m") is not None:
+                        # US rule: parallel-parked within 18 in (0.46 m) of the kerb.
+                        # The kerb is on the slot's right; right unit vector = (-sin yaw, cos yaw).
+                        right = (-(pose.x - slot["x"]) * math.sin(slot["yaw"])
+                                 + (pose.y - slot["y"]) * math.cos(slot["yaw"]))
+                        flank = slot["kerb_offset_m"] - right - half_wid
+                        detail += f" | kerb {flank:.2f} m ({'OK' if flank <= 0.46 else 'too far'}, US rule <= 0.46 m)"
             self.logger.log_event("mission_completed", detail)
             print(f"[Mission] {detail}")
             self.logger.stop_mission_log()

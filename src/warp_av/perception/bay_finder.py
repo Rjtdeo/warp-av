@@ -40,8 +40,11 @@ OCCUPIED_POINTS = 2           # a bin with this many body points is taken (near)
 OCCUPIED_FAR_M = 15.0         # ... and beyond this range a single point is enough:
                               # a parked car 25 m away returns 2-5 points in total
 END_MARGIN_M = 0.5            # a bay needs this much clear beyond each end
-KERB_GAP_M = 0.6              # a parked van sits this far off the kerb face (0.3 put the
-                              # van's side within reach of a pole on the kerb: arm C, run 4)
+KERB_GAP_M = 0.18             # slot's kerb-side edge this far off the kerb face. A van centred
+                              # in the 2.5 m slot then has its flank 0.45 m (17.7 in) from the
+                              # kerb: US law says within 18 in. Was 0.6 (flank 0.87 m = 34 in,
+                              # illegal) after a pole on the kerb clipped the van at 0.3 with the
+                              # rule-based parker; the learned parker's feelers see poles.
 
 
 @dataclass
