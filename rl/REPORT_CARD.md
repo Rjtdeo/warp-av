@@ -247,3 +247,25 @@ on a bend), and run 5 is the target manoeuvre end to end: sensors find the bay, 
 chosen slot, the van re-targets, the brain drives and parks. Two things to tune: the alignment gate
 now delays the hand-over to 7–9 m (the approach roads curve until late; consider 35° / 5.5 m), and the
 brain stalled once for 45 s (run 1). Open stack issue: camera-mode route blocks at 0–1.2 m.
+
+## Round 9, steps 2–3 — the instructor's drives and the first copy (2026-09-05, 11:24–14:00 LA)
+
+**Instructor in the simulator** (after three fixes found in 40- and 60-drive tests): 1,200 drives, **1,119 parked (93%)**
+— empty 95%, car ahead 96%, three back 95%, two back 95% (pull past, reverse in), right behind 85%.
+Recorded to `rl/demos/demos.npz` (374,885 moments); per-drive rows in `demos_episodes.csv`.
+
+**Copy** (`pretrain_bc.py --mirror --parked-only`): 676,520 moments incl. left-hand mirror images, 60 epochs;
+steer error 0.038, pedal error 0.080, gear agreement 99.6%. Brain `rl/models/parking_ppo_round9_bc.zip`.
+
+**Probe of the pure copy** (20/15/15 attempts, seed 3):
+
+| probe | copied brain | note |
+|---|---|---|
+| empty bay | **18/20** | 1 timeout (shuffling), 1 kerb-side hit |
+| car two bays back | **0/15** | 10 timeouts shuffling at the bay, 5 hits on kerb-side objects at 4 m |
+| car right behind | **0/15** | all hit the parked car at 6–8 m while still in the lane, 0.8 m drifted toward the bay |
+
+Reading: the textbook copying failure (covariate shift). Where the instructor's behaviour is simple the copy holds;
+where a small drift lands the van in a state the instructor never showed, it has no answer. Next: DAgger rounds
+(the copy drives, the instructor labels every visited state, refit), then practice with a fading pull toward the
+instructor. Raw rows: `rl/exams/2026-09-05_r9bc_*.csv`.
