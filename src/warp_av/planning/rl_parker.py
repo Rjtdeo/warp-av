@@ -49,8 +49,14 @@ def box_outline_points(cx, cy, yaw, half_len, half_wid):
 
 
 class RLParker:
-    def __init__(self, model_path: str = DEFAULT_MODEL, model=None, n_obs=None, n_act=None):
+    def __init__(self, model_path: str = DEFAULT_MODEL, model=None, n_obs=None, n_act=None,
+                 handover_m: float = HANDOVER_M):
         self.model_path = os.path.abspath(model_path)
+        # How far from the slot the brain takes the wheel. 16.5 m is the
+        # arena's exam distance; the round-8 brain parked 97% from 29 m with a
+        # car on the approach, so 30 m (about where the lidar first finds a
+        # bay) is a fair setting for it.
+        self.handover_m = float(handover_m)
         self._model = model          # a stub can be injected for tests
         # What this brain expects: 5 inputs / 2 controls (round 6) or 9 inputs
         # (4 obstacle feelers) / 3 controls (reverse gear, round 8). Read from
@@ -95,7 +101,7 @@ class RLParker:
 
     def should_take_over(self, slot: Dict, x: float, y: float) -> bool:
         return (not self.done and not self.engaged
-                and self.distance_to(slot, x, y) <= HANDOVER_M)
+                and self.distance_to(slot, x, y) <= self.handover_m)
 
     def act(self, x: float, y: float, yaw: float, speed: float, slot: Dict,
             obstacle_points=None) -> Dict:

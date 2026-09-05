@@ -158,3 +158,11 @@ def test_box_outline_has_centre_corners_and_edge_midpoints():
     turned = box_outline_points(0.0, 0.0, math.pi / 2, 2.0, 1.0)
     xs = [round(x, 6) for x, _ in turned]; ys = [round(y, 6) for _, y in turned]
     assert max(ys) == 2.0 and max(xs) == 1.0                                # length now along y
+
+
+def test_the_hand_over_distance_is_a_setting():
+    far = RLParker(model=Stub([0.0, 0.5, 0.0]), n_obs=9, n_act=3, handover_m=30.0)
+    assert not far.should_take_over(SLOT, 100.0 - 32.0, 50.0)
+    assert far.should_take_over(SLOT, 100.0 - 29.0, 50.0)
+    default = RLParker(model=Stub([0.0, 0.5]))
+    assert default.handover_m == HANDOVER_M and not default.should_take_over(SLOT, 100.0 - 29.0, 50.0)

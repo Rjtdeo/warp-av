@@ -726,7 +726,8 @@ class WarpAV:
             "rl_parker": ({"engaged": self.rl_parker.engaged, "done": self.rl_parker.done,
                            "result": self.rl_parker.result,
                            "brain": os.path.basename(self.rl_parker.model_path),
-                           "inputs": self.rl_parker.n_obs, "controls": self.rl_parker.n_act}),
+                           "inputs": self.rl_parker.n_obs, "controls": self.rl_parker.n_act,
+                           "handover_m": self.rl_parker.handover_m}),
 
             "perception_runtime": {
                 "source": (
@@ -2163,9 +2164,10 @@ class WarpAV:
             behavior_output.reason = out["reason"]
         return cmd, behavior_output
 
-    def api_set_parker(self, who, brain=None):
-        """Who drives the last 16 m into a slot: "rules" or "rl". `brain` picks
-        the .zip (path relative to the repo or absolute); default round 6."""
+    def api_set_parker(self, who, brain=None, handover_m=None):
+        """Who drives the last metres into a slot: "rules" or "rl". `brain`
+        picks the .zip (path relative to the repo or absolute; default round
+        6); `handover_m` how far out the brain takes the wheel (default 16.5)."""
         who = str(who).strip().lower()
         if who not in ("rules", "rl"):
             return {"success": False, "reason": "Parker must be rules or rl", "parker": self.parker}
@@ -2177,7 +2179,15 @@ class WarpAV:
             if not os.path.exists(path):
                 return {"success": False, "reason": f"no brain at {path}", "parker": self.parker}
             if path != self.rl_parker.model_path:
-                self.rl_parker = RLParker(model_path=path)
+                self.rl_parker = RLParker(model_path=path, handover_m=self.rl_parker.handover_m)
+        if who == "rl" and handover_m is not None:
+            try:
+                h = float(handover_m)
+            except (TypeError, ValueError):
+                return {"success": False, "reason": "handover_m must be a number", "parker": self.parker}
+            if not 5.0 <= h <= 40.0:
+                return {"success": False, "reason": "handover_m must be 5-40 m", "parker": self.parker}
+            self.rl_parker.handover_m = h
         if who == "rl" and not os.path.exists(self.rl_parker.model_path):
             return {"success": False, "reason": f"no brain at {self.rl_parker.model_path}", "parker": self.parker}
         if who == "rl":
@@ -2193,7 +2203,8 @@ class WarpAV:
         self.logger.log_event("parker", f"the last 16 m are now driven by the {'learned' if who == 'rl' else 'hand-written'} parker"
                               + (f" ({self.rl_parker.describe()})" if who == "rl" else ""))
         return {"success": True, "parker": who,
-                "brain": os.path.basename(self.rl_parker.model_path) if who == "rl" else None}
+                "brain": os.path.basename(self.rl_parker.model_path) if who == "rl" else None,
+                "handover_m": self.rl_parker.handover_m}
 
     def api_set_parking_source(self, source):
         """Where FIND PARKING gets its slots: "map" (CARLA lane data) or
@@ -2956,7 +2967,8 @@ def parking_parker():
     if request.method == 'GET':
         return jsonify({"parker": av_system.parker})
     data = request.get_json(silent=True) or {}
-    return jsonify(av_system.api_set_parker(data.get("parker", ""), brain=data.get("brain")))
+    return jsonify(av_system.api_set_parker(data.get("parker", ""), brain=data.get("brain"),
+                                            handover_m=data.get("handover_m")))
 
 
 @app.route('/api/parking/source', methods=['GET', 'POST'])
