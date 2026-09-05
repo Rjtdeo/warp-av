@@ -188,6 +188,19 @@ def teacher_action(ax, ay, herr, speed, feeler_readings=None, reverse_ok=True):
     return steer, _pedal(speed, target), 0.0
 
 
+def teacher_from_obs(obs, reverse_ok=True):
+    """The teacher's action for one of the brain's own observations
+    (ax/15, ay/6, herr/pi, speed/5, prev_steer, 4 feelers). The observation
+    carries an unsigned speed, so this is only exact while driving forward;
+    callers skip steps where the brain had selected reverse."""
+    ax = float(obs[0]) * 15.0
+    ay = float(obs[1]) * 6.0
+    herr = float(obs[2]) * math.pi
+    speed = float(obs[3]) * 5.0
+    f = [float(v) for v in obs[5:9]] if len(obs) >= 9 else None
+    return teacher_action(ax, ay, herr, speed, f, reverse_ok=reverse_ok)
+
+
 # ----------------------------------------------------------------------
 # A kinematic bicycle model, so the teacher can be exercised without CARLA.
 # ----------------------------------------------------------------------

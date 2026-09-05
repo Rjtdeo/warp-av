@@ -94,6 +94,10 @@ def main():
                          "(a trained brain barely explores; a new skill needs variety)")
     ap.add_argument("--lane-start-jitter", type=float, default=0.0,
                     help="spread every far start over [start, start + this] metres (train only)")
+    ap.add_argument("--teacher-weight", type=float, default=0.0,
+                    help="round 9: pull toward the rule-based teacher after each rollout, fading to 0")
+    ap.add_argument("--teacher-fade", type=int, default=1_000_000,
+                    help="steps over which --teacher-weight fades to zero")
     ap.add_argument("--lane-start", type=float, default=16.0,
                     help="metres back along the lane the far starts begin (22 for the car two bays back)")
     a = ap.parse_args()
@@ -125,8 +129,13 @@ def main():
         else:
             model = PPO("MlpPolicy", env, verbose=1, seed=7,
                         n_steps=1024, batch_size=256, learning_rate=3e-4)
+        callbacks = [EpisodeLogger(fresh=not a.resume)]
+        if a.teacher_weight > 0:
+            from rl.teacher_callback import TeacherCallback
+            callbacks.append(TeacherCallback(weight=a.teacher_weight, fade_steps=a.teacher_fade, verbose=1))
+            print(f"[train] staying close to the teacher: weight {a.teacher_weight}, fading over {a.teacher_fade} steps")
         model.learn(total_timesteps=a.steps,
-                    callback=EpisodeLogger(fresh=not a.resume),
+                    callback=callbacks,
                     reset_num_timesteps=not a.resume)
         model.save(MODEL)
         print(f"[train] DONE — model at {MODEL}")

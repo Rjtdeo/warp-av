@@ -121,7 +121,10 @@ class CarlaParkingEnv(gym.Env):
         self._feelers_now = None
         self.reverse = bool(reverse)
         self.obstacles = bool(obstacles)
-        self.neighbour_behind_bays = int(neighbour_behind_bays)
+        # an int, or a tuple of ints to draw from per attempt (the round-9 recorder mixes 1/2/3)
+        self.neighbour_behind_bays = (tuple(int(b) for b in neighbour_behind_bays)
+                                      if isinstance(neighbour_behind_bays, (tuple, list))
+                                      else int(neighbour_behind_bays))
         self.stages = (stages or Stages()) if obstacles else None
         self._ax_prev = 0.0
         self._reverse_steps = 0
@@ -281,7 +284,10 @@ class CarlaParkingEnv(gym.Env):
                 return ("ahead", 1)
             return None
         if self.neighbour_p and self.rng.random() < self.neighbour_p:
-            return ("behind", self.neighbour_behind_bays)
+            bays = self.neighbour_behind_bays
+            if isinstance(bays, tuple):
+                bays = self.rng.choice(bays)
+            return ("behind", bays)
         # Never both without a reverse gear: a gap between two parked cars is
         # not a lesson, it is a wall.
         if self.neighbour_ahead_p and self.rng.random() < self.neighbour_ahead_p:

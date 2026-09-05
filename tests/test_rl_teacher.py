@@ -87,3 +87,12 @@ def test_car_box_sits_in_the_neighbouring_bay():
     assert (cx, cy, yaw) == (-14.0, 0.0, 0.0) and hl == 2.35
     pts = T.box_points(*T.car_box(1))
     assert len(pts) == 9 and min(x for x, _ in pts) == pytest.approx(-9.35)
+
+
+def test_the_teacher_can_read_the_brains_own_observation():
+    from rl.parking_math import observation
+    ax, ay, herr, speed = -14.0, -3.1, 0.05, 2.0
+    obs = observation(0.0 + ax, ay, herr, speed, 0.0, 0.0, 0.0, 0.0) + [1.0, 0.6, 1.0, 0.4]
+    direct = T.teacher_action(ax, ay, herr, speed, [1.0, 0.6, 1.0, 0.4])
+    via_obs = T.teacher_from_obs(obs)
+    assert all(abs(x - y) < 1e-6 for x, y in zip(direct, via_obs))
