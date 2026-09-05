@@ -106,7 +106,10 @@ def main():
     merged = merge([a.demos] + sorted(glob.glob(os.path.join(HERE, "demos", "dagger_*.npz"))),
                    os.path.join(HERE, "demos", "merged.npz"))
     print(f"[dagger {a.round}] re-fitting on {merged}")
-    subprocess.check_call([sys.executable, os.path.join(HERE, "pretrain_bc.py"), "--demos", merged, "--out", a.model])
+    # keep the left-hand mirror images in the re-fit (the town has no left-hand bays);
+    # failed drives stay in: their labels are the teacher's corrections, which is the point
+    subprocess.check_call([sys.executable, os.path.join(HERE, "pretrain_bc.py"), "--demos", merged,
+                           "--out", a.model, "--mirror"])
 
 
 if __name__ == "__main__":
