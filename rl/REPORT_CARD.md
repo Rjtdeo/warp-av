@@ -206,3 +206,25 @@ same margins as on an empty street (1.08 m front/back, 0.16 m sides). The remain
 right behind the bay, needs the pull-past-and-reverse manoeuvre: never trained (the stage was
 capped after it caused the 8g collapse); round 9's teacher demonstrates it. Raw rows:
 `rl/exams/2026-09-05_r8_*.csv`, `rl/exams/2026-09-05_r6_two_back.csv`.
+
+## Sensor test with the round-8 brain — 2026-09-05 01:12–01:39 LA (full van software)
+
+Camera + lidar perception, bays found by the lidar (map fallback), the learned parker = round-8
+brain (9 inputs incl. feelers, reverse gear) taking the wheel at 30 m. Park-check plan twice:
+six runs, two of them with a car in the chosen slot. Sweep output: backup folder `sweep_r8_sensor`.
+
+| run | scenario | verdict | brain drove? | notes |
+|---|---|---|---|---|
+| 1 | empty bay | PASS | yes | lidar found 6 slots; brain parked inside (0.96 m / 0.09 m), feelers live |
+| 2 | slot taken | FAIL (stuck 201 s) | yes, at 15.5 m after re-target | behaviour layer's "vehicle blocking path" stop for the parked car 8 m ahead froze the van while the brain held the wheel |
+| 3 | empty bay | PASS | took over at 29.8 m, gave up at once | handed over on a bend, 10.5 m off the bay's line; rules parker parked (0.72 / 0.15 m) |
+| 4 | empty bay | FAIL (timeout) | never reached | route blocked for minutes by an "obstacle at 0.0 m" 33 m before the destination: a camera/lidar perception false positive, not the parker |
+| 5 | slot taken | PASS | no | rules parker after re-scan (0.92 / −0.09 m) |
+| 6 | empty bay | PASS | no | rules parker (0.86 / 0.07 m) |
+
+Collisions: 0 in 6. Verdict: the plug-in works end to end (run 1 is the first sensor-driven
+park by the obstacle-aware brain), but the hand-over is inconsistent and the behaviour layer's
+stop fights the brain near parked cars. Fixes (commit 3e093fb, not yet re-tested): hand over only
+when lined up with the bay (≤ 4.5 m off its line, ≤ 25° off its heading, not yet past it); while the
+brain drives, a behaviour stop wins only for a pedestrian, anything moving, anything within 2 m,
+or when perception cannot say. Open: the "obstacle at 0.0 m" route block in camera mode.

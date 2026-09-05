@@ -326,3 +326,6 @@ behind the car, then the early swing-in habit), 8e's lane-hold charge cracked it
 the starts, 8g's saved brain collapsed in its last minutes (lesson: rolling snapshots, cap
 unsolvable stages, lower the learning rate late), 8h redid the last stretch cleanly.
 Brain: rl/models/parking_ppo_round8.zip (9 inputs incl. feelers, 3 controls incl. reverse).
+- 2026-09-05 01:39: sensor test with the round-8 brain, 6 runs, 0 collisions, 4 PASS; the brain parked
+  from lidar + camera in run 1; two integration fixes pushed (aligned hand-over, stop-override rule),
+  to be re-tested; open: camera-mode "obstacle at 0.0 m" route block. Details: rl/REPORT_CARD.md.
