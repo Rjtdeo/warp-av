@@ -104,3 +104,20 @@ simulation, camera-only 3D detection) that a one-van CARLA stack does not have.
 
 Expected: hours rather than days, because the brain starts with the lane-hold and the late turn-in
 instead of discovering them by crashing.
+
+
+## Beyond Waymo (added 2026-09-05)
+
+- **Nuro, CIMRL (2024, arXiv 2406.08878).** Imitation gives the motion prior, reinforcement learning improves
+  closed-loop behaviour on top of it, and explicit safety constraints keep the RL part from proposing dangerous
+  actions; state-of-the-art in closed-loop simulation and on real-world benchmarks. Same shape as our round 9
+  (teacher prior, fading pull toward it during practice, the lane-hold and proximity charges plus the van
+  software's stop-override as the constraints). Their emphasis on the long tail supports keeping the hard
+  hazard cases in every batch.
+- **Wayve, GAIA-3 (Dec 2025).** A generative world model used to evaluate and validate the driving AI across
+  vehicles and scenarios. Not for us: it needs fleet-scale video. The idea we borrow is the discipline: evaluate
+  closed-loop, on scenarios the model did not train on, before trusting a change.
+- **Practice notes from the same reading, applied tonight.** Test the instructor in the real simulator before
+  recording thousands of drives (first contact: 12/25; the paper model had said 13/13). Measure the real
+  vehicle (wheelbase 3.66 m, lock 70°, the reported pose is the box centre 1.8 m ahead of the rear axle) and
+  put those numbers in the model instead of guessing. Filter junk starts before they become demonstrations.

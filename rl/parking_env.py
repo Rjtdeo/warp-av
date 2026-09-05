@@ -159,6 +159,19 @@ class CarlaParkingEnv(gym.Env):
             self.cmap = self.world.get_map()
             found = self._scan_bays()
             statics = static_vehicle_outlines(self.world)
+            # Live vehicles left standing by an earlier run (a sensor test's
+            # parked cars, say) are obstacles too: 2 of 40 clean drives on
+            # 5 Sep hit a forgotten Impala in the practice bay.
+            for a in self.world.get_actors().filter("vehicle.*"):
+                try:
+                    tf, ext = a.get_transform(), a.bounding_box.extent
+                    yaw = math.radians(tf.rotation.yaw); c, s_ = math.cos(yaw), math.sin(yaw)
+                    cx, cy = tf.location.x, tf.location.y
+                    statics.append([(cx, cy)] + [(cx + sx * c * ext.x - sy * s_ * ext.y,
+                                                  cy + sx * s_ * ext.x + sy * c * ext.y)
+                                                 for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1))])
+                except Exception:
+                    continue
             self.static_outlines = statics
             self._static_points = [pt for outline in statics for pt in outline]
             self.bays = [b for b in found if bay_is_clear(b[1], b[2], b[3], statics)]

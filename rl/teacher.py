@@ -48,9 +48,14 @@ SHUFFLE_TOL_M = 0.3      # sideways error below this: just straighten and stop
 K_HEADING = 4.0          # steer per radian of heading error
 K_LATERAL = 0.5          # lateral error gain (Stanley-style aim = atan2(K*e, lookahead))
 LOOKAHEAD_M = 4.5        # (grid-searched in the paper model: 10/10 forward scenarios park)
-WHEELBASE_M = 3.5
-MAX_WHEEL_RAD = math.radians(60.0) * 0.8   # CARLA vans lock to ~60-70 deg; the arena multiplies steer by 0.8
+WHEELBASE_M = 3.66                          # measured in CARLA (front wheels 3.66 m ahead of the rear)
+MAX_WHEEL_RAD = math.radians(70.0) * 0.8   # measured lock 70 deg; the arena multiplies steer by 0.8
 CONSERVATIVE_WHEEL_RAD = math.radians(35.0) * 0.8   # a stiff van, for robustness checks
+CENTRE_AHEAD_OF_REAR_M = 1.8                # the pose CARLA reports is the box centre, this far ahead of the
+                                            # rear axle. Backing up at full lock, the centre first swings the
+                                            # WRONG way (measured in the arena) while the rear axle goes where
+                                            # the wheels point - so reversing is controlled at the rear axle.
+REVERSE_MAX_STEER = 0.6                     # gentler lock when backing: the centre's swing stays readable
 
 
 def smoothstep(t):
@@ -74,10 +79,18 @@ def _wrap(a):
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
+def rear_axle(ax, ay, herr):
+    """The rear-axle point of a van whose centre is at (ax, ay) heading herr."""
+    return ax - CENTRE_AHEAD_OF_REAR_M * math.cos(herr), ay - CENTRE_AHEAD_OF_REAR_M * math.sin(herr)
+
+
 def _steer_to_path(ax, ay, herr, y_ref, slope, reverse=False, lookahead=None, k_lateral=None):
     """Stanley-style: aim along the path's slope, corrected toward it. In
-    reverse the van's motion is opposite to its heading, so the error sign flips.
-    A shorter lookahead (used when creeping) corrects sideways error harder."""
+    reverse the van's motion is opposite to its heading, so the error sign flips,
+    and the sideways error is measured at the REAR AXLE (the point that goes
+    where the wheels point when backing). A shorter lookahead corrects harder."""
+    if reverse:
+        ax, ay = rear_axle(ax, ay, herr)
     path_heading = math.atan(slope)
     lateral_aim = math.atan2((k_lateral if k_lateral is not None else K_LATERAL) * (y_ref - ay),
                              lookahead or LOOKAHEAD_M)
@@ -92,6 +105,7 @@ def _steer_to_path(ax, ay, herr, y_ref, slope, reverse=False, lookahead=None, k_
         # wheel sign flips too.
         err = _wrap(path_heading - lateral_aim - herr)
         steer = -K_HEADING * err
+        return max(-REVERSE_MAX_STEER, min(REVERSE_MAX_STEER, steer))
     return max(-1.0, min(1.0, steer))
 
 
@@ -252,10 +266,19 @@ def _van_hits_box(ax, ay, herr, box):
 
 def simulate(start_ax, start_ay, start_herr, cars=(), dt=0.1, max_s=60.0, reverse_ok=True,
              wheel_rad=MAX_WHEEL_RAD, wheelbase=WHEELBASE_M):
-    """Drive the teacher in a kinematic bicycle model. `cars` are boxes
-    (cx, cy, yaw, half_len, half_wid) in the slot frame. Returns a dict with
-    result ('parked' / 'collision' / 'timeout' / 'lost'), the path, margins."""
-    ax, ay, herr, v = start_ax, start_ay, start_herr, 0.0
+    """Drive the teacher in a kinematic bicycle model. The state lives at the
+    rear axle; what the teacher sees (and what the arena judges) is the box
+    centre, CENTRE_AHEAD_OF_REAR_M ahead of it - as CARLA reports. `cars` are
+    boxes (cx, cy, yaw, half_len, half_wid) in the slot frame. Returns a dict
+    with result ('parked' / 'collision' / 'timeout' / 'lost'), the centre's
+    path, margins."""
+    herr, v = start_herr, 0.0
+    rx, ry = rear_axle(start_ax, start_ay, start_herr)
+
+    def centre():
+        return rx + CENTRE_AHEAD_OF_REAR_M * math.cos(herr), ry + CENTRE_AHEAD_OF_REAR_M * math.sin(herr)
+
+    ax, ay = centre()
     path = [(ax, ay, herr)]
     t = 0.0
     reverse_steps = 0
@@ -269,18 +292,17 @@ def simulate(start_ax, start_ay, start_herr, cars=(), dt=0.1, max_s=60.0, revers
         brake = max(0.0, -pedal)
         want = -1.0 if rev else 1.0
         if abs(v) > 0.02 and (v > 0) != (want > 0):
-            # gear opposite to the motion: brake to a stop first
-            v -= math.copysign(6.0 * dt, v)
+            v -= math.copysign(6.0 * dt, v)          # gear opposite to the motion: brake to a stop first
             if abs(v) < 0.06:
                 v = 0.0
         else:
             mag = abs(v) + (3.2 * throttle - 6.0 * brake) * dt
-            mag = max(0.0, min(cap, mag))
-            v = want * mag
+            v = want * max(0.0, min(cap, mag))
         delta = steer * wheel_rad
-        ax += v * math.cos(herr) * dt
-        ay += v * math.sin(herr) * dt
+        rx += v * math.cos(herr) * dt
+        ry += v * math.sin(herr) * dt
         herr = _wrap(herr + (v / wheelbase) * math.tan(delta) * dt)
+        ax, ay = centre()
         if rev:
             reverse_steps += 1
         t += dt
