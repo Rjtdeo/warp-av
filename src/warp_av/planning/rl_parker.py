@@ -22,7 +22,7 @@ from typing import Dict, Optional
 import numpy as np
 
 from rl.parking_math import (observation, to_slot_frame, van_corners_in_slot,
-                             SUCCESS_SPEED, OVERSHOOT_M, LATERAL_LOST_M)
+                             SUCCESS_SPEED, OVERSHOOT_M, LATERAL_LOST_M, feelers)
 
 HANDOVER_M = 16.5        # take the wheel when the slot centre is this close
 TIMEOUT_S = 45.0         # then give it back if not parked by then
@@ -31,13 +31,40 @@ STEER_GAIN = 0.8
 THROTTLE_GAIN = 0.7
 DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "..", "..", "..", "rl", "models",
                              "parking_ppo_round6.zip")
+ROUND8_MODEL = os.path.join(os.path.dirname(__file__), "..", "..", "..", "rl", "models",
+                            "parking_ppo_round8.zip")
+REVERSE_MAX_SPEED = 1.5   # the arena's cap when the gear is reverse
+REVERSE_OVERSHOOT_M = 12.0  # a reversing brain may pull past the slot first (arena rule)
+
+
+def box_outline_points(cx, cy, yaw, half_len, half_wid):
+    """Nine points of a box: centre, four corners, four edge midpoints - the
+    same outline the arena gives its feelers for a parked car."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    pts = [(cx, cy)]
+    for fx, fy in ((1, 1), (1, -1), (-1, 1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1)):
+        lx, ly = fx * half_len, fy * half_wid
+        pts.append((cx + lx * c - ly * s, cy + lx * s + ly * c))
+    return pts
 
 
 class RLParker:
-    def __init__(self, model_path: str = DEFAULT_MODEL, model=None):
+    def __init__(self, model_path: str = DEFAULT_MODEL, model=None, n_obs=None, n_act=None):
         self.model_path = os.path.abspath(model_path)
         self._model = model          # a stub can be injected for tests
+        # What this brain expects: 5 inputs / 2 controls (round 6) or 9 inputs
+        # (4 obstacle feelers) / 3 controls (reverse gear, round 8). Read from
+        # the loaded brain unless given.
+        self.n_obs = n_obs
+        self.n_act = n_act
         self.reset()
+
+    def describe(self) -> str:
+        n_obs = self.n_obs or 5
+        n_act = self.n_act or 2
+        return (f"{os.path.basename(self.model_path)}: {n_obs} inputs"
+                f"{' incl. 4 obstacle feelers' if n_obs >= 9 else ''}, {n_act} controls"
+                f"{' incl. reverse gear' if n_act >= 3 else ''}")
 
     def reset(self):
         self.engaged = False
@@ -54,6 +81,12 @@ class RLParker:
         if self._model is None:
             from stable_baselines3 import PPO   # slow import: only when first needed
             self._model = PPO.load(self.model_path, device="cpu")
+        if self.n_obs is None:
+            space = getattr(self._model, "observation_space", None)
+            self.n_obs = int(space.shape[0]) if space is not None and getattr(space, "shape", None) else 5
+        if self.n_act is None:
+            space = getattr(self._model, "action_space", None)
+            self.n_act = int(space.shape[0]) if space is not None and getattr(space, "shape", None) else 2
         return self._model
 
     @staticmethod
@@ -64,9 +97,15 @@ class RLParker:
         return (not self.done and not self.engaged
                 and self.distance_to(slot, x, y) <= HANDOVER_M)
 
-    def act(self, x: float, y: float, yaw: float, speed: float, slot: Dict) -> Dict:
-        """One step at the wheel. Returns steering/throttle/brake plus
-        parked / gave_up flags and a reason."""
+    def act(self, x: float, y: float, yaw: float, speed: float, slot: Dict,
+            obstacle_points=None) -> Dict:
+        """One step at the wheel. Returns steering/throttle/brake (+ reverse
+        flag) plus parked / gave_up flags and a reason.
+
+        obstacle_points: outline points of everything solid nearby, in the
+        VAN's frame (x forward, y right, metres) - lidar clusters or actor
+        boxes. Only a 9-input brain looks at them (its four feelers)."""
+        self._load()
         now = time.time()
         if self.t0 is None:
             self.t0 = now
@@ -95,7 +134,8 @@ class RLParker:
         why = None
         # overshoot only counts once we have actually been near the slot -
         # a target that jumps behind us is not an 83 m overshoot
-        if ax > OVERSHOOT_M and self._closest_ax is not None and self._closest_ax < 3.0:
+        overshoot_m = REVERSE_OVERSHOOT_M if (self.n_act or 2) >= 3 else OVERSHOOT_M
+        if ax > overshoot_m and self._closest_ax is not None and self._closest_ax < 3.0:
             why = f"overshot the slot by {ax:.1f} m"
         elif abs(ay) > LATERAL_LOST_M:
             why = f"wandered {abs(ay):.1f} m off the slot line"
@@ -107,13 +147,26 @@ class RLParker:
             return dict(steering=0.0, throttle=0.0, brake=1.0, parked=False, gave_up=True,
                         reason=self.result)
 
-        obs = np.array(observation(x, y, yaw, speed, self.prev_steer, sx, sy, syaw), dtype=np.float32)
+        obs_list = observation(x, y, yaw, speed, self.prev_steer, sx, sy, syaw)
+        near = ""
+        if (self.n_obs or 5) >= 9:
+            # the arena's feelers, measured from the van's centre in its own frame
+            f = feelers(0.0, 0.0, 0.0, list(obstacle_points or []))
+            obs_list = obs_list + f
+            if min(f) < 1.0:
+                names = ("ahead-left", "ahead-right", "left", "right")
+                i = min(range(4), key=lambda k: f[k])
+                near = f", nearest {names[i]} {f[i] * 10.0:.1f} m"
+        obs = np.array(obs_list, dtype=np.float32)
         action, _ = self._load().predict(obs, deterministic=True)
         steer = float(np.clip(action[0], -1.0, 1.0))
         pedal = float(np.clip(action[1], -1.0, 1.0))
-        throttle = max(0.0, pedal) * THROTTLE_GAIN if speed < MAX_SPEED else 0.0
+        gear_rev = bool((self.n_act or 2) >= 3 and len(action) > 2 and float(action[2]) > 0.5)
+        cap = REVERSE_MAX_SPEED if gear_rev else MAX_SPEED
+        throttle = max(0.0, pedal) * THROTTLE_GAIN if abs(speed) < cap else 0.0
         brake = max(0.0, -pedal)
         self.prev_steer = steer
-        return dict(steering=steer * STEER_GAIN, throttle=throttle, brake=brake,
+        return dict(steering=steer * STEER_GAIN, throttle=throttle, brake=brake, reverse=gear_rev,
                     parked=False, gave_up=False,
-                    reason=f"learned parker: {-ax:.1f} m to go, {abs(ay):.2f} m across, {math.degrees(herr):.0f} deg")
+                    reason=f"learned parker{' (reversing)' if gear_rev else ''}: {-ax:.1f} m to go, "
+                           f"{abs(ay):.2f} m across, {math.degrees(herr):.0f} deg{near}")

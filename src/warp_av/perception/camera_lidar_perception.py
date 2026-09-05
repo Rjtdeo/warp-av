@@ -687,6 +687,7 @@ class CameraLidarPerception:
             mask = (pts[:, 2] > self.minimum_lidar_z) & (pts[:, 2] < self.maximum_lidar_z)
             xy = pts[mask][::3, :2]          # downsample 3x: plenty for van-sized objects
             clusters = cluster_points(xy.tolist())
+            self.last_clusters = clusters     # sensor frame (x fwd, y right): the learned parker's feelers read these
 
             # ---- classify clusters by projecting into the image ----
             # fov 90 deg -> fx = width/2. u grows to the RIGHT (y right in

@@ -4,7 +4,8 @@ import time
 
 import numpy as np
 
-from warp_av.planning.rl_parker import RLParker, HANDOVER_M, STEER_GAIN, THROTTLE_GAIN
+from warp_av.planning.rl_parker import (RLParker, HANDOVER_M, STEER_GAIN, THROTTLE_GAIN,
+                                        REVERSE_MAX_SPEED, box_outline_points)
 
 
 class Stub:
@@ -84,3 +85,76 @@ def test_time_held_by_an_obstacle_does_not_count_against_the_parker():
     p._last_act -= 30.0                               # 30 s with no call: an obstacle stop
     p.act(90.0, 47.0, 0.0, 1.0, SLOT)
     assert p.active_s < 1.0
+
+
+
+# ---------------- the round-8 brain: four feelers and a reverse gear ----------------
+
+def test_a_nine_input_brain_gets_the_feelers_from_the_vans_surroundings():
+    stub = Stub([0.0, 0.5, 0.0]); p = RLParker(model=stub, n_obs=9, n_act=3)
+    # a parked car 2 m ahead and 1.5 m to the right (van frame: x forward, y right)
+    out = p.act(90.0, 47.0, 0.0, 2.0, SLOT, obstacle_points=[(2.0, 1.5)])
+    obs = stub.seen[0]
+    assert obs.shape == (9,)
+    assert abs(obs[0] - (-10.0 / 15.0)) < 1e-6           # the five old numbers first
+    ahead_left, ahead_right, left, right = obs[5:9]
+    assert abs(ahead_right - 0.25) < 1e-6                 # 2.5 m away, on a 10 m reach
+    assert ahead_left == 1.0 and left == 1.0 and right == 1.0
+    assert "nearest ahead-right 2.5 m" in out["reason"]
+    assert out["reverse"] is False
+
+
+def test_nothing_around_reads_as_all_clear():
+    stub = Stub([0.0, 0.5, 0.0]); p = RLParker(model=stub, n_obs=9, n_act=3)
+    p.act(90.0, 47.0, 0.0, 2.0, SLOT, obstacle_points=[])
+    assert list(stub.seen[0][5:9]) == [1.0, 1.0, 1.0, 1.0]
+    p.act(90.0, 47.0, 0.0, 2.0, SLOT)                    # no points given at all
+    assert list(stub.seen[1][5:9]) == [1.0, 1.0, 1.0, 1.0]
+
+
+def test_the_third_control_is_the_reverse_gear_with_the_arenas_slow_cap():
+    p = RLParker(model=Stub([0.0, 0.5, 0.9]), n_obs=9, n_act=3)
+    out = p.act(90.0, 47.0, 0.0, 1.0, SLOT)
+    assert out["reverse"] is True and abs(out["throttle"] - 0.5 * THROTTLE_GAIN) < 1e-6
+    fast = p.act(90.0, 47.0, 0.0, REVERSE_MAX_SPEED + 0.1, SLOT)
+    assert fast["reverse"] is True and fast["throttle"] == 0.0, "reversing is capped at 1.5 m/s"
+    fwd = RLParker(model=Stub([0.0, 0.5, 0.2]), n_obs=9, n_act=3).act(90.0, 47.0, 0.0, 1.0, SLOT)
+    assert fwd["reverse"] is False
+
+
+def test_the_round_six_brain_still_sees_five_numbers_and_never_reverses():
+    stub = Stub([0.0, 0.5]); p = RLParker(model=stub)
+    out = p.act(90.0, 47.0, 0.0, 2.0, SLOT, obstacle_points=[(2.0, 1.5)])
+    assert stub.seen[0].shape == (5,) and out["reverse"] is False
+    assert "round6" in p.describe() or "5 inputs" in p.describe()
+
+
+def test_the_brains_shape_is_read_from_the_model_itself():
+    from types import SimpleNamespace
+    fake = Stub([0.0, 0.5, 0.0])
+    fake.observation_space = SimpleNamespace(shape=(9,))
+    fake.action_space = SimpleNamespace(shape=(3,))
+    p = RLParker(model=fake)
+    p.act(90.0, 47.0, 0.0, 2.0, SLOT, obstacle_points=[(2.0, -1.5)])
+    assert p.n_obs == 9 and p.n_act == 3 and fake.seen[0].shape == (9,)
+    assert abs(fake.seen[0][5] - 0.25) < 1e-6              # ahead-LEFT this time (y negative = left)
+    assert "9 inputs incl. 4 obstacle feelers, 3 controls incl. reverse gear" in p.describe()
+
+
+def test_a_reversing_brain_may_pull_past_the_slot_before_giving_up():
+    p = RLParker(model=Stub([0.0, 0.5, 0.0]), n_obs=9, n_act=3)
+    p.act(99.0, 50.0, 0.0, 1.0, SLOT)                     # been near the slot
+    out = p.act(108.0, 50.0, 0.0, 1.0, SLOT)              # 8 m past: fine for a reversing brain
+    assert not out["gave_up"]
+    out = p.act(113.0, 50.0, 0.0, 1.0, SLOT)              # 13 m past: that is an overshoot
+    assert out["gave_up"] and "overshot" in out["reason"]
+
+
+def test_box_outline_has_centre_corners_and_edge_midpoints():
+    pts = box_outline_points(10.0, 5.0, 0.0, 2.0, 1.0)
+    assert len(pts) == 9 and pts[0] == (10.0, 5.0)
+    assert (12.0, 6.0) in [(round(x, 6), round(y, 6)) for x, y in pts]     # a corner
+    assert (8.0, 5.0) in [(round(x, 6), round(y, 6)) for x, y in pts]      # rear midpoint
+    turned = box_outline_points(0.0, 0.0, math.pi / 2, 2.0, 1.0)
+    xs = [round(x, 6) for x, _ in turned]; ys = [round(y, 6) for _, y in turned]
+    assert max(ys) == 2.0 and max(xs) == 1.0                                # length now along y

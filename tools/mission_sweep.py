@@ -42,6 +42,7 @@ SSH_KEY = os.path.expanduser("~/.ssh/warp_av_ed25519")
 PARKING_SOURCE = None        # set from --parking-source
 PERCEPTION_MODE = None       # set from --perception-mode
 PARKER = None                # set from --parker
+BRAIN = None                 # set from --brain (path to a .zip on the Windows box)
 WIN_REPO = r"C:\Users\Rajat\Desktop\warp-av"
 WIN_PY = r"C:\Users\Rajat\AppData\Local\Programs\Python\Python310\python.exe"
 CARLA_EXE = r"C:\CARLA\WindowsNoEditor\CarlaUE4.exe"
@@ -416,12 +417,16 @@ def execute_run(spec, rng, points, out_dir, log):
         # set before EVERY run: a watchdog restart of the stack resets it to "map"
         api_post("/api/parking/source", {"source": PARKING_SOURCE})
     if PARKER:
-        r = api_post("/api/parking/parker", {"parker": PARKER}, timeout=40.0)
+        body = {"parker": PARKER}
+        if BRAIN:
+            body["brain"] = BRAIN
+        r = api_post("/api/parking/parker", body, timeout=40.0)
         if r.get("success") is not True:
             log(f"parker NOT set: {r.get('reason', 'no answer')}")
     st0 = api_get("/api/state")
     res["parking_source"] = st0.get("parking_source")
     res["parker"] = st0.get("parker")
+    res["brain"] = (st0.get("rl_parker") or {}).get("brain")
     res["collision_base"] = (st0.get("collision") or {}).get("count", 0)
     res["start_pose"] = st0.get("pose")
     res["version"] = st0.get("version")
@@ -913,6 +918,9 @@ def main():
                     help="run the chosen plan this many times over (runs renumbered)")
     ap.add_argument("--parker", choices=("rules", "rl"), default=None,
                     help="who drives the last 16 m into a slot, set before every run (default: leave it)")
+    ap.add_argument("--brain", default=None,
+                    help="with --parker rl: which brain .zip (path on the stack's machine), "
+                         "e.g. rl/models/parking_ppo_round8.zip (9 inputs, reverse gear)")
     ap.add_argument("--parking-source", choices=("map", "lidar"), default=None,
                     help="where FIND PARKING gets its slots for every run (default: leave the stack as it is)")
     ap.add_argument("--showdown", action="store_true")
@@ -921,10 +929,11 @@ def main():
     ap.add_argument("--no-resume", action="store_true")
     ap.add_argument("--expect-version", default=None)
     a = ap.parse_args()
-    global PARKING_SOURCE, PERCEPTION_MODE, PARKER
+    global PARKING_SOURCE, PERCEPTION_MODE, PARKER, BRAIN
     PARKING_SOURCE = a.parking_source
     PERCEPTION_MODE = a.perception_mode
     PARKER = a.parker
+    BRAIN = a.brain
 
     plan = (shakedown_plan() if a.shakedown
             else park_check_plan() if a.park_check

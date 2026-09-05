@@ -45,9 +45,9 @@ from .safety.safety_supervisor import SafetySupervisor, SafetyState
 from .mission.mission_manager import MissionManager, MissionState
 from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
-from .vehicle_interface import VehicleCommand
+from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
-from .planning.rl_parker import RLParker
+from .planning.rl_parker import RLParker, box_outline_points
 from .perception.bay_finder import why_no_kerb
 
 
@@ -344,6 +344,12 @@ class WarpAV:
 
         # 2. Perceive
         perception = self.perception.update()
+        # Raw surroundings for the learned parker's feelers (van frame), taken
+        # BEFORE the corridor filter throws away everything beside us.
+        try:
+            self._obstacle_points_xy = self._collect_obstacle_points(perception, pose)
+        except Exception:
+            self._obstacle_points_xy = []
         # Route-aware in-path check: judge objects against the corridor we will
         # actually drive, not the direction the nose points (mid-turn the nose
         # sweeps neighbouring lanes -> false "vehicle ahead" stops).
@@ -718,7 +724,9 @@ class WarpAV:
             "parking_source": self.parking_source,
             "parker": self.parker,
             "rl_parker": ({"engaged": self.rl_parker.engaged, "done": self.rl_parker.done,
-                           "result": self.rl_parker.result}),
+                           "result": self.rl_parker.result,
+                           "brain": os.path.basename(self.rl_parker.model_path),
+                           "inputs": self.rl_parker.n_obs, "controls": self.rl_parker.n_act}),
 
             "perception_runtime": {
                 "source": (
@@ -2072,6 +2080,51 @@ class WarpAV:
                               f"({shift:.2f} m from the map slot)")
         print(f"[Parking] lidar re-scan: target moved {shift:.2f} m onto a lidar-found slot")
 
+    def _collect_obstacle_points(self, perception, pose, reach_m=15.0):
+        """Outline points of everything solid near the van, in the van's own
+        frame (x forward, y right, metres) - what the round-8 brain's four
+        feelers read. Camera/lidar mode: the lidar clusters (centre and
+        extent), so the brain sees what the sensors see. Ground-truth mode:
+        live actors' boxes plus the map's decorative parked cars."""
+        pts = []
+        if self.perception_mode == "camera_lidar":
+            for c in (getattr(self.perception, "last_clusters", None) or []):
+                if c["distance"] > reach_m:
+                    continue
+                e = min(float(c["extent"]), 3.0)
+                x, y = float(c["x"]), float(c["y"])
+                pts += [(x, y), (x + e, y), (x - e, y), (x, y + e), (x, y - e)]
+            return pts
+        c, s = math.cos(pose.yaw), math.sin(pose.yaw)
+
+        def to_van(wx, wy):
+            dx, dy = wx - pose.x, wy - pose.y
+            return (dx * c + dy * s, -dx * s + dy * c)
+
+        try:
+            ego_id = self.vehicle_adapter.vehicle.id
+            for a in self.vehicle_adapter.world.get_actors().filter("vehicle.*"):
+                if a.id == ego_id:
+                    continue
+                loc = a.get_location()
+                if math.hypot(loc.x - pose.x, loc.y - pose.y) > reach_m:
+                    continue
+                tf = a.get_transform()
+                ext = a.bounding_box.extent
+                pts += [to_van(px, py) for px, py in box_outline_points(
+                    tf.location.x, tf.location.y, math.radians(tf.rotation.yaw), ext.x, ext.y)]
+        except Exception:
+            pass
+        try:
+            for vpts in self._static_vehicle_points():
+                cx, cy = vpts[0]
+                if math.hypot(cx - pose.x, cy - pose.y) > reach_m:
+                    continue
+                pts += [to_van(px, py) for px, py in vpts]
+        except Exception:
+            pass
+        return pts
+
     def _maybe_learned_parker(self, cmd, behavior_output, pose):
         """Swap the command for the learned parker's while it is at the wheel."""
         if self.parker != "rl" or not self.mission_manager.current_mission:
@@ -2086,14 +2139,16 @@ class WarpAV:
             if not rl.should_take_over(sp, pose.x, pose.y):
                 return cmd, behavior_output
             self.logger.log_event("parking_rl", f"learned parker took the wheel "
-                                  f"{rl.distance_to(sp, pose.x, pose.y):.1f} m from the slot")
+                                  f"{rl.distance_to(sp, pose.x, pose.y):.1f} m from the slot ({rl.describe()})")
             print("[Parking] learned parker at the wheel")
         # A stop demanded by the behaviour layer (obstacle, pedestrian, safety)
         # is honoured: the learned parker waits with the brakes on.
         if behavior_output.should_stop and behavior_output.behavior != DrivingBehavior.PARKING:
             return cmd, behavior_output
-        out = rl.act(pose.x, pose.y, pose.yaw, pose.speed, sp)
-        cmd = VehicleCommand(steering=out["steering"], throttle=out["throttle"], brake=out["brake"])
+        out = rl.act(pose.x, pose.y, pose.yaw, pose.speed, sp,
+                     obstacle_points=getattr(self, "_obstacle_points_xy", None))
+        cmd = VehicleCommand(steering=out["steering"], throttle=out["throttle"], brake=out["brake"],
+                             gear=GearState.REVERSE if out.get("reverse") else GearState.DRIVE)
         if out["parked"]:
             self.logger.log_event("parking_rl", out["reason"])
             behavior_output.behavior = DrivingBehavior.MISSION_COMPLETE
@@ -2108,11 +2163,21 @@ class WarpAV:
             behavior_output.reason = out["reason"]
         return cmd, behavior_output
 
-    def api_set_parker(self, who):
-        """Who drives the last 16 m into a slot: "rules" or "rl"."""
+    def api_set_parker(self, who, brain=None):
+        """Who drives the last 16 m into a slot: "rules" or "rl". `brain` picks
+        the .zip (path relative to the repo or absolute); default round 6."""
         who = str(who).strip().lower()
         if who not in ("rules", "rl"):
             return {"success": False, "reason": "Parker must be rules or rl", "parker": self.parker}
+        if who == "rl" and brain:
+            path = str(brain).strip()
+            if not os.path.isabs(path):
+                path = os.path.join(os.path.dirname(__file__), "..", "..", path)
+            path = os.path.abspath(path)
+            if not os.path.exists(path):
+                return {"success": False, "reason": f"no brain at {path}", "parker": self.parker}
+            if path != self.rl_parker.model_path:
+                self.rl_parker = RLParker(model_path=path)
         if who == "rl" and not os.path.exists(self.rl_parker.model_path):
             return {"success": False, "reason": f"no brain at {self.rl_parker.model_path}", "parker": self.parker}
         if who == "rl":
@@ -2123,10 +2188,12 @@ class WarpAV:
                 self.rl_parker._load()
             except Exception as e:
                 return {"success": False, "reason": f"could not load the brain: {e}", "parker": self.parker}
-            print(f"[Parking] learned parker loaded in {time.time() - t0:.1f} s")
+            print(f"[Parking] learned parker loaded in {time.time() - t0:.1f} s ({self.rl_parker.describe()})")
         self.parker = who
-        self.logger.log_event("parker", f"the last 16 m are now driven by the {'learned' if who == 'rl' else 'hand-written'} parker")
-        return {"success": True, "parker": who}
+        self.logger.log_event("parker", f"the last 16 m are now driven by the {'learned' if who == 'rl' else 'hand-written'} parker"
+                              + (f" ({self.rl_parker.describe()})" if who == "rl" else ""))
+        return {"success": True, "parker": who,
+                "brain": os.path.basename(self.rl_parker.model_path) if who == "rl" else None}
 
     def api_set_parking_source(self, source):
         """Where FIND PARKING gets its slots: "map" (CARLA lane data) or
@@ -2889,7 +2956,7 @@ def parking_parker():
     if request.method == 'GET':
         return jsonify({"parker": av_system.parker})
     data = request.get_json(silent=True) or {}
-    return jsonify(av_system.api_set_parker(data.get("parker", "")))
+    return jsonify(av_system.api_set_parker(data.get("parker", ""), brain=data.get("brain")))
 
 
 @app.route('/api/parking/source', methods=['GET', 'POST'])
