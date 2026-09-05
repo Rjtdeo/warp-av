@@ -309,3 +309,11 @@ runs failed), the learned parker handled both stolen-slot runs. The one failure 
 gap: round 6 has no obstacle inputs, and in ground-truth mode the van's own perception does
 not see map decoration either, so nothing stopped it. Obstacle awareness (round 7's unfinished
 work) is now the next target, with a reverse gear as the honest way to park between two cars.
+
+## Round 9 plan (from Waymo's published recipes, 2026-09-04)
+Copy first, then practise. A rule-based teacher (hold the lane, turn in late, reverse if a car sits
+right behind) records demonstrations from perturbed starts; the brain is trained to copy them, tidied
+with DAgger rounds, then fine-tuned with today's rewards plus a fading stay-close-to-teacher term.
+Also from the reading: auto-label lidar clusters with CARLA ground truth to train a tiny classifier
+(test with truth off); bucket the scoreboard by difficulty and re-spend runs where it fails; a
+decoy-car robustness exam. Full digest: docs/RESEARCH_DIGEST.md.
