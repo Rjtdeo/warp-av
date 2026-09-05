@@ -483,9 +483,13 @@ class Stages:
     NAMES = ("empty", "car behind on the approach", "car right behind")
     BEHIND_RUNGS = (4, 3, 2)    # bays back, easiest first
 
-    def __init__(self, window=40, promote_at=0.6, demote_at=0.2, start=0, start_rung=0):
+    def __init__(self, window=40, promote_at=0.6, demote_at=0.2, start=0, start_rung=0, max_level=None):
         self.window, self.promote_at, self.demote_at = window, promote_at, demote_at
-        self.level = max(0, min(len(self.NAMES) - 1, start))
+        # max_level caps the ladder: round 8g unlocked "car right behind" (0%
+        # solvable with the lane rule as it stands) again and again, and in its
+        # last five minutes the brain learned "when in doubt, crawl" everywhere.
+        self.max_level = len(self.NAMES) - 1 if max_level is None else max(0, min(len(self.NAMES) - 1, max_level))
+        self.level = max(0, min(self.max_level, start))
         self.rung = max(0, min(len(self.BEHIND_RUNGS) - 1, start_rung))
         self._recent = []
 
@@ -507,7 +511,7 @@ class Stages:
                 self.level, self.rung = 1, 0
             elif self.level == 1 and self.rung < top_rung:
                 self.rung += 1
-            elif self.level == 1:
+            elif self.level == 1 and self.max_level >= 2:
                 self.level = 2
             else:
                 moved = False

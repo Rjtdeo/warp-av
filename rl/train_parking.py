@@ -105,6 +105,10 @@ def main():
     ap.add_argument("--reverse", action="store_true", help="third control: reverse gear (round 8)")
     ap.add_argument("--obstacles", action="store_true", help="hazards in stages (round 8)")
     ap.add_argument("--start-stage", type=int, default=0, help="obstacle stage to begin on (0-2)")
+    ap.add_argument("--max-stage", type=int, default=2,
+                    help="highest obstacle stage the ladder may unlock (1 = never the car right behind)")
+    ap.add_argument("--lr", type=float, default=None,
+                    help="on resume, set the learning rate (e.g. 1.5e-4 late in training)")
     ap.add_argument("--start-rung", type=int, default=0,
                     help="stage-1 rung to begin on: 0 = car 4 bays back, 1 = 3, 2 = 2")
     ap.add_argument("--explore-std", type=float, default=0.0,
@@ -125,7 +129,7 @@ def main():
     from rl.parking_math import Stages
     env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles,
                           lane_start_m=a.lane_start, lane_start_jitter_m=a.lane_start_jitter,
-                          stages=Stages(start=a.start_stage, start_rung=a.start_rung)
+                          stages=Stages(start=a.start_stage, start_rung=a.start_rung, max_level=a.max_stage)
                           if a.obstacles else None)
     if a.obstacles:
         print(f"[train] {env.stages.describe()}")
@@ -134,6 +138,11 @@ def main():
         if a.resume and os.path.exists(MODEL):
             print(f"[train] resuming from {MODEL}")
             model = PPO.load(MODEL, env=env)
+            if a.lr is not None:
+                from stable_baselines3.common.utils import constant_fn
+                model.learning_rate = a.lr
+                model.lr_schedule = constant_fn(a.lr)
+                print(f"[train] learning rate set to {a.lr}")
             if a.explore_std > 0:
                 import math
                 import torch

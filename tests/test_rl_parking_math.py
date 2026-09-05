@@ -596,3 +596,14 @@ def test_step_outcome_holds_the_lane_beside_a_car_only_with_lane_hold_on():
     plain, _, _ = step_outcome(*args, ax_prev=-10.2, feeler_readings=beside)
     held, _, _ = step_outcome(*args, ax_prev=-10.2, feeler_readings=beside, lane_hold=True)
     assert abs((held - plain) - lane_hold_penalty(-10.0, 1.5, beside)) < 1e-9
+
+
+def test_the_stage_ladder_can_be_capped_below_the_car_right_behind():
+    st = Stages(window=2, start=1, max_level=1)
+    for _ in range(6):
+        st.record(True)
+    assert st.level == 1 and st.bays_back == 2, "top rung reached, but never stage 2"
+    open_ended = Stages(window=2, start=1)
+    for _ in range(6):
+        open_ended.record(True)
+    assert open_ended.level == 2
