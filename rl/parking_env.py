@@ -75,6 +75,7 @@ class CarlaParkingEnv(gym.Env):
                  lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0,
                  neighbour_p=0.5, neighbour_ahead_p=0.3, use_feelers=True,
                  reverse=False, obstacles=False, neighbour_behind_bays=NEIGHBOUR_BEHIND_BAYS,
+                 lane_start_jitter_m=0.0,
                  stages=None):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
@@ -100,6 +101,14 @@ class CarlaParkingEnv(gym.Env):
         self.rng = random.Random(seed)
         self.exam_p = exam_p
         self.lane_start_m = float(lane_start_m)
+        # Training only: spread every far start over [lane start, lane start +
+        # jitter]. Rounds 6-8f were born at exactly 16 m (and, with a car, at
+        # exactly bays*7+8 m), so the brain's habits are welded to those
+        # spots: at 22 m with a car two bays back it still swerved right at
+        # birth (0/360) while from 29 m with a car three bays back it held the
+        # lane and parked 92%. A spread of starts teaches the same lesson
+        # everywhere along the approach.
+        self.lane_start_jitter_m = float(lane_start_jitter_m)
         self.yaw_noise_deg = float(yaw_noise_deg)
         self.lateral_noise_m = float(lateral_noise_m)
         self.obs_noise = tuple(obs_noise) if obs_noise else None
@@ -337,6 +346,8 @@ class CarlaParkingEnv(gym.Env):
         lane_m = self.lane_start_m
         if plan is not None and plan[0] == "behind":
             lane_m = lane_start_for(plan[1], self.lane_start_m)   # born BEHIND the car
+        if self.lane_start_jitter_m > 0:
+            lane_m += self.rng.uniform(0.0, self.lane_start_jitter_m)
         for _ in range(40):
             drive_wp, sx, sy, syaw = self.rng.choice(self.bays)
             back = drive_wp.previous(lane_m)
