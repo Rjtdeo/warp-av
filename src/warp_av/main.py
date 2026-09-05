@@ -47,7 +47,7 @@ from .telemetry.logger import TelemetryLogger
 from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
-from .planning.rl_parker import RLParker, box_outline_points
+from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
 from .perception.bay_finder import why_no_kerb
 
 
@@ -381,6 +381,7 @@ class WarpAV:
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
             )
 
+        self._last_perception = perception      # the learned parker's stop-override rule reads this
         # 3. Safety check
         safety_output = self.safety.update(
             perception_healthy=perception.healthy,
@@ -2137,7 +2138,7 @@ class WarpAV:
         if rl.done:
             return cmd, behavior_output
         if not rl.engaged:
-            if not rl.should_take_over(sp, pose.x, pose.y):
+            if not rl.should_take_over(sp, pose.x, pose.y, pose.yaw):
                 return cmd, behavior_output
             self.logger.log_event("parking_rl", f"learned parker took the wheel "
                                   f"{rl.distance_to(sp, pose.x, pose.y):.1f} m from the slot ({rl.describe()})")
@@ -2145,7 +2146,14 @@ class WarpAV:
         # A stop demanded by the behaviour layer (obstacle, pedestrian, safety)
         # is honoured: the learned parker waits with the brakes on.
         if behavior_output.should_stop and behavior_output.behavior != DrivingBehavior.PARKING:
-            return cmd, behavior_output
+            per = getattr(self, "_last_perception", None)
+            otype = getattr(getattr(per, "closest_obstacle_type", None), "value", "unknown") if per else "unknown"
+            if per is None or stop_overrides_brain(otype, getattr(per, "closest_obstacle_speed", 0.0),
+                                                   getattr(per, "closest_obstacle_distance", None)):
+                return cmd, behavior_output
+            # a stationary vehicle farther than 2 m: the brain sees it through its
+            # feelers and drives on (the stop would freeze us beside a parked car)
+            behavior_output.reason = f"learned parker driving past a stationary {otype} ({per.closest_obstacle_distance:.1f} m)"
         out = rl.act(pose.x, pose.y, pose.yaw, pose.speed, sp,
                      obstacle_points=getattr(self, "_obstacle_points_xy", None))
         cmd = VehicleCommand(steering=out["steering"], throttle=out["throttle"], brake=out["brake"],

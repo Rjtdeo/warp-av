@@ -33,8 +33,25 @@ DEFAULT_MODEL = os.path.join(os.path.dirname(__file__), "..", "..", "..", "rl", 
                              "parking_ppo_round6.zip")
 ROUND8_MODEL = os.path.join(os.path.dirname(__file__), "..", "..", "..", "rl", "models",
                             "parking_ppo_round8.zip")
+ALIGN_SIDE_M = 4.5        # hand over only within this of the bay's line (the arena starts 3.1 m out)
+ALIGN_YAW_DEG = 25.0      # ... and roughly heading along it
+STOP_OVERRIDE_M = 2.0     # a stationary vehicle closer than this still stops the brain
+MOVING_MPS = 0.3          # anything moving faster is not a parked car
 REVERSE_MAX_SPEED = 1.5   # the arena's cap when the gear is reverse
 REVERSE_OVERSHOOT_M = 12.0  # a reversing brain may pull past the slot first (arena rule)
+
+
+def stop_overrides_brain(obstacle_type: str, obstacle_speed: float, obstacle_distance: float) -> bool:
+    """While the learned parker is at the wheel, does a behaviour-layer stop
+    still win? Yes for a pedestrian, for anything moving, or for anything
+    within STOP_OVERRIDE_M. A parked car farther out is the brain's business:
+    its feelers see it and it was trained around them. Sensor test 2026-09-05
+    run 2: the stop for a parked car 8 m ahead froze the van for 200 s."""
+    if obstacle_type in ("pedestrian", "unknown"):
+        return True
+    if obstacle_speed is not None and abs(obstacle_speed) > MOVING_MPS:
+        return True
+    return obstacle_distance is not None and obstacle_distance < STOP_OVERRIDE_M
 
 
 def box_outline_points(cx, cy, yaw, half_len, half_wid):
@@ -99,9 +116,18 @@ class RLParker:
     def distance_to(slot: Dict, x: float, y: float) -> float:
         return math.hypot(slot["x"] - x, slot["y"] - y)
 
-    def should_take_over(self, slot: Dict, x: float, y: float) -> bool:
-        return (not self.done and not self.engaged
-                and self.distance_to(slot, x, y) <= self.handover_m)
+    def should_take_over(self, slot: Dict, x: float, y: float, yaw: float = None) -> bool:
+        """Within reach, and - when the heading is known - lined up with the
+        bay's line the way the arena's starts are: at most ALIGN_SIDE_M off
+        the line and ALIGN_YAW_DEG off its heading. Sensor test 2026-09-05 run 3:
+        handed over at 29.8 m on a bend, the brain was 10.5 m off the line and
+        gave up on its first step."""
+        if self.done or self.engaged or self.distance_to(slot, x, y) > self.handover_m:
+            return False
+        if yaw is None:
+            return True
+        ax, ay, herr = to_slot_frame(x, y, yaw, slot["x"], slot["y"], slot["yaw"])
+        return ax < 0.0 and abs(ay) <= ALIGN_SIDE_M and abs(herr) <= math.radians(ALIGN_YAW_DEG)
 
     def act(self, x: float, y: float, yaw: float, speed: float, slot: Dict,
             obstacle_points=None) -> Dict:

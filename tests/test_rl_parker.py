@@ -166,3 +166,25 @@ def test_the_hand_over_distance_is_a_setting():
     assert far.should_take_over(SLOT, 100.0 - 29.0, 50.0)
     default = RLParker(model=Stub([0.0, 0.5]))
     assert default.handover_m == HANDOVER_M and not default.should_take_over(SLOT, 100.0 - 29.0, 50.0)
+
+
+
+def test_hand_over_needs_the_van_lined_up_with_the_bay_when_the_heading_is_known():
+    from warp_av.planning.rl_parker import ALIGN_SIDE_M
+    p = RLParker(model=Stub([0.0, 0.5, 0.0]), n_obs=9, n_act=3, handover_m=30.0)
+    assert p.should_take_over(SLOT, 100.0 - 25.0, 50.0 - 3.1, 0.0)          # in the lane, straight, 25 m out
+    assert not p.should_take_over(SLOT, 100.0 - 25.0, 50.0 - 10.5, 0.0)    # 10.5 m off the line (run 3)
+    assert not p.should_take_over(SLOT, 100.0 - 25.0, 50.0 - 3.1, math.radians(60))   # pointing across the road
+    assert not p.should_take_over(SLOT, 100.0 + 5.0, 50.0 - 3.1, 0.0)      # already past the slot
+    assert p.should_take_over(SLOT, 100.0 - 25.0, 50.0 - 10.5)            # no heading given: distance only, as before
+    assert ALIGN_SIDE_M >= 3.1
+
+
+def test_a_behaviour_stop_overrides_the_brain_only_for_people_movers_and_the_very_close():
+    from warp_av.planning.rl_parker import stop_overrides_brain
+    assert stop_overrides_brain("pedestrian", 0.0, 8.0)
+    assert stop_overrides_brain("vehicle", 1.2, 8.0)             # moving car
+    assert stop_overrides_brain("vehicle", 0.0, 1.5)             # parked, but right on the nose
+    assert not stop_overrides_brain("vehicle", 0.0, 8.4)         # the parked car of run 2: brain drives on
+    assert not stop_overrides_brain("obstacle", 0.0, 3.0)
+    assert stop_overrides_brain("unknown", 0.0, 9.0)             # when perception cannot say, stop wins
