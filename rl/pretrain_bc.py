@@ -40,6 +40,8 @@ def main():
     ap.add_argument("--batch", type=int, default=512)
     ap.add_argument("--parked-only", action="store_true", help="copy only episodes that ended parked")
     ap.add_argument("--log-std", type=float, default=-1.6, help="action noise the practice phase starts with")
+    ap.add_argument("--mirror", action="store_true",
+                    help="add the left-hand mirror image of every demo (the town has no left-hand bays)")
     a = ap.parse_args()
 
     import torch
@@ -57,6 +59,13 @@ def main():
         keep = np.array([last.get(int(e), False) for e in ep])
         obs, act, rew, ep, done = obs[keep], act[keep], rew[keep], ep[keep], done[keep]
     ret = discounted_returns(rew, done)
+    if a.mirror:
+        from rl.parking_math import mirror_observation, mirror_action
+        m_obs = np.array([mirror_observation(o) for o in obs], dtype=obs.dtype)
+        m_act = np.array([mirror_action(x) for x in act], dtype=act.dtype)
+        obs = np.concatenate([obs, m_obs]); act = np.concatenate([act, m_act])
+        ret = np.concatenate([ret, ret]); ep = np.concatenate([ep, ep + ep.max() + 1])
+        print(f"[bc] mirrored: {len(obs)} steps after adding the left-hand images")
     print(f"[bc] {len(obs)} steps, {len(set(ep.tolist()))} episodes, obs {obs.shape[1]}, act {act.shape[1]}")
 
     class Dummy(gym.Env):

@@ -540,3 +540,22 @@ class Stages:
         return f"obstacle stage {self.level}: {self.NAMES[self.level]}"
 
 
+
+
+def mirror_observation(obs):
+    """The same moment seen with the bay on the OTHER side of the road: the
+    sideways offset, heading error and last steer flip sign, and the
+    left/right feelers swap (ahead-left <-> ahead-right, left <-> right).
+    Town10 has no left-hand parking lanes (scan: right 152, left 0), so the
+    brain learns left-hand parking from mirrored right-hand drives."""
+    o = list(obs)
+    m = [o[0], -o[1], -o[2], o[3], -o[4]]
+    if len(o) >= 9:
+        m += [o[6], o[5], o[8], o[7]]
+    return m
+
+
+def mirror_action(act):
+    """Steer flips; accelerator/brake and gear stay."""
+    a = list(act)
+    return [-a[0]] + a[1:]

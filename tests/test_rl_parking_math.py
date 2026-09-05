@@ -607,3 +607,27 @@ def test_the_stage_ladder_can_be_capped_below_the_car_right_behind():
     for _ in range(6):
         open_ended.record(True)
     assert open_ended.level == 2
+
+
+from rl.parking_math import mirror_observation, mirror_action
+
+
+def test_a_mirrored_moment_swaps_sides_and_flips_the_steer():
+    obs = [-0.8, -0.5, 0.1, 0.4, 0.3, 1.0, 0.25, 1.0, 0.14]     # bay on the right: car ahead-right and beside-right
+    m = mirror_observation(obs)
+    assert m[0] == -0.8 and m[1] == 0.5 and m[2] == -0.1 and m[3] == 0.4 and m[4] == -0.3
+    assert m[5:9] == [0.25, 1.0, 0.14, 1.0]                     # the car is now ahead-left and beside-left
+    assert mirror_observation(mirror_observation(obs)) == obs
+    assert mirror_action([0.6, 0.4, 1.0]) == [-0.6, 0.4, 1.0]
+    assert mirror_observation(obs[:5]) == [-0.8, 0.5, -0.1, 0.4, -0.3]
+
+
+def test_the_mirrored_teacher_agrees_with_the_mirrored_observation():
+    from rl.teacher import teacher_action
+    import math
+    ax, ay, herr, speed = -10.0, -2.9, 0.05, 1.8
+    f = [1.0, 0.6, 1.0, 1.0]
+    right = teacher_action(ax, ay, herr, speed, f)
+    obs_m = mirror_observation([ax / 15.0, ay / 6.0, herr / math.pi, speed / 5.0, 0.0] + f)
+    left = teacher_action(obs_m[0] * 15.0, obs_m[1] * 6.0, obs_m[2] * math.pi, speed, obs_m[5:9])
+    assert abs(left[0] + right[0]) < 1e-9 and left[1] == right[1] and left[2] == right[2]
