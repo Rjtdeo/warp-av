@@ -228,3 +228,22 @@ stop fights the brain near parked cars. Fixes (commit 3e093fb, not yet re-tested
 when lined up with the bay (≤ 4.5 m off its line, ≤ 25° off its heading, not yet past it); while the
 brain drives, a behaviour stop wins only for a pedestrian, anything moving, anything within 2 m,
 or when perception cannot say. Open: the "obstacle at 0.0 m" route block in camera mode.
+
+## Sensor re-test with the fixes — 2026-09-05 01:56–02:22 LA
+
+Same six runs, van software 6720a23 (aligned hand-over, stop-override rule). **5 PASS, 1 FAIL, 0 collisions.**
+
+| run | scenario | verdict | brain drove? | notes |
+|---|---|---|---|---|
+| 1 | empty bay | PASS | took over at 7.0 m, gave up after 45 s | rules parker finished 0.33 m past the box front |
+| 2 | slot taken | PASS | no | rules parker after re-target (last night: stuck 200 s) |
+| 3 | empty bay | PASS | no | rules parker (last night: brain handed over on a bend and quit) |
+| 4 | empty bay | PASS | no | rules parker (last night: route blocked before the bay) |
+| 5 | slot taken | PASS | **yes, at 7.4 m after the re-target** | **parked by the learned parker in 3 s: 0.82 m front/back, 0.21 m side, 0.5°** |
+| 6 | empty bay | FAIL (stuck 212 s) | yes, later | camera-mode "route blocked by obstacle at 1.2 m" held the van for 3.5 min before the bay (perception false block, open); once released the brain took over at 8.7 m and parked in 5 s (0.63 / 0.21 m, 0.3°) |
+
+Reading: the two integration fixes did their job (no more freezing beside a parked car, no more hand-over
+on a bend), and run 5 is the target manoeuvre end to end: sensors find the bay, a car sits in the
+chosen slot, the van re-targets, the brain drives and parks. Two things to tune: the alignment gate
+now delays the hand-over to 7–9 m (the approach roads curve until late; consider 35° / 5.5 m), and the
+brain stalled once for 45 s (run 1). Open stack issue: camera-mode route blocks at 0–1.2 m.

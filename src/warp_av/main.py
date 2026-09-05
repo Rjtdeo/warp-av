@@ -2143,6 +2143,7 @@ class WarpAV:
             self.logger.log_event("parking_rl", f"learned parker took the wheel "
                                   f"{rl.distance_to(sp, pose.x, pose.y):.1f} m from the slot ({rl.describe()})")
             print("[Parking] learned parker at the wheel")
+            rl.engaged = True      # even if a stop wins this tick, the hand-over is logged once
         # A stop demanded by the behaviour layer (obstacle, pedestrian, safety)
         # is honoured: the learned parker waits with the brakes on.
         if behavior_output.should_stop and behavior_output.behavior != DrivingBehavior.PARKING:

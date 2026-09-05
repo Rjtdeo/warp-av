@@ -329,3 +329,5 @@ Brain: rl/models/parking_ppo_round8.zip (9 inputs incl. feelers, 3 controls incl
 - 2026-09-05 01:39: sensor test with the round-8 brain, 6 runs, 0 collisions, 4 PASS; the brain parked
   from lidar + camera in run 1; two integration fixes pushed (aligned hand-over, stop-override rule),
   to be re-tested; open: camera-mode "obstacle at 0.0 m" route block. Details: rl/REPORT_CARD.md.
+- 2026-09-05 02:22: sensor re-test 5/6, 0 collisions; run 5 = car in the chosen slot, re-target, brain parks
+  from the sensors. Open: camera-mode false route blocks; hand-over now lands at 7–9 m (alignment gate).
