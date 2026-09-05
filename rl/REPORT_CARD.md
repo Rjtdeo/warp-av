@@ -172,3 +172,16 @@ runs failed), the learned parker handled both stolen-slot runs. The one failure 
 gap: round 6 has no obstacle inputs, and in ground-truth mode the van's own perception does
 not see map decoration either, so nothing stopped it. Obstacle awareness (round 7's unfinished
 work) is now the next target, with a reverse gear as the honest way to park between two cars.
+
+## Round 8g mid-training exam — 2026-09-04 19:05 LA (practice arena, simulator positions, no camera/lidar)
+
+Brain frozen at 830k round-8 steps (`parking_ppo_round8g_test.zip`), 30 attempts each, seed 2026, clean bays, reverse gear allowed.
+
+| exam | start | parked | notes |
+|---|---|---|---|
+| empty bay (`r8g_empty`) | 16 m | **30/30** | margins 1.08 m / 0.16 m, as round 6 |
+| car three bays back (`r8g_three_back`) | 29 m | **29/30** | the one crash was at birth against a 7 m minibus placed as the "car" (its tail reached the start point) |
+| car two bays back (`r8g_two_back`) | 22 m | **1/30** | 29 crashes, all into the car's flank/rear at 14-18 m before the bay: the van still swerves right within its first metres from a 22 m start |
+| car right behind (`r8g_right_behind`) | 16 m | **0/30** | all crashes at ~12 m, nose into the car's rear; stage 2 (pull past, reverse in) was never reached in training |
+
+Reading: the "stay in your lane" lesson (round 8e) is real and holds for a car three or four bays back. Two bays back fails because the brain's first move is welded to the 16-22 m start distances it trained at; round 8g spreads the starts to unlearn that. Raw rows: `rl/exams/2026-09-04_r8g_*.csv` (hit, ax, ay per crash).
