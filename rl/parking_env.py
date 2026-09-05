@@ -167,7 +167,12 @@ class CarlaParkingEnv(gym.Env):
                                    "this CARLA build")
             bp = bps[0]
             bp.set_attribute("role_name", "warp_rl")
-            big = ("bus", "truck", "carlamotors", "ambulance", "firetruck", "sprinter")
+            # Nothing longer than a car may play the parked car: a 7 m minibus
+            # (fusorosa) two or three bays back reaches the van's birth point
+            # (exam 2026-09-04: one crash at birth, and training crashes that
+            # were nobody's fault).
+            big = ("bus", "truck", "carlamotors", "ambulance", "firetruck", "sprinter",
+                   "fusorosa", "cybertruck", "t2")
             self.neighbour_bps = [
                 b for b in self.world.get_blueprint_library().filter("vehicle.*")
                 if b.has_attribute("number_of_wheels")
