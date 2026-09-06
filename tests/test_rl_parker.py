@@ -188,3 +188,14 @@ def test_a_behaviour_stop_overrides_the_brain_only_for_people_movers_and_the_ver
     assert not stop_overrides_brain("vehicle", 0.0, 8.4)         # the parked car of run 2: brain drives on
     assert not stop_overrides_brain("obstacle", 0.0, 3.0)
     assert stop_overrides_brain("unknown", 0.0, 9.0)             # when perception cannot say, stop wins
+
+
+def test_a_gear_aware_brain_sees_a_signed_speed_and_its_last_gear():
+    stub = Stub([0.0, 0.5, 0.9]); p = RLParker(model=stub, n_obs=10, n_act=3)
+    p.act(90.0, 47.0, 0.0, 2.0, SLOT)                         # first step: last gear forward
+    o1 = stub.seen[0]
+    assert o1.shape == (10,) and o1[9] == 0.0 and abs(o1[3] - 2.0 / 5.0) < 1e-6
+    p.act(90.0, 47.0, 0.0, 1.0, SLOT)                         # the brain chose reverse last step
+    o2 = stub.seen[1]
+    assert o2[9] == 1.0 and abs(o2[3] - (-1.0 / 5.0)) < 1e-6
+    assert "gear memory" in p.describe()

@@ -86,13 +86,14 @@ class RLParker:
         n_obs = self.n_obs or 5
         n_act = self.n_act or 2
         return (f"{os.path.basename(self.model_path)}: {n_obs} inputs"
-                f"{' incl. 4 obstacle feelers' if n_obs >= 9 else ''}, {n_act} controls"
+                f"{' incl. 4 obstacle feelers' if n_obs >= 9 else ''}{' + gear memory' if n_obs >= 10 else ''}, {n_act} controls"
                 f"{' incl. reverse gear' if n_act >= 3 else ''}")
 
     def reset(self):
         self.engaged = False
         self.done = False            # parked or gave up: hand-written parker owns the rest
         self.prev_steer = 0.0
+        self.prev_reverse = False    # last gear we commanded (a round-9 brain sees it)
         self.t0: Optional[float] = None
         self.active_s = 0.0          # seconds actually at the wheel (stops for obstacles do not count)
         self._last_act: Optional[float] = None
@@ -179,6 +180,9 @@ class RLParker:
             return dict(steering=0.0, throttle=0.0, brake=1.0, parked=False, gave_up=True,
                         reason=self.result)
 
+        gear_aware = (self.n_obs or 5) >= 10
+        if gear_aware and self.prev_reverse:
+            speed = -abs(speed)          # a round-9 brain sees a signed speed
         obs_list = observation(x, y, yaw, speed, self.prev_steer, sx, sy, syaw)
         near = ""
         if (self.n_obs or 5) >= 9:
@@ -189,6 +193,8 @@ class RLParker:
                 names = ("ahead-left", "ahead-right", "left", "right")
                 i = min(range(4), key=lambda k: f[k])
                 near = f", nearest {names[i]} {f[i] * 10.0:.1f} m"
+        if gear_aware:
+            obs_list = obs_list + [1.0 if self.prev_reverse else 0.0]
         obs = np.array(obs_list, dtype=np.float32)
         action, _ = self._load().predict(obs, deterministic=True)
         steer = float(np.clip(action[0], -1.0, 1.0))
@@ -198,6 +204,7 @@ class RLParker:
         throttle = max(0.0, pedal) * THROTTLE_GAIN if abs(speed) < cap else 0.0
         brake = max(0.0, -pedal)
         self.prev_steer = steer
+        self.prev_reverse = gear_rev
         return dict(steering=steer * STEER_GAIN, throttle=throttle, brake=brake, reverse=gear_rev,
                     parked=False, gave_up=False,
                     reason=f"learned parker{' (reversing)' if gear_rev else ''}: {-ax:.1f} m to go, "

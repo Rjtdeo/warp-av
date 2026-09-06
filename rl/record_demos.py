@@ -44,7 +44,7 @@ def main():
                           lane_start_jitter_m=a.lane_start_jitter, yaw_noise_deg=a.yaw_noise,
                           lateral_noise_m=a.lateral_noise, neighbour_p=a.neighbour_p,
                           neighbour_ahead_p=a.neighbour_ahead_p, neighbour_behind_bays=(1, 2, 3),
-                          use_feelers=True, reverse=True)
+                          use_feelers=True, reverse=True, gear_input=True)
     obs_all, act_all, rew_all, ep_all, done_all = [], [], [], [], []
     summary = []                     # per-drive: episode, result, hazard, start, steps, end ax/ay/herr, reverse, hit, end speed, brake steps
     brake_steps = 0

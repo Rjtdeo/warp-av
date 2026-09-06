@@ -552,6 +552,7 @@ def mirror_observation(obs):
     m = [o[0], -o[1], -o[2], o[3], -o[4]]
     if len(o) >= 9:
         m += [o[6], o[5], o[8], o[7]]
+    m += o[9:]                       # a gear input (round 9) is side-agnostic
     return m
 
 

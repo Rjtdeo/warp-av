@@ -75,7 +75,7 @@ class CarlaParkingEnv(gym.Env):
                  lateral_noise_m=0.0, obs_noise=None, obs_dropout=0.0, obs_delay=0,
                  neighbour_p=0.5, neighbour_ahead_p=0.3, use_feelers=True,
                  reverse=False, obstacles=False, neighbour_behind_bays=NEIGHBOUR_BEHIND_BAYS,
-                 lane_start_jitter_m=0.0, sides=("right",),
+                 lane_start_jitter_m=0.0, sides=("right",), gear_input=False,
                  stages=None):
         """Harder-exam knobs (all default to how training ran):
         lane_start_m     how far back down the lane a p=0 start is (train: 16)
@@ -114,6 +114,13 @@ class CarlaParkingEnv(gym.Env):
         # lane and parked 92%. A spread of starts teaches the same lesson
         # everywhere along the approach.
         self.lane_start_jitter_m = float(lane_start_jitter_m)
+        # Round 9: the brain must know which way it is rolling. With gear_input
+        # the speed it sees is NEGATIVE while the last commanded gear was
+        # reverse, and a tenth number says "last gear was reverse" (1/0).
+        # Without it (rounds 6-8) speed is a plain magnitude, as those brains
+        # were trained; the pure copy of the instructor could not tell a forward
+        # stroke from a backward one and stalled in every reverse manoeuvre.
+        self.gear_input = bool(gear_input)
         self.yaw_noise_deg = float(yaw_noise_deg)
         self.lateral_noise_m = float(lateral_noise_m)
         self.obs_noise = tuple(obs_noise) if obs_noise else None
@@ -219,7 +226,7 @@ class CarlaParkingEnv(gym.Env):
         self.action_space = spaces.Box(low=-1.0, high=1.0,
                                        shape=(3 if self.reverse else 2,), dtype=np.float32)
         # 5 pose numbers + 4 feelers (see parking_math.feelers)
-        n_obs = 5 + (len(FEELER_SECTORS) if self.use_feelers else 0)
+        n_obs = 5 + (len(FEELER_SECTORS) if self.use_feelers else 0) + (1 if self.gear_input else 0)
         self.observation_space = spaces.Box(low=-2.0, high=2.0, shape=(n_obs,),
                                             dtype=np.float32)
         self.slot = None
@@ -453,10 +460,14 @@ class CarlaParkingEnv(gym.Env):
             y += self.rng.gauss(0.0, sp)
             yaw += math.radians(self.rng.gauss(0.0, syaw))
             speed = max(0.0, speed + self.rng.gauss(0.0, sv))
+        if self.gear_input and self._reversing:
+            speed = -speed
         obs = observation(x, y, yaw, speed, self._steer_prev, *self.slot)
         if self.use_feelers:
             self._feelers_now = feelers(x, y, yaw, self._obstacle_points())
             obs = obs + self._feelers_now
+        if self.gear_input:
+            obs = obs + [1.0 if self._reversing else 0.0]
         if self.obs_delay > 0:
             # The world moves on; the student sees where things WERE.
             self._obs_queue.append(obs)

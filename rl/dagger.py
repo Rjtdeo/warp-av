@@ -60,7 +60,7 @@ def main():
     env = CarlaParkingEnv(host=a.host, seed=a.seed + a.round, exam_p=0.0, lane_start_m=16.0,
                           lane_start_jitter_m=20.0, yaw_noise_deg=10.0, lateral_noise_m=0.5,
                           neighbour_p=0.6, neighbour_ahead_p=0.3, neighbour_behind_bays=(1, 2, 3),
-                          use_feelers=True, reverse=True)
+                          use_feelers=True, reverse=True, gear_input=True)
     obs_all, act_all, rew_all, ep_all, done_all = [], [], [], [], []
     results = collections.Counter()
     by_hazard = collections.defaultdict(collections.Counter)

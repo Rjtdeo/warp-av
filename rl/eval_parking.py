@@ -116,6 +116,8 @@ def main():
                     help="chance of one in the bay AHEAD (training uses 0.3)")
     ap.add_argument("--model", type=str, default="",
                     help="brain file to examine (default rl/models/parking_ppo.zip)")
+    ap.add_argument("--gear-input", action="store_true",
+                    help="round 9 brains: signed speed and a 'last gear was reverse' input")
     ap.add_argument("--no-feelers", action="store_true",
                     help="give the student the round-6 five-number view (needed for brains trained before round 7)")
     ap.add_argument("--reverse", action="store_true",
@@ -146,7 +148,7 @@ def main():
                           obs_noise=obs_noise, obs_dropout=a.obs_dropout,
                           obs_delay=a.obs_delay, neighbour_p=a.neighbour_p,
                           neighbour_ahead_p=a.neighbour_ahead_p,
-                          use_feelers=not a.no_feelers, reverse=a.reverse,
+                          use_feelers=not a.no_feelers, reverse=a.reverse, gear_input=a.gear_input,
                           neighbour_behind_bays=a.behind_bays,   # different bays than training
                           sides=("right", "left") if a.side == "both" else (a.side,))
     if a.neighbour_p:

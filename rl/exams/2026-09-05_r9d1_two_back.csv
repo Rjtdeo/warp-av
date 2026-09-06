@@ -1,0 +1,16 @@
+episode,p,start_dist_m,result,m_len,m_wid,herr_deg,hit,ax,ay,speed,spawn_yaw_off_deg,spawn_lat_off_m,neighbours,reverse_steps,hazard,side
+1,0.0,21.8,timeout,,,,,,,,-2.2,0.0,1,168,behind2,right
+2,0.0,22.2,timeout,,,,,,,,0.6,0.0,1,162,behind2,right
+3,0.0,22.3,timeout,,,,,,,,-1.8,0.0,1,178,behind2,right
+4,0.0,22.1,timeout,,,,,,,,-0.1,0.0,1,168,behind2,right
+5,0.0,22.3,timeout,,,,,,,,0.8,0.0,1,169,behind2,right
+6,0.0,22.1,timeout,,,,,,,,1.0,0.0,1,169,behind2,right
+7,0.0,21.5,timeout,,,,,,,,-1.2,0.0,1,169,behind2,right
+8,0.0,21.7,timeout,,,,,,,,-0.2,0.0,1,176,behind2,right
+9,0.0,22.0,timeout,,,,,,,,-0.6,0.0,1,150,behind2,right
+10,0.0,22.2,timeout,,,,,,,,-2.4,0.0,1,148,behind2,right
+11,0.0,22.5,timeout,,,,,,,,1.7,0.0,1,182,behind2,right
+12,0.0,22.2,timeout,,,,,,,,0.4,0.0,1,157,behind2,right
+13,0.0,22.3,timeout,,,,,,,,2.4,0.0,1,178,behind2,right
+14,0.0,22.2,timeout,,,,,,,,2.1,0.0,1,159,behind2,right
+15,0.0,22.1,timeout,,,,,,,,1.2,0.0,1,170,behind2,right

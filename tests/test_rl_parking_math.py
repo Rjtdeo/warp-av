@@ -631,3 +631,9 @@ def test_the_mirrored_teacher_agrees_with_the_mirrored_observation():
     obs_m = mirror_observation([ax / 15.0, ay / 6.0, herr / math.pi, speed / 5.0, 0.0] + f)
     left = teacher_action(obs_m[0] * 15.0, obs_m[1] * 6.0, obs_m[2] * math.pi, speed, obs_m[5:9])
     assert abs(left[0] + right[0]) < 1e-9 and left[1] == right[1] and left[2] == right[2]
+
+
+def test_mirroring_keeps_the_gear_input():
+    obs10 = [-0.8, -0.5, 0.1, -0.2, 0.3, 1.0, 0.25, 1.0, 0.14, 1.0]
+    m = mirror_observation(obs10)
+    assert len(m) == 10 and m[9] == 1.0 and m[3] == -0.2      # signed speed and gear flag untouched

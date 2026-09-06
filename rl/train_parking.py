@@ -114,6 +114,8 @@ def main():
     ap.add_argument("--explore-std", type=float, default=0.0,
                     help="on resume, raise steer/throttle action noise to at least this "
                          "(a trained brain barely explores; a new skill needs variety)")
+    ap.add_argument("--gear-input", action="store_true",
+                    help="round 9 brains: signed speed and a 'last gear was reverse' input (10 inputs)")
     ap.add_argument("--lane-start-jitter", type=float, default=0.0,
                     help="spread every far start over [start, start + this] metres (train only)")
     ap.add_argument("--teacher-weight", type=float, default=0.0,
@@ -131,6 +133,7 @@ def main():
     from rl.parking_math import Stages
     env = CarlaParkingEnv(curriculum=curriculum, reverse=a.reverse, obstacles=a.obstacles,
                           lane_start_m=a.lane_start, lane_start_jitter_m=a.lane_start_jitter,
+                          gear_input=a.gear_input,
                           sides=("right", "left") if a.sides == "both" else (a.sides,),
                           stages=Stages(start=a.start_stage, start_rung=a.start_rung, max_level=a.max_stage)
                           if a.obstacles else None)
