@@ -5,7 +5,7 @@ __pycache__/
 *.log
 .env
 .DS_Store
-logs/
+logs/*
 models/
 *.html.tmp
 .pytest_cache/
@@ -16,3 +16,11 @@ scenarios/results/*.jsonl
 !scenarios/results/REPORT.md
 .vercel
 sweep_out/
+
+# The brains and recordings that matter are kept in the repo (small): the
+# rest of models/ and logs/ stay ignored.
+!rl/models/
+!rl/models/*.zip
+!rl/models/README.md
+!logs/demo_runs/
+!logs/demo_runs/*.jsonl

@@ -1,0 +1,60 @@
+INFO:  Found the required file in cache!  Carla/Maps/Nav/Town10HD_Opt.bin 
+[ParkingEnv] bays by side: {'right': 145}
+[ParkingEnv] 145 practice bays ready (71 dropped: a decorative parked vehicle in the bay, behind it, or on the approach; 51 such vehicles on this map)
+[demos] 25 episodes, 8195 steps, parked 20/25, 144 s
+[demos] 50 episodes, 15969 steps, parked 44/50, 274 s
+[demos] 75 episodes, 23751 steps, parked 66/75, 404 s
+[demos] 100 episodes, 31994 steps, parked 88/100, 542 s
+[demos] 125 episodes, 40181 steps, parked 106/125, 679 s
+[demos] 150 episodes, 47587 steps, parked 128/150, 803 s
+[demos] 175 episodes, 55788 steps, parked 150/175, 940 s
+[demos] 200 episodes, 63206 steps, parked 173/200, 1064 s
+[demos] 225 episodes, 71851 steps, parked 198/225, 1209 s
+[demos] 250 episodes, 79815 steps, parked 219/250, 1343 s
+[demos] 275 episodes, 86815 steps, parked 244/275, 1461 s
+[demos] 300 episodes, 95159 steps, parked 268/300, 1600 s
+[demos] 325 episodes, 103315 steps, parked 290/325, 1737 s
+[demos] 350 episodes, 111256 steps, parked 313/350, 1870 s
+[demos] 375 episodes, 117829 steps, parked 338/375, 1980 s
+[demos] 400 episodes, 125424 steps, parked 360/400, 2108 s
+[demos] 425 episodes, 133385 steps, parked 383/425, 2241 s
+[demos] 450 episodes, 141322 steps, parked 407/450, 2374 s
+[demos] 475 episodes, 148779 steps, parked 430/475, 2500 s
+[demos] 500 episodes, 156590 steps, parked 455/500, 2631 s
+[demos] 525 episodes, 163527 steps, parked 480/525, 2747 s
+[demos] 550 episodes, 171160 steps, parked 504/550, 2876 s
+[demos] 575 episodes, 179735 steps, parked 528/575, 3019 s
+[demos] 600 episodes, 187506 steps, parked 551/600, 3150 s
+[demos] 625 episodes, 195585 steps, parked 575/625, 3285 s
+[demos] 650 episodes, 204527 steps, parked 599/650, 3436 s
+[demos] 675 episodes, 212276 steps, parked 623/675, 3566 s
+[demos] 700 episodes, 220031 steps, parked 645/700, 3696 s
+[demos] 725 episodes, 228901 steps, parked 668/725, 3846 s
+[demos] 750 episodes, 236366 steps, parked 691/750, 3972 s
+[demos] 775 episodes, 244191 steps, parked 714/775, 4103 s
+[demos] 800 episodes, 251425 steps, parked 738/800, 4225 s
+[demos] 825 episodes, 259473 steps, parked 763/825, 4360 s
+[demos] 850 episodes, 267747 steps, parked 788/850, 4499 s
+[demos] 875 episodes, 276248 steps, parked 812/875, 4642 s
+[demos] 900 episodes, 283557 steps, parked 836/900, 4765 s
+[demos] 925 episodes, 290786 steps, parked 857/925, 4888 s
+[demos] 950 episodes, 297739 steps, parked 882/950, 5005 s
+[demos] 975 episodes, 306031 steps, parked 904/975, 5144 s
+[demos] 1000 episodes, 313557 steps, parked 928/1000, 5271 s
+[demos] 1025 episodes, 321429 steps, parked 953/1025, 5404 s
+[demos] 1050 episodes, 329380 steps, parked 977/1050, 5538 s
+[demos] 1075 episodes, 336426 steps, parked 1001/1075, 5657 s
+[demos] 1100 episodes, 343521 steps, parked 1025/1100, 5777 s
+[demos] 1125 episodes, 351831 steps, parked 1049/1125, 5917 s
+[demos] 1150 episodes, 359851 steps, parked 1072/1150, 6052 s
+[demos] 1175 episodes, 367149 steps, parked 1097/1175, 6175 s
+[demos] 1200 episodes, 374885 steps, parked 1119/1200, 6306 s
+[ParkingEnv] world restored to normal mode
+[demos] DONE: 374885 steps from 1200 episodes -> rl\demos\demos.npz
+[demos] teacher results: {'timeout': 46, 'parked': 1119, 'collision': 35}
+[demos]   ahead    parked 134/139 (96%)  {'parked': 134, 'collision': 5}
+[demos]   behind1  parked 196/231 (85%)  {'parked': 196, 'collision': 22, 'timeout': 13}
+[demos]   behind2  parked 231/243 (95%)  {'timeout': 12, 'parked': 231}
+[demos]   behind3  parked 228/241 (95%)  {'timeout': 12, 'parked': 228, 'collision': 1}
+[demos]   none     parked 330/346 (95%)  {'parked': 330, 'collision': 7, 'timeout': 9}
+RECORD DONE 
