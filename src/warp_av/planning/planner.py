@@ -16,6 +16,14 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from .footprint import VehicleFootprint, sweep_conflict
+
+# Planning V2 (phase 1B): perception objects carry no size, so when the swept
+# body is checked against a STATIONARY object it is given a radius by type.
+# Half a car for vehicles; a bin/pole/planter for other things.
+DEFAULT_OBSTACLE_RADIUS_M = {"vehicle": 0.9, "pedestrian": 0.4, "obstacle": 0.5, "unknown": 0.5}
+FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary objects this far ahead
+
 
 @dataclass
 class Waypoint:
@@ -48,6 +56,12 @@ class RoutePlanner:
         self._grp = GlobalRoutePlanner(self.carla_map, sampling_resolution)
 
         self._enabled = True
+        # Planning V2 feature flag. OFF: filter_to_route_corridor behaves exactly
+        # as before. ON: pass self.footprint to it and stationary obstacles are
+        # hard-blocked by the swept van body instead of the 1.40/2.20 m bands.
+        # Nothing reads this yet (phase 1B); main.py still calls without a footprint.
+        self.use_footprint_blocking = False
+        self.footprint = VehicleFootprint()
 
     def plan_route(self, start_x, start_y, end_x, end_y) -> Optional[Route]:
         """
@@ -548,7 +562,7 @@ class RoutePlanner:
 
     def filter_to_route_corridor(self, perception, route: Route, ego_x, ego_y, ego_yaw,
                                  corridor_halfwidth_m=1.75, block_halfwidth_m=1.40,
-                                 danger_m=8.0, max_ahead_m=50.0):
+                                 danger_m=8.0, max_ahead_m=50.0, footprint=None):
         """
         Recompute perception's "in my path" verdict against the ROUTE CORRIDOR
         instead of a straight box along the vehicle's nose.
@@ -558,6 +572,14 @@ class RoutePlanner:
         obstacles around the bend (late stop). Here an object counts only if it
         lies within corridor_halfwidth of the route polyline AND ahead of us
         along the route. Mutates and returns the PerceptionOutput.
+
+        footprint (Planning V2, optional): a VehicleFootprint. When given, a
+        STATIONARY object on a non-junction stretch hard-blocks only if the
+        van's swept body (footprint plus safety margin, slid along the route)
+        touches it within FOOTPRINT_STATIONARY_REACH_M, instead of the
+        1.40 m / 2.20 m centre-line bands. Everything else - moving objects,
+        pedestrians, junction segments, the slow zone, what counts as
+        "closest" - is unchanged. None (the default) = exactly the old rules.
         """
         if not route or len(route.waypoints) < 2 or not getattr(perception, "objects", None):
             return perception
@@ -603,10 +625,20 @@ class RoutePlanner:
             # too (centre at 1.75-2.20 m still overlaps the van's swept width —
             # 2.20 covers SUV-class half-widths; run 77 clipped a parked
             # Patrol at ~2.1 m while sweeping through a bend).
-            if lat > 2.20 or along < -1.0 or along > max_ahead_m:
+            if along < -1.0 or along > max_ahead_m:
                 continue
             near_junction = (wps[oseg].is_junction
                              or wps[min(oseg + 1, n - 1)].is_junction)
+            stationary = getattr(obj, "speed", 0.0) < 0.5
+            # Planning V2: does the swept body decide this object's hard-block?
+            sweep_decides = (footprint is not None and stationary and not near_junction)
+            # Old rules never look beyond 2.20 m from the line. The swept body
+            # can reach further in a bend (the outer corner swings wide), so in
+            # footprint mode a stationary object is kept for the sweep up to
+            # the van's own reach; the sweep itself decides precisely.
+            lat_limit = (footprint.swept_half_length + 1.0) if sweep_decides else 2.20
+            if lat > lat_limit:
+                continue
             if lat <= corridor_halfwidth_m:
                 found = True
                 dist = max(0.0, along)
@@ -619,7 +651,7 @@ class RoutePlanner:
                 # real lead vehicle sits at 0-0.8 m). The 1.4-1.75 m band —
                 # e.g. a car waiting at the cross-street stop line just around
                 # the corner — slows us but must not freeze the mission.
-                if dist < danger_m and lat <= block_halfwidth_m:
+                if dist < danger_m and lat <= block_halfwidth_m and not sweep_decides:
                     blocked = True
             # Physical-width conflict: centre-line thresholds ignore that the
             # van (~2.0 m) plus a parked car (~1.8 m) cannot share 2×1.75 m.
@@ -631,7 +663,7 @@ class RoutePlanner:
             # objects stay exempt: cross-street geometry is the give-way
             # logic's job (re-blocking it was the original false-stop bug).
             if (lat > block_halfwidth_m and lat <= 2.20
-                    and getattr(obj, "speed", 0.0) < 0.5
+                    and stationary
                     and max(0.0, along) < 12.0 and not near_junction):
                 found = True
                 dist = max(0.0, along)
@@ -640,7 +672,30 @@ class RoutePlanner:
                     closest_type = obj.object_type
                     closest_speed = obj.speed
                     closest_lat = round(lat, 2)
-                blocked = True
+                if not sweep_decides:
+                    blocked = True
+            # Planning V2: the van's real body, slid along the route, decides
+            # whether a stationary object is in the way. A parked car 1.6 m off
+            # the line still blocks (half a car reaches into our margin); a
+            # planter at 1.9 m no longer does; a body 2.4 m off the line on the
+            # outside of a bend is caught when the corner sweeps over it.
+            if sweep_decides and max(0.0, along) < FOOTPRINT_STATIONARY_REACH_M:
+                radius = getattr(obj, "radius", None)
+                if radius is None:
+                    radius = DEFAULT_OBSTACLE_RADIUS_M.get(
+                        getattr(getattr(obj, "object_type", None), "value", "unknown"), 0.5)
+                hit = sweep_conflict(wps, (ego_x, ego_y), footprint, (wx, wy),
+                                     obstacle_radius=radius,
+                                     horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length)
+                if hit is not None:
+                    found = True
+                    dist = max(0.0, along)
+                    if dist < closest:
+                        closest = dist
+                        closest_type = obj.object_type
+                        closest_speed = obj.speed
+                        closest_lat = round(lat, 2)
+                    blocked = True
 
         perception.closest_obstacle_distance = closest
         perception.closest_obstacle_speed = closest_speed
