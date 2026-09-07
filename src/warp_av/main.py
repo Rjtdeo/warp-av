@@ -48,6 +48,7 @@ from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
+from .planning.footprint_config import FootprintBlockingConfig
 from .perception.bay_finder import why_no_kerb
 
 
@@ -127,6 +128,13 @@ class WarpAV:
 
         print("[Init] Starting planner...")
         self.planner = RoutePlanner(self.vehicle_adapter.get_map())
+        # Planning V2: swept-path blocking, OFF by default. The van's real size
+        # is read from the CARLA bounding box (fallback 2.96 x 0.99 m).
+        self.footprint_blocking = FootprintBlockingConfig.from_vehicle(self.vehicle_adapter.vehicle)
+        fb = self.footprint_blocking.state()
+        print(f"[Planner] footprint {fb['vehicle_half_length_m']} x {fb['vehicle_half_width_m']} m "
+              f"({fb['dimensions_source']}), margin {fb['safety_margin_m']} m, "
+              f"swept-path blocking {'ON' if fb['footprint_blocking_enabled'] else 'OFF'}")
 
         print("[Init] Starting controller...")
         self.controller = VehicleController()
@@ -379,6 +387,7 @@ class WarpAV:
             perception = self.planner.filter_to_route_corridor(
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
+                footprint=self.footprint_blocking.active_footprint(),   # None while the flag is OFF
             )
 
         self._last_perception = perception      # the learned parker's stop-override rule reads this
@@ -731,6 +740,7 @@ class WarpAV:
             "perception_mode": self.perception_mode,
             "parking_source": self.parking_source,
             "parker": self.parker,
+            "planning": self.footprint_blocking.state(),
             "rl_parker": ({"engaged": self.rl_parker.engaged, "done": self.rl_parker.done,
                            "result": self.rl_parker.result,
                            "brain": os.path.basename(self.rl_parker.model_path),
@@ -2222,6 +2232,15 @@ class WarpAV:
                 "brain": os.path.basename(self.rl_parker.model_path) if who == "rl" else None,
                 "handover_m": self.rl_parker.handover_m}
 
+    def api_set_footprint_blocking(self, enabled=None, safety_margin_m=None):
+        """Planning V2 runtime switch: swept-path blocking on/off and its safety margin."""
+        result = self.footprint_blocking.set(enabled=enabled, safety_margin_m=safety_margin_m)
+        if result.get("success"):
+            self.logger.log_event("planning", f"swept-path blocking "
+                                  f"{'ON' if result['footprint_blocking_enabled'] else 'OFF'}, "
+                                  f"margin {result['safety_margin_m']} m")
+        return result
+
     def api_set_parking_source(self, source):
         """Where FIND PARKING gets its slots: "map" (CARLA lane data) or
         "lidar" (the bay finder on the live sweep, map as fallback)."""
@@ -2977,6 +2996,15 @@ def park_cars_api():
         fill_all=bool(data.get('fill_all', False)),
         clear=bool(data.get('clear', False)),
         take_chosen=bool(data.get('take_chosen', False))))
+
+@app.route('/api/planning/footprint_blocking', methods=['GET', 'POST'])
+def planning_footprint_blocking():
+    if request.method == 'GET':
+        return jsonify(av_system.footprint_blocking.state())
+    data = request.get_json(silent=True) or {}
+    return jsonify(av_system.api_set_footprint_blocking(enabled=data.get("enabled"),
+                                                        safety_margin_m=data.get("safety_margin_m")))
+
 
 @app.route('/api/parking/parker', methods=['GET', 'POST'])
 def parking_parker():
