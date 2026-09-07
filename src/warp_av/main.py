@@ -49,6 +49,7 @@ from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
 from .planning.footprint_config import FootprintBlockingConfig
+from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
 from .perception.bay_finder import why_no_kerb
 
 
@@ -135,6 +136,10 @@ class WarpAV:
         print(f"[Planner] footprint {fb['vehicle_half_length_m']} x {fb['vehicle_half_width_m']} m "
               f"({fb['dimensions_source']}), margin {fb['safety_margin_m']} m, "
               f"swept-path blocking {'ON' if fb['footprint_blocking_enabled'] else 'OFF'}")
+        # Debug drawing of footprint / swept path in the CARLA world. OFF by
+        # default, independent of the blocking flag, never touches decisions.
+        self.footprint_debug = FootprintDebugConfig()
+        self._footprint_drawer = FootprintDebugDrawer(self.vehicle_adapter.world)
 
         print("[Init] Starting controller...")
         self.controller = VehicleController()
@@ -391,6 +396,18 @@ class WarpAV:
             )
 
         self._last_perception = perception      # the learned parker's stop-override rule reads this
+        if self.footprint_debug.enabled and self._route:
+            # Visualisation only: draws what the swept-path rule sees and what
+            # the planner decided. Any failure is counted, never raised.
+            try:
+                frame = build_frame((pose.x, pose.y, pose.yaw), self.footprint_blocking.footprint,
+                                    self._route.waypoints, perception.objects,
+                                    blocking_enabled=self.footprint_blocking.enabled,
+                                    planner_blocked=perception.path_blocked,
+                                    planner_distance=perception.closest_obstacle_distance)
+                self._footprint_drawer.draw(frame, z=pose.z + 0.15)
+            except Exception as e:
+                self._footprint_drawer.note_failure(e)
         # 3. Safety check
         safety_output = self.safety.update(
             perception_healthy=perception.healthy,
@@ -740,7 +757,8 @@ class WarpAV:
             "perception_mode": self.perception_mode,
             "parking_source": self.parking_source,
             "parker": self.parker,
-            "planning": self.footprint_blocking.state(),
+            "planning": {**self.footprint_blocking.state(), **self.footprint_debug.state(),
+                         "debug_draw_failures": self._footprint_drawer.failures},
             "rl_parker": ({"engaged": self.rl_parker.engaged, "done": self.rl_parker.done,
                            "result": self.rl_parker.result,
                            "brain": os.path.basename(self.rl_parker.model_path),
@@ -2232,13 +2250,20 @@ class WarpAV:
                 "brain": os.path.basename(self.rl_parker.model_path) if who == "rl" else None,
                 "handover_m": self.rl_parker.handover_m}
 
-    def api_set_footprint_blocking(self, enabled=None, safety_margin_m=None):
-        """Planning V2 runtime switch: swept-path blocking on/off and its safety margin."""
+    def api_set_footprint_blocking(self, enabled=None, safety_margin_m=None, debug_enabled=None):
+        """Planning V2 runtime switches: swept-path blocking on/off, its safety
+        margin, and (independently) the debug drawing of footprint and swept path."""
         result = self.footprint_blocking.set(enabled=enabled, safety_margin_m=safety_margin_m)
+        if result.get("success") and debug_enabled is not None:
+            dbg = self.footprint_debug.set(enabled=debug_enabled)
+            if not dbg.get("success"):
+                return {**dbg, **self.footprint_blocking.state()}
+        result = {**result, **self.footprint_debug.state()}
         if result.get("success"):
             self.logger.log_event("planning", f"swept-path blocking "
                                   f"{'ON' if result['footprint_blocking_enabled'] else 'OFF'}, "
-                                  f"margin {result['safety_margin_m']} m")
+                                  f"margin {result['safety_margin_m']} m, debug drawing "
+                                  f"{'ON' if result['footprint_debug_enabled'] else 'OFF'}")
         return result
 
     def api_set_parking_source(self, source):
@@ -3000,10 +3025,11 @@ def park_cars_api():
 @app.route('/api/planning/footprint_blocking', methods=['GET', 'POST'])
 def planning_footprint_blocking():
     if request.method == 'GET':
-        return jsonify(av_system.footprint_blocking.state())
+        return jsonify({**av_system.footprint_blocking.state(), **av_system.footprint_debug.state()})
     data = request.get_json(silent=True) or {}
     return jsonify(av_system.api_set_footprint_blocking(enabled=data.get("enabled"),
-                                                        safety_margin_m=data.get("safety_margin_m")))
+                                                        safety_margin_m=data.get("safety_margin_m"),
+                                                        debug_enabled=data.get("debug_enabled")))
 
 
 @app.route('/api/parking/parker', methods=['GET', 'POST'])

@@ -85,5 +85,5 @@ def test_main_wires_the_footprint_flag_and_telemetry():
     assert "FootprintBlockingConfig.from_vehicle(self.vehicle_adapter.vehicle)" in src
     assert "2.96" not in src.split("FootprintBlockingConfig.from_vehicle")[1][:400]
     # telemetry block and runtime route
-    assert '"planning": self.footprint_blocking.state()' in src
+    assert '"planning": {**self.footprint_blocking.state()' in src
     assert "/api/planning/footprint_blocking" in src
