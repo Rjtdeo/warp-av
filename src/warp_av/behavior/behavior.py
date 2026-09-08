@@ -104,6 +104,7 @@ class BehaviorSystem:
         # treat it as a blocked route instead of a temporary obstacle.
         self.blocked_timeout = 3.0
         self._blocked_since = None
+        self._speed_cap_mps = None       # set each tick by safety (day 8)
 
     def update(
         self,
@@ -118,6 +119,7 @@ class BehaviorSystem:
         white_line_m: Optional[float] = None,
         predicted_conflict: Optional[dict] = None,
         world=None,                      # the day-7 world model, when the caller has one
+        speed_cap_mps: Optional[float] = None,   # safety's cap while a sense is missing (day 8)
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -131,6 +133,7 @@ class BehaviorSystem:
         """
 
         # --- Safety override (highest priority) ---
+        self._speed_cap_mps = speed_cap_mps
         if not safety_ok:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
@@ -438,6 +441,14 @@ class BehaviorSystem:
             self._block_memory = (time.time(), kind, distance)
 
     def _decide(self, behavior, reason, speed, stop) -> BehaviorOutput:
+        # Safety's cap while a sense is missing: it can only ever slow the van down, never
+        # speed it up, and it cannot turn a stop into driving (Perception V2 day 8).
+        cap = getattr(self, "_speed_cap_mps", None)
+        if cap is not None and speed > cap:
+            speed = max(0.0, cap)
+            reason = f"{reason} (held to {speed:.1f} m/s: a sensor is missing)"
+            if speed == 0.0:
+                stop = True
         # Log when behavior CHANGES (important for debugging)
         if behavior != self.current_behavior:
             print(f"[Behavior] {self.current_behavior.value} → {behavior.value}: {reason}")

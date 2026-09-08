@@ -55,6 +55,7 @@ from .perception.bay_finder import why_no_kerb
 
 
 from .world_model import build_world_model
+from .sensor_health import HealthMonitor, read_sensors
 
 class WarpAV:
     """The complete autonomy system."""
@@ -130,6 +131,8 @@ class WarpAV:
         print("[Init] Starting behavior...")
         self.behavior = BehaviorSystem()
 
+        self._health = None               # the day-8 sensor report, rebuilt every tick
+        self.health_monitor = HealthMonitor()
         print("[Init] Starting planner...")
         self.planner = RoutePlanner(self.vehicle_adapter.get_map())
         # Planning V2: swept-path blocking, OFF by default. The van's real size
@@ -421,6 +424,15 @@ class WarpAV:
             except Exception as e:
                 self._footprint_drawer.note_failure(e)
         # 3. Safety check
+        # Which senses are working, and what losing one means (Perception V2 day 8)
+        try:
+            self._health = self.health_monitor.update(read_sensors(
+                getattr(self, "sensor_adapter", None),
+                perception_healthy=perception.healthy, perception_reason=perception.reason,
+                pose=pose, controller_healthy=self.controller._enabled,
+                vehicle_alive=self.vehicle_adapter.is_alive()))
+        except Exception:
+            self._health = None
         safety_output = self.safety.update(
             perception_healthy=perception.healthy,
             perception_timestamp=perception.timestamp,
@@ -430,6 +442,7 @@ class WarpAV:
             controller_healthy=self.controller._enabled,
             vehicle_alive=self.vehicle_adapter.is_alive(),
             current_speed=pose.speed,
+            health=self._health,
         )
 
         # Keep the latest safety result for operator Resume checks.
@@ -539,6 +552,7 @@ class WarpAV:
         behavior_output = self.behavior.update(
             perception=perception,
             world=self._world,                 # day 7: the one sheet of what the van knows
+            speed_cap_mps=safety_output.speed_cap_mps,   # day 8: slow while a sense is missing
             pose=pose,
             destination_distance=dest_dist,
             safety_ok=safety_output.driving_allowed,
@@ -734,7 +748,12 @@ class WarpAV:
             "behavior_reason": behavior_output.reason,
             "command": {"steer": round(cmd.steering, 3), "throttle": round(cmd.throttle, 3),
                         "brake": round(cmd.brake, 3)},
-            "safety": {"state": safety_output.state.value, "reason": safety_output.reason},
+            "safety": {"state": safety_output.state.value, "reason": safety_output.reason,
+                       "driving_allowed": safety_output.driving_allowed,
+                       "speed_cap_mps": safety_output.speed_cap_mps,
+                       "failed_sensors": list(safety_output.failed_sensors)},
+            # every sense and what losing it means (day 8)
+            "sensors": (self._health.as_dict() if getattr(self, "_health", None) else None),
             "perception": {
                 "object_count": len(perception.objects),
                 "closest_distance": round(perception.closest_obstacle_distance, 1),

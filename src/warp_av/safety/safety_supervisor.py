@@ -17,13 +17,14 @@ THIS VERSION:
 
 import time
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 from enum import Enum
 
 
 class SafetyState(Enum):
     OK = "ok"                          # All systems healthy, driving allowed
     WARNING = "warning"                # Something degraded but still safe
+    DEGRADED = "degraded"              # A sense is missing: driving on, slowly (day 8)
     INTERVENTION = "intervention"      # Safety taking control — stopping vehicle
     EMERGENCY_STOP = "emergency_stop"  # Hard stop — something very wrong
 
@@ -45,6 +46,10 @@ class SafetyOutput:
     reason: str
     checks: List[SafetyCheck] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
+    # how fast the van may go while a sense is missing. None = no limit from safety,
+    # 0.0 = stop. The behaviour layer honours it (Perception V2 day 8).
+    speed_cap_mps: Optional[float] = None
+    failed_sensors: List[str] = field(default_factory=list)
 
 
 class SafetySupervisor:
@@ -82,6 +87,7 @@ class SafetySupervisor:
         controller_healthy: bool,
         vehicle_alive: bool,
         current_speed: float,
+        health=None,                 # a HealthReport, when the caller has one (day 8)
     ) -> SafetyOutput:
         """
         Run all safety checks. Returns whether driving is allowed.
@@ -111,6 +117,33 @@ class SafetySupervisor:
                 checks=checks
             )
         checks.append(SafetyCheck("vehicle_connection", True, "Connected"))
+
+        # --- Each sense in turn (day 8) ---
+        # Before this the supervisor was handed one yes-or-no for all of perception, so it
+        # could not say which eye had gone dark, and the senses it never heard about could
+        # fail in silence: with the GPS off the van drove on at full speed.
+        if health is not None:
+            failed = [s.name for s in health.failed()]
+            cap = health.speed_cap_mps()
+            if cap == 0.0:
+                checks.append(SafetyCheck("sensors", False, health.reason()))
+                self._errors.append(health.reason())
+                return SafetyOutput(
+                    state=SafetyState.INTERVENTION,
+                    driving_allowed=False,
+                    reason=health.reason(),
+                    checks=checks, speed_cap_mps=0.0, failed_sensors=failed,
+                )
+            if cap is not None:
+                checks.append(SafetyCheck("sensors", False, health.reason()))
+                self._warnings.append(health.reason())
+                return SafetyOutput(
+                    state=SafetyState.DEGRADED,
+                    driving_allowed=True,
+                    reason=health.reason(),
+                    checks=checks, speed_cap_mps=cap, failed_sensors=failed,
+                )
+            checks.append(SafetyCheck("sensors", True, "all senses working"))
 
         # --- Perception ---
         perception_age = time.time() - perception_timestamp
