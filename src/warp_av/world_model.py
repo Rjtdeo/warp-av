@@ -58,6 +58,8 @@ class WorldObject:
     height_m: float = 0.0
     yaw_deg: float = 0.0
     confidence: float = 1.0
+    size_uncertain: bool = False       # recent sightings disagreed about how big it is
+    clearance_radius_m: float = 0.4    # room to leave around it, never less than its kind needs
     age_s: float = 0.0                 # how old the sighting behind this is
 
     @property
@@ -100,6 +102,8 @@ class WorldObject:
             "length_m": round(self.length_m, 2), "width_m": round(self.width_m, 2),
             "height_m": round(self.height_m, 2), "yaw_deg": round(self.yaw_deg, 1),
             "confidence": round(self.confidence, 2), "age_s": round(self.age_s, 2),
+            "size_uncertain": self.size_uncertain,
+            "clearance_radius_m": round(self.clearance_radius_m, 2),
         }
 
 
@@ -239,6 +243,8 @@ def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_
             height_m=float(getattr(o, "height_m", 0.0)),
             yaw_deg=float(getattr(o, "yaw_deg", 0.0)),
             confidence=float(getattr(o, "confidence", 1.0)),
+            size_uncertain=bool(getattr(o, "size_uncertain", False)),
+            clearance_radius_m=float(getattr(o, "clearance_radius_m", 0.4)),
             age_s=max(0.0, now - float(getattr(o, "timestamp", now) or now)),
         ))
 

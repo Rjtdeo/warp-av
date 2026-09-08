@@ -55,17 +55,16 @@ def test_a_single_point_has_no_footprint():
     assert c["width_m"] == pytest.approx(0.0, abs=0.05)
 
 
-def test_track_keeps_the_largest_view():
+def test_track_takes_the_biggest_view_until_there_is_something_to_vote_on():
+    """With one or two sightings there is no majority, so the larger view wins: the LiDAR
+    only ever catches part of a thing. From the third sighting the middle value takes over
+    (day 7), so one frame that glues the thing to a wall cannot set its size for ever."""
     tr = ObjectTracker()
     obs = lambda l, w, h, yaw: [{"wx": 10.0, "wy": 0.0, "length_m": l, "width_m": w, "height_m": h, "yaw_deg": yaw}]
     tr.update(obs(1.0, 0.5, 1.2, 10.0), 0.0)
-    tr.update(obs(3.5, 1.6, 1.5, 80.0), 0.1)
-    tr.update(obs(2.0, 0.9, 1.1, 0.0), 0.2)
-    t = tr.update(obs(2.0, 0.9, 1.1, 0.0), 0.3)[0]
-    assert t.length_m == pytest.approx(3.5)
-    assert t.width_m == pytest.approx(1.6)
-    assert t.height_m == pytest.approx(1.5)
-    assert t.yaw_deg == pytest.approx(80.0), "the heading should come from the biggest view"
+    t = tr.update(obs(3.5, 1.6, 1.5, 80.0), 0.1)[0]
+    assert t.length_m == pytest.approx(3.5), "two sightings: the bigger one wins"
+    assert t.width_m == pytest.approx(1.6) and t.height_m == pytest.approx(1.5)
 
 
 def test_track_without_sizes_stays_zero():

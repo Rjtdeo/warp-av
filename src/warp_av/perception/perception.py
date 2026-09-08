@@ -51,6 +51,12 @@ class DetectedObject:
     # True while the van is satisfied this thing is parked: slow, and it has not gone
     # anywhere over the last second and a half. A parked car reports speed exactly 0.0.
     stationary: bool = True
+    # True when recent sightings of this thing disagreed about its size, so the numbers
+    # above are a guess. False means the van has a steady measurement.
+    size_uncertain: bool = False
+    # how much room to leave around it: what was measured, but never less than the kind of
+    # thing deserves, because a small person can still step sideways without warning
+    clearance_radius_m: float = 0.4
     timestamp: float = field(default_factory=time.time)
 
 

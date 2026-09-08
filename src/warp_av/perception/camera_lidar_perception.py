@@ -42,7 +42,8 @@ from . import tracking as _tracking
 from .camera_model import (CameraModel, box_contains, box_edges, box_foot, cluster_point,
                            ground_point)
 from .detection_worker import DetectionWorker, yolox_inline_from_env
-from .tracking import cluster_points, ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped
+from .tracking import (cluster_points, clearance_radius_m, ObjectTracker, MIN_POINTS_FAR,
+                       FAR_RANGE_M, vehicle_shaped)
 from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
                             lidar_thin_step_from_env, remove_road_edge_points, DEFAULT_LIDAR_HEIGHT_M)
 
@@ -933,6 +934,9 @@ class CameraLidarPerception:
                     length_m=getattr(tr, "length_m", 0.0), width_m=getattr(tr, "width_m", 0.0),
                     height_m=getattr(tr, "height_m", 0.0), yaw_deg=getattr(tr, "yaw_deg", 0.0),
                     stationary=bool(getattr(tr, "stationary", True)),
+                    size_uncertain=bool(getattr(tr, "size_uncertain", False)),
+                    clearance_radius_m=clearance_radius_m(tr.cls, getattr(tr, "length_m", 0.0),
+                                                          getattr(tr, "width_m", 0.0)),
                     id=tr.tid, timestamp=now))
 
             # ---- simple forward in-path summary (route corridor refines) ----

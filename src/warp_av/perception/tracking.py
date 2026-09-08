@@ -178,6 +178,30 @@ MAX_ROAD_SPEED_MPS = 30.0           # nothing in a town does 108 km/h: above thi
                                     #   mis-association, not a measurement
 MAX_ROAD_USER_LENGTH_M = 8.0        # longer than a bus: scenery, and scenery does not move
 
+# ---- how big is it? (the day-7 size rule) ----------------------------------------------
+# Keeping the largest view a track ever had is right for a car, which reveals more of itself
+# as you approach, and wrong the moment one frame glues an object to a wall: the inflated
+# size then sticks for the life of the track. A person read 8.6 m long that way. So keep the
+# middle of the recent sightings instead: one bad frame is outvoted, while a size several
+# frames agree on still comes through, which is how a person pushing a pram gets their room.
+SIZE_HISTORY = 12                   # sightings kept per track
+SIZE_MIN_FOR_MEDIAN = 3             # below this, take the largest, since there is nothing to vote
+# Generous bounds, used ONLY to throw away an impossible sighting, never to rewrite a real one.
+# A person can be 2 m tall with a bag and a bike; a person cannot be 8 m long.
+CLASS_SIZE_LIMITS = {
+    # long side, short side, tall. Roomy on purpose: a person wheeling a bicycle is about
+    # 2 m long, one pushing a pram about 1.5 m, and a group walking abreast is wider than
+    # one person. Only a merge with a wall gets past these.
+    "pedestrian": (2.5, 1.8, 2.4),
+    "vehicle": (14.0, 4.0, 4.5),           # a bus or a lorry is still a vehicle
+}
+SIZE_UNCERTAIN_SPREAD = 0.6         # sightings disagreeing by more than 60 % of the middle
+                                    #   value means the van does not really know the size
+# What the van should leave room for, whatever it measured. People change direction without
+# warning, so their margin is generous however small they look.
+MIN_CLEARANCE_M = {"pedestrian": 0.6, "vehicle": 1.2}
+DEFAULT_MIN_CLEARANCE_M = 0.4
+
 
 class Track:
     """One thing the van is following, with a constant-velocity motion filter.
@@ -191,7 +215,7 @@ class Track:
     __slots__ = ("tid", "x", "P", "cls", "confidence",
                  "last_seen", "hits", "strong_hits",
                  "length_m", "width_m", "height_m", "yaw_deg",
-                 "_history", "_still", "range_m")
+                 "_history", "_still", "range_m", "_sizes", "size_uncertain")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -215,6 +239,8 @@ class Track:
         self._history = [(t, float(wx), float(wy))]        # where it has been lately
         self._still = True         # a thing is taken to be parked until it shows otherwise
         self.range_m = 0.0         # how far away it was last seen, for judging its wobble
+        self._sizes = []           # the recent size sightings, to take a middle value from
+        self.size_uncertain = False   # True when those sightings disagree badly
 
     # ---- what the rest of the stack reads -------------------------------------------
     @property
@@ -363,14 +389,61 @@ def measurement_noise_m(o: dict) -> float:
     return sigma
 
 
-def _grow_size(tr: Track, o: dict) -> None:
-    """Keep the largest footprint seen so far, and the heading that came with it."""
-    lm, wm = float(o.get("length_m", 0.0) or 0.0), float(o.get("width_m", 0.0) or 0.0)
-    if lm > tr.length_m:
-        tr.length_m = lm
-        tr.yaw_deg = float(o.get("yaw_deg", 0.0) or 0.0)
-    tr.width_m = max(tr.width_m, wm)
-    tr.height_m = max(tr.height_m, float(o.get("height_m", 0.0) or 0.0))
+def _median(values):
+    vs = sorted(values)
+    n = len(vs)
+    if not n:
+        return 0.0
+    return vs[n // 2] if n % 2 else 0.5 * (vs[n // 2 - 1] + vs[n // 2])
+
+
+def plausible_size(cls, length_m: float, width_m: float, height_m: float) -> bool:
+    """Could a thing of this kind really be this big? Generous on purpose: the limits are
+    here to throw away a blob merged with a wall, not to decide what size a person is."""
+    limit = CLASS_SIZE_LIMITS.get(cls)
+    if limit is None:
+        return True
+    return length_m <= limit[0] and width_m <= limit[1] and height_m <= limit[2]
+
+
+def _note_size(tr: Track, o: dict) -> None:
+    """Record this sighting's footprint and report the middle of the recent ones."""
+    lm = float(o.get("length_m", 0.0) or 0.0)
+    wm = float(o.get("width_m", 0.0) or 0.0)
+    hm = float(o.get("height_m", 0.0) or 0.0)
+    if lm <= 0.0 and wm <= 0.0 and hm <= 0.0:
+        return                                  # nothing measured this time
+    if not plausible_size(tr.cls, lm, wm, hm):
+        # a person is not 8 m long: that frame is a merge with something else. Throw the
+        # measurement away, but admit that the van is now unsure rather than saying nothing.
+        tr.size_uncertain = True
+        return
+    tr._sizes.append((lm, wm, hm, float(o.get("yaw_deg", 0.0) or 0.0)))
+    if len(tr._sizes) > SIZE_HISTORY:
+        tr._sizes.pop(0)
+    if len(tr._sizes) < SIZE_MIN_FOR_MEDIAN:
+        # too few to vote: take the biggest so far, as the van did before
+        tr.length_m = max(tr.length_m, lm)
+        tr.width_m = max(tr.width_m, wm)
+        tr.height_m = max(tr.height_m, hm)
+        if lm >= tr.length_m:
+            tr.yaw_deg = float(o.get("yaw_deg", 0.0) or 0.0)
+        return
+    lengths = [s[0] for s in tr._sizes]
+    tr.length_m = _median(lengths)
+    tr.width_m = _median([s[1] for s in tr._sizes])
+    tr.height_m = _median([s[2] for s in tr._sizes])
+    # the heading of the sighting nearest that middle length, so it matches the shape reported
+    tr.yaw_deg = min(tr._sizes, key=lambda s: abs(s[0] - tr.length_m))[3]
+    spread = max(lengths) - min(lengths)
+    tr.size_uncertain = bool(tr.length_m > 1e-6 and spread / tr.length_m > SIZE_UNCERTAIN_SPREAD)
+
+
+def clearance_radius_m(cls, length_m: float, width_m: float) -> float:
+    """How much room to leave around a thing: what was measured, but never less than the
+    kind of thing deserves. A person may be small and still step sideways without warning."""
+    measured = 0.5 * math.hypot(max(0.0, length_m), max(0.0, width_m))
+    return max(measured, MIN_CLEARANCE_M.get(cls, DEFAULT_MIN_CLEARANCE_M))
 
 
 class ObjectTracker:
@@ -436,7 +509,7 @@ class ObjectTracker:
             if o.get("cls"):
                 tr.cls = o["cls"]
                 tr.confidence = max(tr.confidence, o.get("confidence", 0.5))
-            _grow_size(tr, o)
+            _note_size(tr, o)
 
         for j in unmatched:
             o = observations[j]
@@ -449,7 +522,7 @@ class ObjectTracker:
             if o.get("cls"):
                 tr.cls = o["cls"]
                 tr.confidence = o.get("confidence", 0.5)
-            _grow_size(tr, o)
+            _note_size(tr, o)
             self._next_id += 1
             self._tracks.append(tr)
 
