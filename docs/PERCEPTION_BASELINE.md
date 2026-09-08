@@ -796,3 +796,128 @@ than the van's: restarting the stack while an old process still holds a van
 leaves a second Sprinter parked on the road, which the van correctly reports
 as a vehicle blocking its path; and a scenario or demo that is interrupted
 can leave props behind. Clear both before a live run.
+
+# Perception V2, day 5: what is it? (2026-09-08)
+
+Day 4 told the van how big a thing is. Day 5 tells it what the thing is. The
+van has had a camera and a working person detector all along; the answer
+never reached the LiDAR blob it belonged to.
+
+## Three faults, all in the joining step
+
+1. **The detection box was read wrong.** The detector returns
+   `(left, top, width, height)`. The fusion read it as
+   `(left, top, right, bottom)`, so for a person 100 px wide starting at
+   column 400 it asked whether anything sat between column 400 and column
+   100. Nothing ever does. Every camera label was thrown away, which is why
+   the probe showed `cam 1.00 [personx30] fused -`: the camera saw a person
+   in all thirty frames and the van still called it an obstacle.
+2. **The geometry was a guess.** A blob's column came from
+   `width/2 + (width/2) * y / x`, which assumes the camera sits exactly
+   where the LiDAR sits and looks dead level. It sits 2 m further forward,
+   0.7 m lower, and is tilted ten degrees down. The row was never worked out
+   at all, so a kerb and a lamp post at the same bearing were the same thing.
+3. **The nearest blob inside a box took the name.** A cone standing in front
+   of a car falls inside the car's box, so the cone became a "vehicle" and
+   the car behind it became an "obstacle". The scorecard found this one
+   after the first two were fixed.
+
+## What replaced them
+
+`src/warp_av/perception/camera_model.py` does the real chain: LiDAR frame ->
+vehicle frame -> camera frame -> pixels, using the mounts and the tilt from
+the sensor adapter. A blob is aimed at the middle of its own body, and its
+ground point (the road directly beneath it) is projected too.
+
+A box then claims a blob when three things hold: the blob's middle lands
+inside the box, the box's height suits the blob's size and range (within a
+factor of 2.5), and among the candidates the blob whose ground point sits
+nearest the box's bottom edge wins. The bottom edge is where a thing touches
+the road, which is what separates a cone at 14 m from a car at 20 m.
+
+The old "any car-sized blob is a car" rule stays where the front camera
+cannot look (the sides, the back) and whenever the picture is stale. Inside
+the camera's view a blob must be plainly car-sized (extent 1.6 m, 25 points,
+0.7 m tall) before shape alone may overrule a camera that looked straight at
+it and saw no car. That is what stops a bin from being called a vehicle.
+
+## Measured offline: does the name reach the right thing?
+
+The replay harness gained a scripted perfect camera: it boxes every person
+and car exactly where the geometry says they must appear, and ignores props,
+which is what the real model does since COCO has no barrel or cone class.
+This tests the joining step, not the detector.
+
+```
+python3 tools/replay_score.py --camera perfect
+```
+
+| | before day 5 | after |
+|---|---|---|
+| person called a pedestrian | 0.00 | **1.00** |
+| car called a vehicle | 0.00 | **1.00** |
+| prop called an obstacle | 1.00 | **1.00** |
+
+With the camera missing every second frame the numbers do not move. With no
+camera at all a person is only an obstacle, which is honest: nothing else can
+tell a person from a post.
+
+## Measured live on CARLA
+
+Probe, one object at a time in front of the parked van
+(`logs/perception_probe_20260908_131205.csv`):
+
+| object | 22 m | 16 m | 12 m | 8 m |
+|---|---|---|---|---|
+| person | pedestrian | pedestrian | pedestrian | pedestrian |
+| car | vehicle | vehicle | vehicle | vehicle |
+| barrel | obstacle | obstacle | obstacle | obstacle |
+| cone | obstacle | obstacle | obstacle | obstacle |
+
+Straight through the stack's own API, with the van parked on a clear road:
+
+| placed | reported as | measured size |
+|---|---|---|
+| person 8 m | pedestrian | 0.54 x 0.23 x 1.72 m |
+| barrel 12 m | obstacle | 0.35 x 0.08 x 0.80 m |
+| car 20 m | vehicle | 1.79 x 1.04 x 1.18 m |
+
+Driving, with each thing dropped 24 m ahead of the moving van
+(`tools/live_obstacle_demo.py --sequence person,car,barrel`):
+
+| dropped | first seen | stopped short by |
+|---|---|---|
+| person | 24.6 m | 12.2 m |
+| car | 20.7 m, named a vehicle | 9.6 m |
+| barrel | 20.3 m | 8.0 m |
+
+## Proof the geometry itself is right
+
+A separate check placed a person, a car and a barrel at 8, 12, 16 and 22 m
+and three lateral offsets, ran the real detector on the real camera picture,
+and compared the projection with the box the detector drew. In all fifteen
+placements where the detector found anything, the projected point landed
+inside its box, usually within one pixel of the centre; the widest miss was
+13 px on a car at 8 m, where the box centre is the car's body and the
+projection aims at the middle of the visible face. The thirteen placements
+with no box are all barrels, which the model has no class for.
+
+## Also today
+
+`tools/clear_leftover_vans.py` removes Sprinters the stack is not driving.
+Each stack restart spawns a fresh van, and an old process's van stays parked
+on the road, where the new van correctly reports it as a vehicle blocking the
+path. That cost two live runs today before I noticed.
+
+423 tests pass, 21 of them new for the camera model and the fusion.
+
+## Still open
+
+* The planter beyond 20 m stays invisible, and junctions still produce about
+  eleven phantom reports per update, none in the lane (day 4's list).
+* Nothing the camera sees but the LiDAR misses is reported yet: a
+  camera-only candidate has no distance. That needs the ground plane, and it
+  belongs with the occupancy grid.
+* The barrel is called a fire hydrant by the detector at some ranges. It is
+  ignored, since neither is a class the van acts on, but a cone in a
+  construction zone deserves better than "obstacle" one day.
