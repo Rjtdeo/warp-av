@@ -209,3 +209,98 @@ moves that number.
   reviewer's unverified finding). Check the object list while driving; a
   "structure" label for very long clusters is the likely answer.
 * The control loop still runs at about 3.5 Hz (YOLOX inline, finding 6).
+
+
+---
+
+# Fix 2 result: road removal by local patches (2026-09-07 night, commits 6426a3c + 0dd6aa2)
+
+What changed: `src/warp_av/perception/ground_filter.py` replaces the flat
+35 cm line with local patches: 1.5 m tiles, the lowest believable point of a
+tile is the road there, car-covered tiles borrow their neighbours' typical
+(median) height, empty tiles take the corrected neighbours and then a road
+plane fitted through all believable tiles, never more than 3 m down; every
+point is measured against the highest ground of its four nearest tiles;
+keep above 12 cm, below 4 m. Far out (sparse rings) a tile with same-height
+mates across the road is a road ring, otherwise its lowest ring is a car
+bottom and the plane is borrowed.
+
+Kerbs became visible, so a road-edge pass runs BEFORE the main clustering:
+long, low blobs beside the lane lose their off-lane points (a kerb strip can
+no longer glue itself to a lamp post and drag its centroid into the lane's
+wide-body band, a reviewer's finding); a long, low thing in the lane stays
+an obstacle. Clusters now carry `height` and `length`; the parker's feelers
+ignore blobs under 0.30 m (the brain never saw kerbs). Switch:
+`WARP_GROUND_FILTER=flat` restores the old line.
+
+Checks before deployment: 19 unit tests (hills to 12 %, dips, embankment,
+bridge deck, car-covered tiles, ditch inside a tile, far rings, blind circle,
+kerb strip + lamp post, NaN input); two independent reviews (maths/geometry
+and downstream behaviour); their findings fixed and turned into tests.
+
+## Scored against CARLA's labelled LiDAR (whole sweeps, 90 of them)
+
+`tools/ground_filter_score.py`, van parked in Town03, five objects placed
+6-22 m ahead; raw output in `docs/perception_baseline/ground_filter_score_2026-09-07.txt`.
+
+| | old flat line | patches |
+|---|---|---|
+| road points deleted (want > 99 %) | 99.9 % | 99.9 % |
+| object points kept, all (want > 95 %) | 73.6 % | 84.6 % |
+| object points kept, 0-10 m | 80.2 % | 92.7 % |
+| object points kept, 10-20 m | 60.5 % | 77.1 % |
+| object points kept, 20-35 m | 94.4 % | 94.4 % |
+| pedestrian points kept | 89.2 % | 94.8 % |
+| props (static) kept | 51.0 % | 65.2 % |
+| cost per sweep on the CARLA machine | 0.02 ms | 20-25 ms |
+
+Beyond 35 m the two rules differ by about two points per sweep (a whole
+scan holds only ~8 object points that far out): noise, not a regression.
+Sidewalk surfaces: 0 % kept by both, as wanted.
+
+## Probe A/B, sweeps on, flat vs patches
+
+Fraction of frames the LiDAR stage found the object (cluster), then the
+tracked object; `docs/perception_baseline/probe_2026-09-07_fix2_{flat,patches}.csv`.
+
+| Object | 15 m | 12 m | 10 m | 8 m | 6 m | 4 m |
+|---|---|---|---|---|---|---|
+| barrel, flat | 0 | 0 | 0.10 | 0.35 | 1.00 | 1.00 |
+| barrel, patches | 0 | 0 | 0.40 | 0.60 | 1.00 | 1.00 |
+| cone, flat | 0.20 | 0.20 | 0.65 | 1.00 | 1.00 | 1.00 |
+| cone, patches | 0 | 0.30 | 0.90 | 1.00 | 1.00 | 1.00 |
+| planter, flat | - | - | - | - | - | - |
+| planter, patches | - | - | 0.45 | 1.00 | 0.95 | 0.90 |
+| person, flat | 0.35 | 0.20 | 0.80 | 1.00 | 1.00 | 1.00 |
+| person, patches | 0.20 | 0.40 | 0.75 | 1.00 | 1.00 | 1.00 |
+| car, either | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | n/a |
+
+Tracked (with the tracker's memory): barrel at 10 m 0.45 -> 0.80; cone at
+12 m 0.70 -> 0.90; planter never -> 0.70 at 10 m, 0.95 at 8 m. The live
+stack, running patches, reported the planter in every frame from 10 m in.
+
+Points that survive the road cut, barrel: 15 m 2.1 -> 2.5, 12 m 2.6 -> 4.8,
+10 m 5.2 -> 7.5, 8 m 6.7 -> 9.6. After the 3x downsample a barrel at 12-15 m
+still has under 3 points: that is fix 3.
+
+## Drive test: WAV-0294, barrel in the lane, camera + LiDAR
+
+| | before | fix 1 | fix 1 + 2 |
+|---|---|---|---|
+| contacts | 892 | 0 | 0 |
+| closest approach (centre to centre) | 3.13 m | 5.39 m | 6.02 m |
+| first report of the barrel | 3.3 m | 5.3 m | 5.9 m |
+| runner verdict | FAIL (collision) | FAIL (stop 6.4 s after trigger, limit 6.0) | FAIL (6.5 s) |
+
+No contact, a longer margin, and the runner's stop-timing rule still 0.5 s
+over: the van meets the barrel 2 s after it appears and detects it at 6-8 m
+while moving (10 m parked). Earlier detection is fix 3.
+
+## Things learned, carried forward
+
+* The planter is reported as `vehicle`: the shape rule (blob wider than
+  0.9 m with 6+ points) knows no height. Fix 4 should add height to it.
+* The filter costs 20-25 ms per sweep on the CARLA machine (2-5 ms on the
+  Mac). Fine at today's 3.7 Hz; worth a look when the loop reaches 10 Hz.
+* Far field (> 35 m): a lone far object's lowest ring can still pass for
+  ground when nothing road-like is near; ~2 points per sweep.
