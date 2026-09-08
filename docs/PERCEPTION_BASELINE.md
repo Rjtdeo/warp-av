@@ -1191,3 +1191,41 @@ On the four recordings the flag now agrees with the measured swing on **22 of
 22** objects: the walker, the barrel, the bin and the car on the straight road
 read steady, while the cone, the planter and the objects that merge inside
 junctions are flagged. 463 tests pass.
+
+### Someone on a bicycle (2026-09-08)
+
+A live run called a cyclist a pedestrian, 0.65 m long against a real 1.66 m
+body. The camera model has no cyclist class: it reports a person and a bicycle
+in the same place. So the van now looks for that pair. When a person's box sits
+at least 35 % over a bicycle's or a motorbike's, that person is riding.
+
+`ObjectType.CYCLIST` joins pedestrian in `VULNERABLE_TYPES`, which means the van
+always stops for one and never starts the blocked-road clock. Without that, a
+cyclist waiting three seconds in front of the van would be written off as a
+blocked road and the van would try to drive around them. A cyclist may be up to
+2.8 m long, and is given 0.8 m of room even when badly measured, between a
+pedestrian's 0.6 and a car's 1.2.
+
+Riders are matched before bystanders. Around the motorbike the camera reported
+two people and one bicycle: one person barely overlapping it and one sitting
+squarely on it. Whichever is handled first takes the blob, so the rider has to
+go first or the cyclist ends up named a pedestrian again.
+
+Live, each thing placed 10 m ahead:
+
+| what | the van calls it | room to leave |
+|---|---|---|
+| a person on foot | pedestrian | 0.60 m |
+| a bicycle with a rider | **cyclist** | 0.80 m |
+| a motorbike with a rider | **cyclist** | 0.80 m |
+| a bicycle with nobody on it | pedestrian, then cyclist | 0.60-0.80 m |
+
+**Two limits worth knowing.** The camera model detects a bicycle only some of
+the time in this simulator: asked directly, it reported a person and no bicycle
+for a ridden bike, and read an empty bicycle as a person. And the LiDAR sees
+only the rider, not the frame, so a cyclist's measured length is about 0.66 m,
+the same as a person's. Naming therefore rests on the camera alone. An
+unattended bicycle called a cyclist is wrong but safe: it earns more room and
+right of way, not less.
+
+471 tests pass.
