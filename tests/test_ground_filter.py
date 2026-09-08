@@ -131,9 +131,27 @@ def test_far_object_on_a_sparse_ring_is_not_its_own_ground():
     car = np.array([[40.0, 0.0, -LIDAR + 0.5, 0.3], [40.2, 0.4, -LIDAR + 0.75, 0.3], [40.1, -0.3, -LIDAR + 1.2, 0.3],
                     [41.0, 0.0, -LIDAR + 1.4, 0.3]], dtype=np.float32)
     res, gf = run(np.vstack([rings, car]))
-    assert res.keep[-4:].all()
     assert gf.last_plane is not None
+    assert res.keep[-4:].all()
     assert np.allclose(res.above[-4:], [0.5, 0.75, 1.2, 1.4], atol=0.1)
+    # and a far road ring on a hill (mates of one height across the road) is still road
+    hill_ring = road_points(x0=42.0, x1=42.1, step=1.0, width=8.0)
+    hill_ring[:, 2] += 1.2                                       # 1.2 m up: a hill, not a wall
+    res, _ = run(np.vstack([rings, hill_ring]))
+    assert not res.keep[-len(hill_ring):].any()
+
+
+def test_far_wall_face_does_not_eat_a_far_car():
+    """At 40 m a building face next to a parked car has its lowest return
+    1.8 m up (no road ring in its tile). That tile must not become a 1.8 m
+    'road' that the car's points are measured against."""
+    rings = np.vstack([road_points(x0=r, x1=r + 0.1, step=1.0, width=8.0) for r in (4, 5, 6.5, 8, 10, 13, 17, 21, 26, 34, 49)])
+    wall = np.array([[40.0, 4.0 + 0.1 * k, -LIDAR + 1.8 + 0.3 * k, 0.2] for k in range(6)], dtype=np.float32)
+    car = np.array([[40.0, 2.4, -LIDAR + 0.5, 0.3], [40.3, 2.6, -LIDAR + 0.8, 0.3], [40.6, 2.5, -LIDAR + 1.3, 0.3],
+                    [41.0, 2.5, -LIDAR + 1.4, 0.3]], dtype=np.float32)
+    res, _ = run(np.vstack([rings, wall, car]))
+    assert res.keep[-4:].all()                                  # the wall's height never became the car's road
+    assert np.allclose(res.above[-4:], [0.5, 0.8, 1.3, 1.4], atol=0.15)
 
 
 def test_blind_circle_near_the_van():

@@ -52,7 +52,14 @@ DEFAULT_RANGE_M = 50.0
 ROAD_BAND_BASE_M = 0.5              # a tile's lowest point can be this far above/below the road under the van ...
 ROAD_BAND_PER_M = 0.12              # ... plus 12 % of the tile's distance (a 12 % grade), and still be road
 PLANE_MIN_TILES = 24                # fewer believable tiles than this: no plane, assume flat
-PLANE_ENVELOPE_M = 0.30             # refit the plane on tiles within this of the first fit (its lower side)
+PLANE_ENVELOPE_M = 0.50             # refit the plane on tiles within this of the first fit (either side)
+MIN_NEIGHBOURS_FOR_REF = 3          # fewer road-like neighbours than this: the plane is the reference
+RING_MIN_MATES = 2                  # a sparse far tile with this many same-height mates in a row is a road ring
+RING_MATE_TOL_M = 0.30
+RING_MATE_REACH = 3                 # tiles (4.5 m) along the row / column
+REF_SLACK_BASE_M = 0.5              # a reference road height may sit this far above the fitted plane ...
+REF_SLACK_PER_M = 0.04              # ... plus 4 % of the distance (hills bend away from a plane); higher = not road
+NEIGHBOUR_STEP_M = 0.5              # a nearest tile more than this above a point's own tile is another level, ignored
 
 ROAD_EDGE_MAX_HEIGHT_M = 0.30       # a blob lower than this ...
 ROAD_EDGE_MIN_EXTENT_M = 1.5        # ... and longer than 2 x this ...
@@ -99,6 +106,7 @@ class GroundFilter:
         self._tile_cy = cy.reshape(-1)
         self._tile_range = np.hypot(self._tile_cx, self._tile_cy)
         self._band = ROAD_BAND_BASE_M + ROAD_BAND_PER_M * self._tile_range
+        self._slack = (REF_SLACK_BASE_M + REF_SLACK_PER_M * self._tile_range).reshape(self.n, self.n)
         self._plane_A = np.c_[self._tile_cx, self._tile_cy, np.ones(self.n * self.n)]
         self.last: Optional[GroundResult] = None
         self.last_plane = None
@@ -108,7 +116,7 @@ class GroundFilter:
     # A median, not a minimum: a road on an embankment has a field 2 m
     # lower on ONE side, and must not borrow the field as its road.
     @staticmethod
-    def _neighbour_median(grid: np.ndarray, radius: int) -> np.ndarray:
+    def _neighbour_median(grid: np.ndarray, radius: int, with_count: bool = False):
         n = grid.shape[0]
         layers = []
         for di in range(-radius, radius + 1):
@@ -122,7 +130,34 @@ class GroundFilter:
         stack = np.stack(layers, axis=0)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)   # all-NaN slices -> NaN, wanted
-            return np.nanmedian(stack, axis=0)
+            med = np.nanmedian(stack, axis=0)
+        if with_count:
+            return med, np.isfinite(stack).sum(axis=0)
+        return med
+
+    @staticmethod
+    def _same_height_mates(own: np.ndarray) -> np.ndarray:
+        """For every tile: how many tiles within 3 along the same row (x) or
+        the same column (y) have a lowest point within RING_MATE_TOL_M of
+        its own. The larger of the two directions."""
+        n = own.shape[0]
+        along_x = np.zeros_like(own, dtype=np.int64)
+        along_y = np.zeros_like(own, dtype=np.int64)
+        for d in range(1, RING_MATE_REACH + 1):
+            for sign in (-1, 1):
+                sh = np.full_like(own, np.nan)
+                if sign > 0:
+                    sh[:, d:] = own[:, :n - d]
+                else:
+                    sh[:, :n - d] = own[:, d:]
+                along_y += (np.abs(sh - own) <= RING_MATE_TOL_M).astype(np.int64)
+                sh = np.full_like(own, np.nan)
+                if sign > 0:
+                    sh[d:, :] = own[:n - d, :]
+                else:
+                    sh[:n - d, :] = own[d:, :]
+                along_x += (np.abs(sh - own) <= RING_MATE_TOL_M).astype(np.int64)
+        return np.maximum(along_x, along_y)
 
     def _road_plane(self, own_flat: np.ndarray, road_under_van: float) -> np.ndarray:
         """A plane through the believable tiles: the fallback where a tile
@@ -136,9 +171,9 @@ class GroundFilter:
         A = self._plane_A[idx]
         zt = own_flat[idx]
         coef, *_ = np.linalg.lstsq(A, zt, rcond=None)
-        low = (zt - A @ coef) < PLANE_ENVELOPE_M
-        if low.sum() >= PLANE_MIN_TILES:
-            coef, *_ = np.linalg.lstsq(A[low], zt[low], rcond=None)
+        near = np.abs(zt - A @ coef) < PLANE_ENVELOPE_M      # drop cars/walls above AND lower levels below
+        if near.sum() >= PLANE_MIN_TILES:
+            coef, *_ = np.linalg.lstsq(A[near], zt[near], rcond=None)
         plane = self._plane_A @ coef
         self.last_plane = coef
         # the plane may not leave the plausible band either
@@ -173,10 +208,24 @@ class GroundFilter:
 
         # 2. the reference road height next door, and the plane behind it all
         fallback = self._road_plane(own_flat, road_under_van).reshape(self.n, self.n)
-        nb1 = self._neighbour_median(own, 1)
-        ref = np.where(np.isfinite(nb1), nb1, fallback)
+        nb1, n_nb = self._neighbour_median(own, 1, with_count=True)
+        # the reference road height: the neighbours' typical height when
+        # there are enough road-like neighbours, else the fitted plane.
+        # Neighbours far above the plane are wall faces or car roofs seen
+        # without their road (sparse far rings): capped to the plane + slack.
+        from_nb = np.isfinite(nb1) & (n_nb >= MIN_NEIGHBOURS_FOR_REF)
+        ref = np.where(from_nb, np.minimum(nb1, fallback + self._slack), fallback)
+        # Far out the road returns are sparse rings 8-15 m apart, so a tile
+        # often has no road-like neighbour at all and the plane is the only
+        # reference. A road ring on a hill sits well above the plane too, so
+        # height alone cannot tell it from a car's lowest ring. Shape can: a
+        # ring runs across the road, so its tile has mates of the same height
+        # along a row; a car does not. Tiles with such mates are never
+        # borrowed against the plane.
+        mates = self._same_height_mates(own)
+        ring_like = ~from_nb & (mates >= RING_MIN_MATES)
         step = own - ref                                   # NaN only where own is missing
-        borrow = np.isfinite(step) & (step > self.borrow_step_m) & (step <= self.max_borrow_m)
+        borrow = np.isfinite(step) & (step > self.borrow_step_m) & (step <= self.max_borrow_m) & ~ring_like
         ground = np.where(borrow, ref, own)
         # tiles with no road of their own take their neighbours' typical
         # CORRECTED ground (car tiles already replaced), so an empty tile next
@@ -192,15 +241,20 @@ class GroundFilter:
             ground = np.where(np.isnan(ground), fallback, ground)
 
         # 3. every point against the HIGHEST ground of its four nearest tile
-        #    centres: strips, ditches and hill slivers inside a tile are ground
+        #    centres: strips, ditches and hill slivers inside a tile are ground.
+        #    A nearest tile a whole step above the point's own tile is another
+        #    level (a wall base, a car roof far away) and does not count.
         fx = (xs + self.range_m) / self.tile_m - 0.5
         fy = (ys + self.range_m) / self.tile_m - 0.5
         i0 = np.clip(np.floor(fx).astype(np.int64), 0, self.n - 1)
         j0 = np.clip(np.floor(fy).astype(np.int64), 0, self.n - 1)
         i1 = np.minimum(i0 + 1, self.n - 1)
         j1 = np.minimum(j0 + 1, self.n - 1)
-        g = np.maximum(np.maximum(ground[i0, j0], ground[i0, j1]),
-                       np.maximum(ground[i1, j0], ground[i1, j1]))
+        g_own = ground[np.clip(ix, 0, self.n - 1), np.clip(iy, 0, self.n - 1)]
+        g = g_own.copy()
+        for gi, gj in ((i0, j0), (i0, j1), (i1, j0), (i1, j1)):
+            gk = ground[gi, gj]
+            g = np.maximum(g, np.where(gk - g_own <= NEIGHBOUR_STEP_M, gk, g_own))
         h = (zs - g).astype(np.float32)
         above[inr] = h[inr]
         keep = inr & (h > self.keep_above_m) & (h < self.ceiling_above_road_m)
