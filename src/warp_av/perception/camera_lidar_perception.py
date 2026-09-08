@@ -39,6 +39,7 @@ import cv2
 import numpy as np
 
 from . import tracking as _tracking
+from .camera_model import CameraModel, box_contains, cluster_point
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import cluster_points, ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped
 from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
@@ -663,6 +664,15 @@ class CameraLidarPerception:
         # beyond this range a two-point blob is allowed to be an object: nearer than it,
         # three points are required
         self.far_range_m = FAR_RANGE_M
+        # where the camera sits and how it looks, for putting a LiDAR blob in the picture
+        self.camera_model = CameraModel()
+        self.last_camera_model = self.camera_model
+        self.fusion_margin_px = 12.0
+        # inside the camera's view the camera names things; the boxy-means-vehicle rule
+        # is for the sides and the back, where the front camera cannot see
+        self.shape_naming_outside_camera_only = True
+        self.last_camera_labels = 0
+        self.last_camera_detections = 0
         self._last_tracked_sim_time = None
         self._last_output = None
 
@@ -761,6 +771,9 @@ class CameraLidarPerception:
                         and time.monotonic() - self._worker.started_at > self.detector_stall_s):
                     return PerceptionOutput(healthy=False, reason="CAMERA_LIDAR_ERROR: detector stalled")
             detections = self._cached_camera_detections
+            # only a recent picture may overrule the shape rule: with a stale or missing
+            # camera the van falls back to naming a car-sized blob a car
+            camera_fresh = self.last_detection_age_s <= self.detection_max_age_s
 
             # ---- same LiDAR rotation as last tick? reuse the last output ----
             sim_time = getattr(lidar, "sim_time", None)
@@ -803,43 +816,51 @@ class CameraLidarPerception:
             self.last_road_edges_dropped = edges_dropped
             self.last_clusters = clusters     # sensor frame (x fwd, y right): the learned parker's feelers read these
 
-            # ---- classify clusters by projecting into the image ----
-            # fov 90 deg -> fx = width/2. u grows to the RIGHT (y right in
-            # sensor frame), matching the image axis directly.
-            fx = camera.width / 2.0
+            # ---- classify clusters by projecting them into the image ----
+            # The two sensors sit in different places and the camera is tilted down,
+            # so this is real geometry, not an angle-to-column guess (day 5).
+            cam = self.camera_model.with_frame(camera.width, camera.height, camera.fov)
+            self.last_camera_model = cam
             for c in clusters:
                 c["cls"] = None
                 c["conf"] = 0.0
-                if c["x"] > 1.0:
-                    c["u"] = camera.width / 2.0 + fx * (c["y"] / c["x"])
-                else:
-                    c["u"] = None
+                c["uv"] = cam.project(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M))
+            matched_boxes = 0
             for det in detections:
                 cls = ("pedestrian" if det.class_id == PERSON_CLASS
                        else "vehicle" if det.class_id in VEHICLE_CLASSES
                        else None)
                 if cls is None:
                     continue
-                bx1, bx2 = det.box[0], det.box[2]
                 best = None
                 for c in clusters:
-                    if c["u"] is None or c["cls"] is not None:
+                    if c["uv"] is None or c["cls"] is not None:
                         continue
-                    if bx1 - 12 <= c["u"] <= bx2 + 12:
+                    if box_contains(det.box, c["uv"][0], c["uv"][1], self.fusion_margin_px):
                         if best is None or c["distance"] < best["distance"]:
                             best = c
                 if best is not None:
                     best["cls"] = cls
                     best["conf"] = float(det.confidence)
+                    matched_boxes += 1
+            self.last_camera_labels = matched_boxes
+            self.last_camera_detections = len(detections)
 
-            # Shape naming: a car-sized solid blob on the road is a car,
-            # camera confirmation or not (side/rear objects never enter the
-            # front camera's view and were all labelled OBSTACLE).
+            # Shape naming, for the sides and the back where the front camera cannot look:
+            # a car-sized solid blob out there is a car. Inside the camera's view the
+            # camera decides, so a bin is no longer called a vehicle for being boxy (day 5).
             for c in clusters:
+                if c["cls"] is not None:
+                    continue
                 # 12 raw points with every point kept (fix 3); 6 under the old 3x thinning
-                if c["cls"] is None and vehicle_shaped(c, min_points=12 if self.thin_step <= 1 else 6):
-                    c["cls"] = "vehicle"
-                    c["conf"] = 0.45
+                if not vehicle_shaped(c, min_points=12 if self.thin_step <= 1 else 6):
+                    continue
+                if self.shape_naming_outside_camera_only and c.get("uv") is not None \
+                        and cam.in_view(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M), margin_px=0.0) \
+                        and camera_fresh:
+                    continue
+                c["cls"] = "vehicle"
+                c["conf"] = 0.45
 
             # ---- ego -> world, then track ----
             tf = self.sensor_adapter.vehicle.get_transform()
