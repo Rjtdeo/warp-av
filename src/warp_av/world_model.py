@@ -152,6 +152,8 @@ class WorldModel:
     traffic_light: str = "none"
     traffic_light_distance_m: Optional[float] = None
     source: str = "camera_lidar"       # which perception produced this
+    # free space around the van (day 9): how far it can go before the map stops being free
+    free_space: Optional[dict] = None
 
     # ---- reading it -----------------------------------------------------------------
     def age_s(self, now: Optional[float] = None) -> float:
@@ -216,6 +218,7 @@ class WorldModel:
                 "traffic_light": self.traffic_light,
                 "traffic_light_distance_m": self.traffic_light_distance_m,
                 "path": self.path.as_dict(),
+                "free_space": self.free_space,
                 "counts": {"total": len(self.objects),
                            "moving": len(self.moving_objects()),
                            "vehicles": len(self.of_kind(ObjectType.VEHICLE)),
@@ -225,7 +228,7 @@ class WorldModel:
 
 
 def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_lidar",
-                      now: Optional[float] = None) -> WorldModel:
+                      now: Optional[float] = None, free_space: Optional[dict] = None) -> WorldModel:
     """Turn one tick of perception, plus where the van is, into the sheet.
 
     `pose` is anything with x, y, yaw (radians) and optionally speed and healthy.
@@ -288,4 +291,5 @@ def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_
         traffic_light=str(perception.traffic_light),
         traffic_light_distance_m=perception.traffic_light_distance_m,
         source=source,
+        free_space=free_space,
     )

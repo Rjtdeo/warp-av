@@ -41,6 +41,7 @@ import numpy as np
 from . import tracking as _tracking
 from .camera_model import (CameraModel, box_contains, box_edges, box_foot, box_overlap,
                            cluster_point, ground_point)
+from .occupancy import OccupancyGrid
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import (cluster_points, clearance_radius_m, ObjectTracker, MIN_POINTS_FAR,
                        FAR_RANGE_M, vehicle_shaped)
@@ -689,6 +690,10 @@ class CameraLidarPerception:
         self.strict_vehicle_height_m = 0.7
         self.last_camera_labels = 0
         self.last_camera_detections = 0
+        # the free-space map (day 9), rebuilt from every sweep
+        self.grid = OccupancyGrid()
+        self.last_grid_ms = 0.0
+        self.last_grid_error = None
         self._last_tracked_sim_time = None
         self._last_output = None
 
@@ -839,6 +844,15 @@ class CameraLidarPerception:
                         if not (c.get("weak") and (c.get("height") is not None and c["height"] < 0.30)
                                 and abs(c["y"]) > 1.2)]
             self.last_road_edges_dropped = edges_dropped
+            # Free space, not just a list of things (Perception V2 day 9). Built from the
+            # same sweep and the same road decision, so it can never disagree with them.
+            try:
+                t_grid = time.perf_counter()
+                self.grid.update(pts[:, :2], mask)
+                self.last_grid_ms = (time.perf_counter() - t_grid) * 1000.0
+            except Exception as grid_error:
+                self.last_grid_ms = 0.0
+                self.last_grid_error = repr(grid_error)
             self.last_clusters = clusters     # sensor frame (x fwd, y right): the learned parker's feelers read these
 
             # ---- classify clusters by projecting them into the image ----

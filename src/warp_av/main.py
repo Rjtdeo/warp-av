@@ -407,7 +407,10 @@ class WarpAV:
         # One sheet saying what the van knows, built once and read by everyone else
         # (Perception V2 day 7). It is a view of the numbers above, never a second opinion.
         try:
-            self._world = build_world_model(perception, pose, source=self.perception_mode)
+            grid = getattr(self.perception, "grid", None)
+            free_space = grid.summary().as_dict() if (grid is not None and grid.updated) else None
+            self._world = build_world_model(perception, pose, source=self.perception_mode,
+                                            free_space=free_space)
         except Exception as e:
             self._world = None
             self._world_error = repr(e)

@@ -713,6 +713,54 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
     return result
 
 
+def score_grid(fx: Fixture, grid_kwargs: Optional[dict] = None) -> Dict[str, float]:
+    """Mark the free-space map against the dense labelled scan (day 9).
+
+    Three questions. Does it call the road free, so the van has somewhere to go? Does it
+    call the solid things blocked? And the one that matters for safety: how much of what
+    is really there does it call free?
+    """
+    from .occupancy import FREE, OCCUPIED, UNKNOWN, OccupancyGrid
+    from .ground_filter import GroundFilter
+
+    lab = lab_sweep(fx)
+    if lab is None:
+        return {}
+    acc = LidarSweepAccumulator()
+    sweep = None
+    for i in range(len(fx.times)):
+        sweep = acc.add(fx.points[fx.index == i], fx.matrices[i], float(fx.times[i]))
+        if acc.span_s >= 0.09:
+            break
+    if sweep is None or not len(sweep):
+        return {}
+    keep = GroundFilter().apply(sweep[:, :4]).keep
+    grid = OccupancyGrid(**(grid_kwargs or {}))
+    t0 = time.perf_counter()
+    grid.update(sweep[:, :2], keep)
+    ms = (time.perf_counter() - t0) * 1000.0
+
+    tags = lab[:, 5].astype(np.int64)
+    within = np.hypot(lab[:, 0], lab[:, 1]) <= grid.range_m - 1.0
+    road = within & np.isin(tags, [1, 24, 25])
+    solid = within & np.isin(tags, list(OBJECT_TAGS) + [3, 4, 5, 6, 9])   # things, walls, poles
+    look = lambda m: np.array([grid.at(float(x), float(y)) for x, y in lab[m][:, :2]])
+    out = {"ms": ms}
+    if road.any():
+        v = look(road)
+        out["road_called_free"] = float((v == FREE).mean())
+        out["road_called_blocked"] = float((v == OCCUPIED).mean())
+    if solid.any():
+        v = look(solid)
+        out["solid_called_blocked"] = float((v == OCCUPIED).mean())
+        out["solid_called_free"] = float((v == FREE).mean())     # the dangerous one
+        out["solid_called_unseen"] = float((v == UNKNOWN).mean())
+    s = grid.summary()
+    out["free_ahead_m"] = s.free_ahead_m
+    out["seen_share"] = (s.free_cells + s.occupied_cells) / grid.cells.size
+    return out
+
+
 def format_report(results: List[ReplayResult]) -> str:
     lines = []
     for r in results:
