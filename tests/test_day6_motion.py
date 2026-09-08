@@ -148,3 +148,65 @@ def test_predict_moves_the_estimate_and_widens_it():
     tr.predict(0.5)
     assert tr.wx == pytest.approx(12.0)
     assert tr.P[0][0] > before, "waiting makes the van less sure where the thing is"
+
+
+# ---------------------------------------------------------------------------
+# Found on day 7, when the world model started publishing "moving" for every
+# object in the scene rather than only the six placed ones: the far background
+# was full of walls and hedges the van believed were driving about.
+# ---------------------------------------------------------------------------
+
+def test_an_impossible_jump_is_not_a_speed():
+    """Two different things confused for one another is not a 250 m/s car."""
+    tr = ObjectTracker()
+    tr.update([{"wx": 10.0, "wy": 0.0, "distance": 40.0}], 0.1)
+    got = tr.update([{"wx": 35.0, "wy": 0.0, "distance": 40.0}], 0.2)
+    for track in tr._tracks:
+        assert track.speed <= 30.0, f"{track.speed:.0f} m/s is not something a road can hold"
+
+
+def test_a_wall_is_never_moving():
+    """A 20 m long blob is scenery. Scenery does not drive."""
+    tr = ObjectTracker()
+    t = 0.0
+    for k in range(30):
+        t += DT
+        tr.update([{"wx": 40.0 + 0.35 * k, "wy": 0.0, "distance": 40.0,
+                    "length_m": 20.0, "width_m": 3.0, "height_m": 4.0}], t)
+    assert all(track.stationary for track in tr._tracks), "a wall was called moving"
+
+
+def test_a_far_thing_must_travel_further_before_it_counts():
+    near, far = Track(1, 0.0, 0.0, 0.0), Track(2, 0.0, 0.0, 0.0)
+    near.range_m, far.range_m = 8.0, 40.0
+    # the rule is the travel a track must show; far asks for more, but never more than
+    # a walking person covers in the window
+    from warp_av.perception.tracking import STILL_TRAVEL_M, STILL_TRAVEL_MAX_M, STILL_TRAVEL_PER_M
+    need = lambda t: min(STILL_TRAVEL_MAX_M, max(STILL_TRAVEL_M, STILL_TRAVEL_PER_M * t.range_m))
+    assert need(near) < need(far) <= STILL_TRAVEL_MAX_M
+
+
+def test_a_person_walking_at_twenty_five_metres_is_still_caught():
+    tr = ObjectTracker()
+    t, first = 0.0, None
+    for k in range(90):
+        t += DT
+        d = 25.0 - 1.4 * t
+        got = tr.update([{"wx": d, "wy": 0.0, "distance": d}], t)
+        if got and not got[0].stationary and first is None:
+            first = t
+    assert first is not None and first <= 2.5, "a walking person must not be mistaken for scenery"
+
+
+def test_a_car_rounding_a_bend_is_moving():
+    """The straight-line test must not punish a car for turning."""
+    tr = ObjectTracker()
+    t, first = 0.0, None
+    for k in range(60):
+        t += DT
+        a = 0.06 * k
+        got = tr.update([{"wx": 25.0 - 20.0 * math.sin(a), "wy": 20.0 * (1 - math.cos(a)),
+                          "distance": 25.0}], t)
+        if got and not got[0].stationary and first is None:
+            first = t
+    assert first is not None and first <= 1.0

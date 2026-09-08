@@ -164,8 +164,19 @@ STILL_SPEED_MPS = 0.6               # under this, and going nowhere, it is stand
 MOVING_SPEED_MPS = 1.2              # over this it is moving again (a gap, so it cannot flicker)
 STILL_WINDOW_S = 1.5                # how far back to look when asking "has it gone anywhere?"
 STILL_TRAVEL_M = 0.7                # ... and how far it must have gone to count as moving
-STILL_STRAIGHTNESS = 0.5            # ... and that travel must be in one direction, not a shuffle
+STILL_STRAIGHTNESS = 0.92           # ... and that travel must be nearly a straight line. A car
+                                    #   rounding a bend still scores about 0.96; a blob whose
+                                    #   middle shuffles about scores far less.
 STILL_MIN_SIGHTINGS = 4             # ... over at least this many sightings
+STILL_TRAVEL_PER_M = 0.15           # far blobs wander more, so ask them to travel further
+STILL_WINDOW_PER_M = 0.0            # (a longer look at far things was measured and made near
+                                    #  ones worse, so the window stays fixed)
+STILL_WINDOW_MAX_S = 4.0
+STILL_TRAVEL_MAX_M = 2.0            # ... but never ask for more than a walking person covers in
+                                    #   the window, or a pedestrian at 25 m would never count
+MAX_ROAD_SPEED_MPS = 30.0           # nothing in a town does 108 km/h: above this it is a
+                                    #   mis-association, not a measurement
+MAX_ROAD_USER_LENGTH_M = 8.0        # longer than a bus: scenery, and scenery does not move
 
 
 class Track:
@@ -180,7 +191,7 @@ class Track:
     __slots__ = ("tid", "x", "P", "cls", "confidence",
                  "last_seen", "hits", "strong_hits",
                  "length_m", "width_m", "height_m", "yaw_deg",
-                 "_history", "_still")
+                 "_history", "_still", "range_m")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -203,6 +214,7 @@ class Track:
         self.yaw_deg = 0.0         # heading of the long side, degrees, van frame at the sighting
         self._history = [(t, float(wx), float(wy))]        # where it has been lately
         self._still = True         # a thing is taken to be parked until it shows otherwise
+        self.range_m = 0.0         # how far away it was last seen, for judging its wobble
 
     # ---- what the rest of the stack reads -------------------------------------------
     @property
@@ -233,6 +245,11 @@ class Track:
     def stationary(self) -> bool:
         """True while the thing is parked: slow, and it has not gone anywhere."""
         return self._still
+
+    @property
+    def window_s(self) -> float:
+        """How far back to look. Further away means a longer look."""
+        return min(STILL_WINDOW_MAX_S, STILL_WINDOW_S + STILL_WINDOW_PER_M * self.range_m)
 
     @property
     def travelled_m(self) -> float:
@@ -284,10 +301,13 @@ class Track:
             # then breaks and starts again every frame (day 6).
             dt = t - self._history[0][0]
             if dt > 1e-3:
-                self.x[2] = (zx - self._history[0][1]) / dt
-                self.x[3] = (zy - self._history[0][2]) / dt
-                spread = 2.0 * r / (dt * dt)
-                self.P[2][2] = self.P[3][3] = spread
+                vx = (zx - self._history[0][1]) / dt
+                vy = (zy - self._history[0][2]) / dt
+                if math.hypot(vx, vy) <= MAX_ROAD_SPEED_MPS:
+                    self.x[2], self.x[3] = vx, vy
+                    self.P[2][2] = self.P[3][3] = 2.0 * r / (dt * dt)
+                # a jump faster than any road user is two different things being confused,
+                # not a measurement: start from standing still instead
         for axis, (i, j) in enumerate(((0, 2), (1, 3))):
             z = zx if axis == 0 else zy
             p = self.P
@@ -301,9 +321,14 @@ class Track:
             p[i][i] = pii - k_pos * pii
             p[i][j] = p[j][i] = pij - k_pos * pij
             p[j][j] = pjj - k_vel * pij
+        speed = math.hypot(self.x[2], self.x[3])
+        if speed > MAX_ROAD_SPEED_MPS:            # keep the estimate inside the possible
+            scale = MAX_ROAD_SPEED_MPS / speed
+            self.x[2] *= scale
+            self.x[3] *= scale
         self.last_seen = t
         self._history.append((t, self.x[0], self.x[1]))
-        while len(self._history) > 2 and t - self._history[0][0] > STILL_WINDOW_S:
+        while len(self._history) > 2 and t - self._history[0][0] > self.window_s:
             self._history.pop(0)
         self._update_still()
 
@@ -312,12 +337,17 @@ class Track:
         if len(self._history) < STILL_MIN_SIGHTINGS:
             return          # too new to accuse of moving: two jittery sightings prove nothing
         speed, travelled = self.speed, self.travelled_m
+        # how far this thing must travel before the van believes it: further away, and the
+        # middle of its blob wanders more, so ask for more
+        need = min(STILL_TRAVEL_MAX_M, max(STILL_TRAVEL_M, STILL_TRAVEL_PER_M * self.range_m))
         if self._still:
-            if (speed > MOVING_SPEED_MPS and travelled > STILL_TRAVEL_M
+            if self.length_m > MAX_ROAD_USER_LENGTH_M:
+                return                     # a 20 m blob is a wall or a hedge, not a road user
+            if (speed > MOVING_SPEED_MPS and travelled > need
                     and self.straightness > STILL_STRAIGHTNESS):
                 self._still = False
         else:
-            if speed < STILL_SPEED_MPS and travelled < STILL_TRAVEL_M:
+            if speed < STILL_SPEED_MPS and travelled < need:
                 self._still = True
 
 
@@ -395,6 +425,8 @@ class ObjectTracker:
             # carry the estimate forward, then let the sighting nudge it as much as its
             # own noise deserves: no more turning blob jitter into speed (day 6)
             tr.predict(dt)
+            if o.get("distance") is not None:
+                tr.range_m = float(o["distance"])
             tr.correct(o["wx"], o["wy"], measurement_noise_m(o), t)
             if o.get("weak"):
                 tr.hits += self.WEAK_HIT
@@ -409,6 +441,8 @@ class ObjectTracker:
         for j in unmatched:
             o = observations[j]
             tr = Track(self._next_id, o["wx"], o["wy"], t)
+            if o.get("distance") is not None:
+                tr.range_m = float(o["distance"])
             if o.get("weak"):
                 tr.hits = self.WEAK_HIT
                 tr.strong_hits = 0
