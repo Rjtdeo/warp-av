@@ -1,0 +1,45 @@
+{
+ "note": "thresholds = the numbers measured when this file was written, minus a margin; a change that drops below them fails tests/test_replay_harness.py",
+ "objects": {
+  "barrel": {
+   "min_recall": 0.9,
+   "distance_m": 9.1,
+   "visible": true,
+   "labelled_points": 16
+  },
+  "plantpot04": {
+   "min_recall": 0.8,
+   "distance_m": 13.0,
+   "visible": true,
+   "labelled_points": 31
+  },
+  "trafficcone01": {
+   "min_recall": 0.85,
+   "distance_m": 16.1,
+   "visible": true,
+   "labelled_points": 6
+  },
+  "model3": {
+   "min_recall": 0.9,
+   "distance_m": 22.0,
+   "visible": true,
+   "labelled_points": 19
+  },
+  "walker": {
+   "min_recall": 0.9,
+   "distance_m": 6.0,
+   "visible": true,
+   "labelled_points": 54
+  },
+  "bin": {
+   "min_recall": 0.9,
+   "distance_m": 12.3,
+   "visible": true,
+   "labelled_points": 14
+  }
+ },
+ "max_phantoms_in_lane": 0,
+ "max_phantoms_per_update": 1.62,
+ "min_road_deleted": 0.979,
+ "min_object_kept": 0.843
+}

@@ -13,7 +13,10 @@ THIS VERSION:
 The rest of the stack never imports carla — only this adapter touches it.
 """
 
-import carla
+try:
+    import carla
+except ImportError:  # offline replay/tests on a machine without the simulator
+    carla = None
 import numpy as np
 import os
 import time

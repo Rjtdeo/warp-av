@@ -1,12 +1,12 @@
 {
  "map": "Carla/Maps/Town03",
- "recorded": "2026-09-08 11:16:24",
- "seconds": 1.2,
+ "recorded": "2026-09-08 11:59:26",
+ "seconds": 2.5,
  "van": {
-  "x": -6.446169853210449,
-  "y": -79.05502319335938,
-  "z": -0.020159702748060226,
-  "yaw_deg": 92.00418853759766
+  "x": -6.5,
+  "y": -79.0999984741211,
+  "z": -0.022220401093363762,
+  "yaw_deg": 91.41353607177734
  },
  "lidar": {
   "channels": 32,
@@ -27,7 +27,7 @@
    "intensity",
    "ring"
   ],
-  "points_per_rotation": 7363
+  "points_per_rotation": 7373
  },
  "labels": {
   "file": "labels.npz",
@@ -40,7 +40,7 @@
    "semantic_tag"
   ],
   "note": "labelled LiDAR has no drop-off: answer key only, never pipeline input",
-  "points": 173281
+  "points": 56849
  },
  "camera": {
   "width": 800,
@@ -53,7 +53,7 @@
   }
  },
  "ring_order_ok": true,
- "deliveries": 50,
- "points": 95921,
- "camera_frames": 12
+ "deliveries": 63,
+ "points": 188797,
+ "camera_frames": 10
 }

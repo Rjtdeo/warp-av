@@ -67,11 +67,36 @@ def check_ring_order(points):
     return ok, f"rings {len(means)}, elevation {means[0]:.1f} .. {means[-1]:.1f} deg, max spread {max(spreads):.3f} deg" if means else "no rings"
 
 
+def lane_under(cmap, tf):
+    """The driving lane the van stands in, running the way the van faces (the nearest
+    waypoint may belong to the oncoming lane); returns (waypoint, degrees off the van's nose)."""
+    def off(w):
+        return abs((w.transform.rotation.yaw - tf.rotation.yaw + 540.0) % 360.0 - 180.0)
+    wp = cmap.get_waypoint(tf.location)
+    if off(wp) > 90.0:
+        for side in (wp.get_left_lane(), wp.get_right_lane()):
+            if side is not None and side.lane_type == carla.LaneType.Driving and off(side) <= 90.0:
+                return side, off(side)
+    return wp, off(wp)
+
+
+def ego_xy(tf, loc):
+    """World point -> metres ahead of and to the right of the van's nose."""
+    yaw = math.radians(tf.rotation.yaw)
+    dx, dy = loc.x - tf.location.x, loc.y - tf.location.y
+    return dx * math.cos(yaw) + dy * math.sin(yaw), -dx * math.sin(yaw) + dy * math.cos(yaw)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", required=True)
     ap.add_argument("--seconds", type=float, default=1.2)
     ap.add_argument("--no-spawn", action="store_true")
+    ap.add_argument("--at", default=None, help="teleport the parked van first: x,y[,yaw_deg[,z]]; without a yaw the van "
+                    "faces along the lane there; z picks the level on stacked roads (stack must be idle)")
+    ap.add_argument("--label-seconds", type=float, default=0.4,
+                    help="how long the labelled LiDAR records (the scorer needs one rotation; keeps fixtures small)")
+    ap.add_argument("--max-frames", type=int, default=10, help="camera frames kept")
     a = ap.parse_args()
     out_dir = ROOT / "tests" / "fixtures" / "perception" / a.name
 
@@ -86,8 +111,26 @@ def main():
     van = vans[0]
     if van.get_velocity().length() > 0.1:
         sys.exit("the van is moving: park it first (stack idle)")
+    if a.at:
+        vals = [float(v) for v in a.at.split(",")]
+        x, y = vals[0], vals[1]
+        wp0 = cmap.get_waypoint(carla.Location(x=x, y=y, z=vals[3] if len(vals) > 3 else 0.0))
+        snap = math.hypot(wp0.transform.location.x - x, wp0.transform.location.y - y)
+        if snap > 3.0:
+            sys.exit(f"--at ({x:.1f}, {y:.1f}) is {snap:.1f} m from the nearest lane: not a road position")
+        yaw = vals[2] if len(vals) > 2 else wp0.transform.rotation.yaw
+        z = wp0.transform.location.z
+        van.set_transform(carla.Transform(carla.Location(x=x, y=y, z=z + 0.3), carla.Rotation(yaw=yaw)))
+        time.sleep(2.0)
+        if van.get_velocity().length() > 0.1:
+            sys.exit("the van is moving after the teleport (stack not idle, or a slope): aborting")
+        print(f"van moved to ({x:.1f}, {y:.1f}) yaw {yaw:.1f}")
     tf = van.get_transform()
-    wp = cmap.get_waypoint(tf.location)
+    wp, yaw_off = lane_under(cmap, tf)
+    print(f"van at ({tf.location.x:.1f}, {tf.location.y:.1f}) yaw {tf.rotation.yaw:.1f}; lane runs {wp.transform.rotation.yaw:.1f} "
+          f"({yaw_off:.0f} deg off the van's nose), road {wp.road_id}, junction={wp.is_junction}")
+    if yaw_off > 30 or wp.is_junction:
+        print("WARNING: the van is not lined up with a plain lane; objects follow the lane, check the 'ahead/right of the nose' numbers")
 
     out_dir.mkdir(parents=True, exist_ok=True)
     spawned = []
@@ -111,14 +154,20 @@ def main():
                 continue
             try:
                 act.set_simulate_physics(False)
-                bb = act.bounding_box
-                bottom = bb.location.z - bb.extent.z
-                if bottom < -0.03:
-                    act.set_transform(carla.Transform(carla.Location(x=loc.x, y=loc.y, z=loc.z - bottom), w.rotation))
+                # props have their origin at the base and some meshes sink into the road: lift them by
+                # the box. A walker's origin is its centre (box offset 0, extent ~0.93): leave it where
+                # CARLA put it, the +1.0 m spawn height is what it expects
+                if "walker" not in bp_id:
+                    bb = act.bounding_box
+                    bottom = bb.location.z - bb.extent.z
+                    if bottom < -0.03:
+                        act.set_transform(carla.Transform(carla.Location(x=loc.x, y=loc.y, z=loc.z - bottom), w.rotation))
             except Exception:
                 pass
             spawned.append((bp_id, act))
-            print(f"  placed {bp_id} {ahead:.0f} m ahead, {right:+.1f} m right")
+            ex, ey = ego_xy(tf, act.get_transform().location)
+            print(f"  placed {bp_id}: {ahead:.0f} m along the lane, {right:+.1f} m right -> "
+                  f"{ex:.1f} m ahead, {ey:+.1f} m right of the van's nose, {math.hypot(ex, ey):.1f} m away")
         time.sleep(0.6)
 
       # the pipeline's input: a plain LiDAR exactly like the van's own (CARLA defaults keep
@@ -155,10 +204,15 @@ def main():
               frames.append((float(im.timestamp), jpg.tobytes()))
 
       plain.listen(on_plain); labelled.listen(on_labelled); camera.listen(on_camera)
-      time.sleep(a.seconds)
+      time.sleep(min(a.seconds, a.label_seconds))
+      labelled.stop()                       # one rotation is all the scorer uses
+      time.sleep(max(0.0, a.seconds - a.label_seconds))
       for s_ in sensors:
           s_.stop()
       time.sleep(0.2)
+      if len(frames) > a.max_frames:        # spread the kept frames over the recording
+          step = len(frames) / a.max_frames
+          frames = [frames[int(i * step)] for i in range(a.max_frames)]
 
       if not deliveries:
           sys.exit("no LiDAR deliveries recorded")

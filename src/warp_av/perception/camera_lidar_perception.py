@@ -582,6 +582,7 @@ class CameraLidarPerception:
         self,
         sensor_adapter,
         model_path=None,
+        detector=None,
     ):
 
         self.sensor_adapter = (
@@ -590,7 +591,9 @@ class CameraLidarPerception:
 
         self._enabled = True
 
-        self.detector = YoloXDetector(
+        # `detector` lets the replay harness and tests run the whole pipeline
+        # with a stand-in; the van always builds the real YOLOX model
+        self.detector = detector if detector is not None else YoloXDetector(
             model_path=model_path,
         )
 

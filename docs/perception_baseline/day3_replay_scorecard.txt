@@ -1,0 +1,36 @@
+== town03_bend_a: 24 updates, 35/36 sectors, 9.2 ms each; per update: 68.3 reports = placed objects + 54.8 solid things + 6.1 kerb + 2.0 phantoms (0.0 within 20 m, 0.0 in lane); road deleted 100.0 %, object points kept 82.8 %, 0-10 m 90 %, 10-20 m 84 %, 20-35 m 100 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           5.5   0.5        62    1.00     1.00   0.10  {'obstacle': 21}
+   barrel           8.3   0.5        20    1.00     1.00   0.17  {'vehicle': 21}
+   bin             11.5   0.5        19    1.00     1.00   0.14  {'obstacle': 1, 'vehicle': 20}
+   plantpot04      11.7   2.5        46    0.52     0.05   0.70  {'obstacle': 11}
+   trafficcone01   14.7   0.6        12    1.00     0.86   0.20  {'obstacle': 21}
+   model3          19.6   2.6        36    1.00     1.00   1.28  {'vehicle': 21}
+== town03_in_junction_a: 26 updates, 35/36 sectors, 10.3 ms each; per update: 75.4 reports = placed objects + 57.1 solid things + 3.0 kerb + 10.5 phantoms (2.4 within 20 m, 0.0 in lane); road deleted 99.7 %, object points kept 89.5 %, 0-10 m 99 %, 10-20 m 90 %, 20-35 m 55 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           5.8   0.5        52    1.00     1.00   0.10  {'obstacle': 23}
+   barrel           8.2   0.5        16    0.91     0.96   0.17  {'obstacle': 4, 'vehicle': 17}
+   bin             10.5   0.5        17    0.91     0.91   0.24  {'vehicle': 19, 'obstacle': 2}
+   plantpot04      11.9   2.5        40    0.09     0.04   2.72  {'vehicle': 2}
+   trafficcone01   14.1   0.6         8    0.91     0.39   0.60  {'obstacle': 21}
+   model3          19.2   2.6        37    1.00     1.00   1.25  {'vehicle': 23}
+== town03_junction_a: 25 updates, 35/36 sectors, 10.1 ms each; per update: 59.4 reports = placed objects + 39.3 solid things + 11.6 kerb + 3.0 phantoms (0.0 within 20 m, 0.0 in lane); road deleted 100.0 %, object points kept 77.8 %, 0-10 m 98 %, 10-20 m 80 %, 20-35 m 83 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           6.1   0.5        47    1.00     1.00   0.11  {'obstacle': 22}
+   barrel           9.0   0.5        12    1.00     1.00   0.18  {'obstacle': 22}
+   bin             12.1   0.5        13    1.00     1.00   0.21  {'obstacle': 22}
+   plantpot04      13.0   2.5        30    0.45     0.09   2.06  {'obstacle': 10}
+   trafficcone01   16.0   0.6         6    1.00     1.00   0.22  {'obstacle': 22}
+   model3          22.2   2.6        20    1.00     1.00   1.96  {'vehicle': 13, 'obstacle': 9}
+== town03_straight_a: 24 updates, 35/36 sectors, 9.5 ms each; per update: 43.2 reports = placed objects + 35.5 solid things + 1.2 kerb + 0.6 phantoms (0.0 within 20 m, 0.0 in lane); road deleted 99.9 %, object points kept 88.3 %, 0-10 m 94 %, 10-20 m 86 %, 20-35 m 100 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           6.0   0.5        54    1.00     1.00   0.10  {'obstacle': 21}
+   barrel           9.1   0.5        16    1.00     1.00   0.16  {'obstacle': 21}
+   bin             12.3   0.5        14    1.00     1.00   0.23  {'obstacle': 21}
+   plantpot04      13.0   2.5        31    0.90     0.29   0.19  {'obstacle': 19}
+   trafficcone01   16.1   0.6         6    0.95     0.95   0.23  {'obstacle': 20}
+   model3          22.0   2.6        19    1.00     1.00   2.11  {'obstacle': 4, 'vehicle': 17}
+wrote /Users/rajatdeo/Desktop/WARP_work/warp-av/tests/fixtures/perception/town03_bend_a/expected.json
+wrote /Users/rajatdeo/Desktop/WARP_work/warp-av/tests/fixtures/perception/town03_in_junction_a/expected.json
+wrote /Users/rajatdeo/Desktop/WARP_work/warp-av/tests/fixtures/perception/town03_junction_a/expected.json
+wrote /Users/rajatdeo/Desktop/WARP_work/warp-av/tests/fixtures/perception/town03_straight_a/expected.json

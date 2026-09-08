@@ -508,3 +508,159 @@ accumulator (36 of 36 sectors), runs the real ground filter and clusterer,
 and requires a cluster within reach of every placed object. It passes on
 the Mac with no CARLA and no camera model. Day 3 turns this into the scored
 harness.
+
+# Perception V2, day 3: the scored replay harness (2026-09-08)
+
+Day 2 gave us recordings. Day 3 turns them into a scorecard that runs on any
+machine in five seconds, with no CARLA and no camera model:
+
+```
+python3 tools/replay_score.py
+```
+
+`src/warp_av/perception/replay.py` replays a fixture's LiDAR deliveries
+through the real sweep accumulator and the real `CameraLidarPerception.update()`
+and compares every report with the answer key. It feeds the pipeline exactly
+as the van does: hand over the accumulator's sweep after every delivery and
+let the pipeline's own 0.08 s rule decide when to look again. Two things are
+deliberately different: a stand-in camera model is injected through the new
+`detector=` argument (the van still builds YOLOX), and the tracker is given
+the sweep's simulation time instead of the wall clock, so a replay is
+repeatable and its drop-outs happen at the van's pace.
+
+What it measures:
+
+* **recall** per placed object: share of updates (after the tracker's
+  warm-up) in which something was reported within reach of it
+  (reach = max(1.5 m, the object's half-diagonal + 0.5 m));
+* **cluster recall**: the same one stage earlier, before the tracker;
+* **lidar pts**: how many points the dense labelled LiDAR got back from the
+  object. Under 3 means the sensor could not see it at all: the row is
+  printed but not scored;
+* **position error**: median distance from the report to the object's
+  origin. The pipeline reports the visible part of a thing, so a 5 m planter
+  or a car legitimately shows 1–2 m;
+* every **other report**, classified with the labelled scan: *solid* (at
+  least 3 non-ground labelled points within 1.5 m: walls, poles, parked
+  cars), *kerb* (only sidewalk points), or *phantom* (nothing but
+  road/terrain/emptiness: a ground leftover or a far ghost). Phantoms are
+  counted overall, within 20 m, and in the lane;
+* **ground removal** on the labelled sweep, as `tools/ground_filter_score.py`;
+* sweep **coverage** (sectors of the 360° each fed sweep held) and **ms per
+  update**.
+
+Each placed object is credited with at most one report, and each report with
+at most one object, smallest object first. Without that rule the 5 m
+planter's wide reach was credited with the bin's report standing 2.4 m away,
+and the scorecard read 1.00 for an object the pipeline never saw.
+
+`tools/replay_score.py --set-baseline` writes `expected.json` next to each
+fixture (today's numbers minus a margin: recall −0.10, phantoms per update
++1.0, road deleted −0.02, object kept −0.04). `tests/test_replay_harness.py`
+fails when a change drops below them. Other switches: `--ground flat`,
+`--thin 3`, `--fixture NAME`, `--json out.json`.
+
+## Four fixtures
+
+Recorded with `tools/record_fixture.py --at x,y` (new: moves the parked van
+there, facing along the lane, and refuses a spot that is not on a road), 2.5
+seconds each, the same six objects placed along the lane: walker 6 m / +1.3,
+barrel 9 m, bin 12 m / −1.6, planter 13 m / +0.6, cone 16 m / −0.5, car 22 m.
+
+| fixture | where | deliveries | points per rotation |
+|---|---|---|---|
+| `town03_straight_a` | straight road, (−6.5, −79.1) | 63 | 7,373 |
+| `town03_bend_a` | a 49° bend, road 23, (−122.0, 133.2) | 47 | 6,843 |
+| `town03_junction_a` | straight, junction 15–20 m ahead, (124.7, −194.4) | 89 | 7,230 |
+| `town03_in_junction_a` | standing inside the central junction, (−17.6, 9.9) | 68 | 7,114 |
+
+Each is about 3.3 MB: 2.5 s of plain LiDAR (the pipeline's input, with
+CARLA's 45 % drop-off), 0.4 s of labelled LiDAR (the answer key, one
+rotation is all the scorer uses), ten camera frames, the true pose and box
+of every object, and the van's pose.
+
+Getting these right took three attempts, and the scorecard caught both
+mistakes: the first pair had the objects placed along the *opposite* lane
+(the recorder took a compass heading, not the van's own lane); the second
+pair was too short to score and had the pedestrian floating 1 m above the
+road (the "lift props that sink into the road" rule also lifted a walker,
+whose origin is its waist, not its feet). The recorder now places along the
+van's own lane, prints each object's true "ahead / right of the nose"
+position, leaves walkers alone, and warns when the van stands in a junction.
+
+## The scorecard today (`docs/perception_baseline/day3_replay_scorecard.txt`)
+
+Recall per object, then cluster recall in brackets where it differs:
+
+| object | straight | bend | junction approach | inside junction |
+|---|---|---|---|---|
+| walker 5.5–6.1 m | 1.00 | 1.00 | 1.00 | 1.00 |
+| barrel 8.2–9.1 m | 1.00 | 1.00 | 1.00 | 0.91 |
+| bin 10.5–12.3 m | 1.00 | 1.00 | 1.00 | 0.91 |
+| **planter 11.7–13.0 m** | **0.90** (0.29) | **0.52** (0.05) | **0.45** (0.09) | **0.09** (0.04) |
+| cone 14.1–16.1 m | 0.95 | 1.00 (0.86) | 1.00 | 0.91 (0.39) |
+| car 19.2–22.2 m | 1.00 | 1.00 | 1.00 | 1.00 |
+| updates scored | 24 | 24 | 25 | 26 |
+| phantoms per update (within 20 m) | 0.6 (0.0) | 2.0 (0.0) | 3.0 (0.0) | 10.5 (2.4) |
+| phantoms in the lane | 0 | 0 | 0 | 0 |
+| road deleted / object points kept | 99.9 % / 88 % | 100 % / 83 % | 100 % / 78 % | 99.7 % / 90 % |
+| sweep coverage | 35/36 | 35/36 | 35/36 | 35/36 |
+| ms per update (Mac) | 9.5 | 9.2 | 10.1 | 10.3 |
+
+Position error: 0.10–0.24 m for the small things; 1.2–2.1 m for the car
+(reported at its near face) and for the planter when it is seen at all.
+
+## Live cross-check
+
+Straight after recording, the probe placed the same objects at the same
+distances from the junction-approach spot with the live stack
+(`logs/perception_probe_20260908_115020.csv`):
+
+| object, distance | live van (tracked) | offline scorecard |
+|---|---|---|
+| person 6 m | 0.97 | 1.00 |
+| barrel 9 m | 0.97 | 1.00 |
+| cone 16 m | 0.93 | 1.00 |
+| car 22 m | 0.97 | 1.00 |
+| planter 13 m | 0.97 (cluster 0.47) | 0.45 (cluster 0.09) |
+| planter 16 m | 0.00 (cluster 0.00) | – |
+| planter 22 m | 0.00 (cluster 0.00) | – |
+
+Five of six objects agree within a few percent. The planter is weak in both,
+and both agree it is the one object the pipeline cannot rely on.
+
+## What the scorecard found on its first day
+
+1. **The planter is nearly invisible, and this is a real hole.** It is a
+   12.5 cm high trough; the ground filter keeps points more than 12 cm above
+   the road. In the answer key its points sit 9–17 cm above the road, so
+   most of them are cut as ground and 2–4 survive per rotation. Inside the
+   junction it is seen in 1 update of 11; on a bend, half the time; on a
+   straight road, 9 times in 10 only because the tracker holds it between
+   sightings (the clusterer finds it in 3 of 10). The live probe says the
+   same thing more bluntly: at 16 m and 22 m the live van finds no cluster
+   at all. Anything flatter than a kerb is currently below the van's notice.
+2. **Ground leftovers inside junctions.** Standing in the central junction,
+   the pipeline reports 10.5 "obstacles" per update that sit on road or
+   terrain points only, 2.4 of them within 20 m, where the road meets grass.
+   None is in the lane, so the van does not brake for them, but the
+   occupancy grid (day 9) would inherit them. On plain roads it is 0.6–3.0
+   per update and none within 20 m.
+3. **Naming is unreliable without the camera.** The barrel on the bend is
+   called "vehicle" in 21 of 21 updates, the bin in 20 of 21; the car on the
+   straight is "obstacle" in 4 of 21. The shape rule alone cannot do this.
+   Day 5 (calibrated camera fusion) owns it.
+4. **The cone is fine now.** Day 2 measured it at 0.50 on a bend; with these
+   recordings it is 0.91–1.00 everywhere, though the clusterer alone drops
+   to 0.39 inside the junction.
+5. **The patches road filter earns its place**
+   (`day3_replay_scorecard_flat_ab.txt`): against the old flat cut it holds
+   3.0 phantoms per update instead of 9.8 on the junction approach, and
+   keeps 78–90 % of object points instead of 74–83 %. It costs 8 ms per
+   update instead of 1.4 ms.
+
+## What stayed the same
+
+382 tests pass (355 before day 3, 27 new). No pipeline behaviour changed:
+the only van-code edits are the injectable detector (default unchanged) and
+an optional CARLA import in the adapter (identical when CARLA is installed).
