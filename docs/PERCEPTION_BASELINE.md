@@ -1383,3 +1383,80 @@ of the map; the world sheet carries the summary.
   accumulate over time, so what the van saw a second ago is forgotten.
 * Nothing steers by it yet. That is the planner's to use, and this was the
   piece it was missing.
+
+# Perception V2, day 10: where the road stops (2026-09-08)
+
+Day 9's map says where there is space. It does not say where the van may put a
+wheel. A laser beam travels along a pavement perfectly well, so a pavement came
+back as free. Free is not drivable.
+
+## What the measurement said before any code was written
+
+The textbook answer is to find the kerb: a step of ten or fifteen centimetres
+running alongside the road. Measured on the four recordings, using the labelled
+scan to say exactly where the pavement is:
+
+| recording | how high the pavement sits | kerb-band returns, left / right |
+|---|---|---|
+| straight road | −0.02 to 0.15 m | 8 / 6 |
+| bend | 0.00 to 0.25 m | 7 / 33 |
+| junction approach | 0.00 to 0.31 m | 4 / 50 |
+| inside a junction | 0.00 to 0.15 m | 59 / 46 |
+
+In this town a pavement is often level with the road, and a kerb can leave the
+van as few as **six laser returns in twenty metres**. That is thin evidence, and
+it changed the plan: the kerb is worth reporting when it is really there, and
+must be declined the rest of the time, so the weight has to fall on something
+better supported.
+
+## What was built
+
+**Two signals, and each is only asked what it can answer.**
+
+*The kerb line*, in `src/warp_av/perception/road_edges.py`. Points in the kerb
+band, 5 to 35 cm above the local road, are split left and right of the van and
+a straight line is fitted through each, three times over, dropping the points
+that disagree each round, because a parked car's wheels and a driveway leave
+returns in the same band. A line is reported only with at least twelve points
+over four metres, more than half of them agreeing, running within 25° of the
+road. Otherwise the van says it does not know.
+
+*The ground layer*, added to the day-9 grid. Every square now carries a second
+mark: whether the laser actually landed on ground the van could roll on, as
+opposed to space a beam merely passed through. It is filled along each bearing
+out to the furthest ground return and never past the nearest solid thing,
+because marking only the squares the returns land in draws thin arcs: the laser
+touches the ground in rings, and the gap between two rings is still ground.
+`drivable_at(x, y)` is free **and** ground, and inside a kerb line when there is
+a confident one.
+
+## Measured
+
+The kerb line, against the near edge of the labelled pavement:
+
+| recording | side | van says | truth | error |
+|---|---|---|---|---|
+| straight road | right | 3.83 m | 3.73 m | **0.10 m** |
+| bend | right | 6.11 m | 7.12 m | 1.01 m, and reported as unsure |
+| bend | left | −9.63 m | −7.44 m | 2.19 m |
+| junction approach, inside a junction | both | not found | | correctly declined |
+
+Live, driving a 200 m route for twenty-four seconds, the right-hand kerb was
+held steadily at 4.4 to 4.75 m from the van, within two degrees of straight,
+over 12 to 19 metres of road at a time. The left-hand kerb was almost never
+found, which on that street is the right answer.
+
+## The limit, stated plainly
+
+**The van cannot reliably tell carriageway from pavement here.** The ground
+layer covers both, because both are flat ground and this town's pavement is
+often level with the road. What the van has gained is real but narrower than it
+sounds:
+
+* it separates ground it could roll on from free space it merely looked
+  through, which day 9 could not do;
+* where a kerb is physically there and the laser can see it, it holds the line
+  to about ten centimetres and knows which side of it a square lies on;
+* and where the kerb is not visible, it says so instead of inventing one.
+
+520 tests pass, 14 of them new.
