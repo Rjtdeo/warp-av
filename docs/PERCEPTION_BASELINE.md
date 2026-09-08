@@ -1460,3 +1460,57 @@ sounds:
 * and where the kerb is not visible, it says so instead of inventing one.
 
 520 tests pass, 14 of them new.
+
+## Day 10 follow-up: is it car-shaped, or merely big? (2026-09-08)
+
+Rajat noticed the van labelling things "VEHICLE" where no vehicle was.
+Measured on the four recordings with the camera switched off, so the shape rule
+did all the naming: **of 1,727 things called a vehicle, 23 were vehicles.**
+
+| what it really was | before |
+|---|---|
+| a building | 54 % |
+| a wall | 23 % |
+| pavement | 7 % |
+| a static prop | 7 % |
+| a pole | 4 % |
+| terrain | 4 % |
+| **an actual vehicle** | **1 %** |
+
+The rule was written before the van could measure anything. It asked only:
+wider than 0.9 m across, at least twelve laser points, at least half a metre
+tall. A building wall passes all three. Day 5 tightened this in front of the
+van, where the camera can disagree, and left it loose to the sides and behind,
+which is where the buildings are.
+
+Since day 4 the van measures each blob's length, width and height, and the rule
+ignored all three. A car is bounded in every direction; a building is too tall,
+a wall too long, a post too thin, a bin too short. The measurement said which
+bound mattered most: the false labels stood **3.8 to 4.0 m tall** and the real
+car **1.5 m**.
+
+So the rule now asks whether the thing would fit in a parking space: at most
+2.6 m tall (a car or a van; the van itself is 2.5 m), at most 14 m long, and,
+near enough for the measurement to mean something, at least 2.0 m long and
+0.9 m wide. A blob with no measurements, as in the ground-truth and camera-only
+modes, keeps the old test, since there is nothing better to judge it on.
+
+| | before | after |
+|---|---|---|
+| things called a vehicle | 1,727 | **187** |
+| of which really vehicles | 23 | 23 |
+| how often the real car was named | 25 % | 25 % |
+
+The false labels fall roughly nine-fold and nothing is lost: the same 23 real
+sightings, and the car named exactly as often as before. The 25 % is a separate,
+older limit, not caused by this change: at 22 m the car returns only ten laser
+points and the rule needs twelve, so in two of the four recordings the shape
+rule cannot see it at all and the camera has to name it.
+
+What is left is 187 labels, of which 164 are wrong: pavement, buildings, walls
+and poles that are still car-sized once the tall ones are gone. That is about
+1.8 per update rather than 15. Getting further needs the thing the grid started
+on day 9, which is treating a surface as a surface instead of chopping it into
+objects.
+
+531 tests pass, 11 of them new.

@@ -28,15 +28,63 @@ LAST_CLUSTER_TOTAL = 0      # how many blobs the last call found before the cap 
 VEHICLE_MIN_EXTENT_M = 0.9  # the 'car-sized blob' shape rule: wider than this ...
 VEHICLE_MIN_POINTS = 12     # ... with this many raw points (was 6 after 3x thinning = ~18 raw) ...
 VEHICLE_MIN_HEIGHT_M = 0.5  # ... and taller than this (a planter or a bench is not a car)
+# A car is bounded. The rule above is not: a building wall is wider than 0.9 m, has more than
+# twelve points and is taller than half a metre, so it passed. Measured on the recordings,
+# 99 % of the things the van called a vehicle were buildings, walls, pavements and poles.
+# Since day 4 the van measures each blob's length, width and height, so the rule can simply
+# ask whether the thing would fit in a car park (Perception V2, day 10 follow-up).
+VEHICLE_MAX_LENGTH_M = 14.0   # a bus or an articulated lorry; a building face is longer
+VEHICLE_MIN_WIDTH_M = 0.9     # a pole, a post or a fence is thinner
+VEHICLE_MAX_WIDTH_M = 4.0
+VEHICLE_MAX_HEIGHT_M = 2.6    # a car or a van, which is what this rule is for. Measured on
+                              # the recordings: the things wrongly called vehicles stand 3.8 to
+                              # 4.0 m tall (buildings and walls) and the real car 1.5 m. A lorry
+                              # is taller than this and will be named by the camera instead.
+WIDTH_TEST_FROM_M = 5.0       # only things this long are judged on being too thin
+WIDTH_TEST_WITHIN_M = 25.0    # ... and near enough that the measurement means something
+VEHICLE_MIN_LENGTH_M = 2.0    # shorter than this, near the van, is a bin or a post
 
 
-def vehicle_shaped(cluster, min_points=VEHICLE_MIN_POINTS, min_extent=VEHICLE_MIN_EXTENT_M,
-                   min_height=VEHICLE_MIN_HEIGHT_M):
-    """Does a LiDAR blob look like a car on its own (no camera needed)?"""
+def vehicle_shaped(cluster, min_points=None, min_extent=None, min_height=None,
+                   max_length=None, min_width=None, max_width=None, max_height=None):
+    """Does a LiDAR blob look like a car on its own, with no camera to ask?
+
+    Being big enough is not the question; being car-shaped is. A car fits inside bounds in
+    all three directions, and a building, a wall, a hedge or a pole falls outside at least
+    one of them. The measured footprint is used when there is one, and a blob with no
+    measurement is judged on the old test alone, since that is all there is.
+    """
+    # the limits are read here, not bound when this file loads, so they can be measured
+    min_points = VEHICLE_MIN_POINTS if min_points is None else min_points
+    min_extent = VEHICLE_MIN_EXTENT_M if min_extent is None else min_extent
+    min_height = VEHICLE_MIN_HEIGHT_M if min_height is None else min_height
+    max_length = VEHICLE_MAX_LENGTH_M if max_length is None else max_length
+    min_width = VEHICLE_MIN_WIDTH_M if min_width is None else min_width
+    max_width = VEHICLE_MAX_WIDTH_M if max_width is None else max_width
+    max_height = VEHICLE_MAX_HEIGHT_M if max_height is None else max_height
+
     if cluster.get("extent", 0.0) < min_extent or cluster.get("n", 0) < min_points:
         return False
     h = cluster.get("height")
-    return h is None or h >= min_height
+    if h is not None and (h < min_height or h > max_height):
+        return False                    # a building, a hedge or a tree, not something driving
+    length = cluster.get("length_m")
+    width = cluster.get("width_m")
+    if length is not None and length > max_length:
+        return False                    # a wall or a building face
+    if width is not None and width > max_width:
+        return False                    # too broad for anything that drives
+    # A car has body on both sides. A pole, a fence and a kerb do not. The near face of a
+    # far car reads thin too, but a far car is also too sparse to reach the point count, so
+    # the test is only applied where the van can see enough of a thing to measure it.
+    if (length is not None and width is not None
+            and cluster.get("distance", 0.0) <= WIDTH_TEST_WITHIN_M
+            and (width < min_width or length < VEHICLE_MIN_LENGTH_M)):
+        return False
+    if (length is not None and width is not None
+            and length >= WIDTH_TEST_FROM_M and width < min_width):
+        return False                    # long and thin: a kerb, a fence, a hedge row
+    return True
 
 
 def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,

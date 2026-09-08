@@ -146,8 +146,12 @@ def test_shape_alone_still_names_a_car_the_camera_cannot_see():
 
 def test_a_stale_camera_falls_back_to_shape():
     """A blob that is car-ish but not plainly car-sized: with a working camera that saw
-    nothing there it stays an obstacle, with no fresh picture the shape rule names it."""
-    pts = blob(14.0, 0.0, 1.5, n=40, spread=1.0)
+    nothing there it stays an obstacle, with no fresh picture the shape rule names it.
+
+    The blob has to be car-shaped in all three directions now, not merely big: since the
+    day-10 follow-up a building no longer passes for a car (see test_day10_vehicle_shape).
+    """
+    pts = blob(14.0, 0.0, 1.5, n=60, spread=1.3)
     _, _, fresh = run(pts, [])
     _, _, stale = run(pts, [], detection_max_age_s=-1.0)
     assert "vehicle" not in fresh, "a working camera that sees no car keeps it an obstacle"
