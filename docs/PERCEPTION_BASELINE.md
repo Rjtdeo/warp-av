@@ -304,3 +304,87 @@ while moving (10 m parked). Earlier detection is fix 3.
   Mac). Fine at today's 3.7 Hz; worth a look when the loop reaches 10 Hz.
 * Far field (> 35 m): a lone far object's lowest ring can still pass for
   ground when nothing road-like is near; ~2 points per sweep.
+
+
+---
+
+# Fix 3 result: every point kept, far blobs with 2 points (2026-09-07 night, commit f07af93)
+
+What changed: the pipeline no longer keeps one LiDAR point in three
+(`WARP_LIDAR_THIN=3` restores it). Beyond 15 m a blob may count with 2
+points (flagged weak); the tracker needs three weak sightings in a row (or
+one strong and two weak) before it reports it, and forgets before it
+associates so "in a row" holds. Review fixes folded in: the cluster cap
+keeps blobs ahead in the van's corridor first (cap 120, was 60 nearest), the
+"car-sized blob" rule wants 12 raw points and 0.5 m of height, low 2-point
+blobs beside the lane are dropped as kerb crumbs, and the road-edge rule
+requires the blob to run along the road, so a 5 m planter trough lying
+across a bend is no longer mistaken for a kerb.
+
+## Probe, standard set, old thinning vs every point (van on a bend in Town03)
+
+Fraction of frames the LiDAR stage found the object (cluster);
+`docs/perception_baseline/probe_2026-09-07_fix3_{before,after}_std.csv`.
+
+| Object | 20 m | 15 m | 12 m | 10 m | 8 m | 6 m |
+|---|---|---|---|---|---|---|
+| barrel | 0.10 -> 0.45 | 0.30 -> 0.80 | 0.35 -> 0.95 | 0.50 -> 0.90 | 0.70 -> 1.00 | 1.00 |
+| cone | 0.35 -> 0.80 | 0.40 -> 0.95 | 0.50 -> 1.00 | 0.85 -> 1.00 | 1.00 | 1.00 |
+| planter (5 m trough) | - | - | 0.20 -> 0.95 | 0.45 -> 1.00 | 0.40 -> 0.95 | 0 -> 0.95 |
+| person | 0.20 -> 0.90 | 0.60 -> 1.00 | 0.65 -> 1.00 | 0.90 -> 1.00 | 1.00 | 1.00 |
+| car | 0.95 -> 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| barrier (after only) | | 0.50 | 0.70 | 1.00 | 1.00 | 1.00 |
+
+Points on a barrel that reach the clusterer: 15 m 1.3 -> 3.1, 12 m 2.1 -> 6.1,
+10 m 2.3 -> 6.9. The planter's jump at 6-8 m is the along-the-road rule: on
+this bend the trough sat beside the van's axis and the old rule called it a
+kerb.
+
+## Probe, "random things", old thinning vs every point
+
+Eight props that are not cones: `probe_2026-09-07_fix3_random_{before,after}.csv`.
+
+| Object | 20 m | 15 m | 12 m | 10 m | 8 m | 6 m |
+|---|---|---|---|---|---|---|
+| trash bag | 0 -> 0.07 | 0 -> 0.53 | 0 -> 0.47 | 0.07 -> 0.60 | 0.07 -> 1.00 | 0.47 -> 1.00 |
+| shopping trolley | 0 -> 0.33 | 0.13 -> 0.47 | 0 -> 0.33 | 0.13 -> 0.73 | 0.33 -> 1.00 | 0.80 -> 1.00 |
+| bin | 0.20 -> 0.60 | 0.67 -> 0.87 | 0.60 -> 1.00 | 0.53 -> 1.00 | 1.00 | 1.00 |
+| bench | 0.13 -> 0.80 | 0.07 -> 0.67 | 0 -> 0.80 | 0.27 -> 0.93 | 0.67 -> 1.00 | 1.00 |
+| dirt pile | - | - | 0 -> 0.33 | 0 -> 0.53 | 0 -> 0.60 | 0.60 -> 1.00 |
+| chain barrier | - | 0.20 -> 0.40 | 0.13 -> 0.27 | 0 -> 0.87 | 0.27 -> 1.00 | 0.27 -> 1.00 |
+| iron plank (5 cm) | - | - | - | - | - | - |
+| suitcase | 0 -> 0.07 | 0.20 -> 0.67 | 0.07 -> 0.87 | 0.13 -> 0.87 | 0.47 -> 1.00 | 0.87 -> 1.00 |
+
+The plank is 5 cm high: below the 12 cm floor by design (the road's own
+bumps live there). Everything else is now seen by 10-12 m, most by 15 m.
+
+## Live stack after deployment
+
+`/api/state` perception_runtime: thinning step 1, 26 clusters (cap 120 not
+reached), ground filter 18 ms, YOLOX 95-170 ms; loop rate 5.1 Hz in that
+sample (was 3.7).
+
+## Drive test: WAV-0294, barrel in the lane, camera + LiDAR
+
+| | before | fix 1 | fix 1+2 | fix 1+2+3 |
+|---|---|---|---|---|
+| contacts | 892 | 0 | 0 | 0 |
+| first report of the barrel | 3.3 m | 5.3 m | 5.9 m | 15.0 m |
+| closest approach (centre to centre) | 3.13 m | 5.39 m | 6.02 m | 7.57 m |
+| runner verdict | FAIL (collision) | FAIL (stop 6.4 s after trigger) | FAIL (6.5 s) | FAIL (8.5 s) |
+
+The van now sees the barrel at 15 m, slows to 2 m/s there, and stops
+7.4 m short. The runner's "stopped within 6 s of the trigger" rule fails for
+the opposite reason to before: a van that slows early takes longer to come
+to rest. The safety criteria (no contact, distance, stopped_obstacle) pass.
+That timing rule belongs to the scenario catalog, not to perception; worth
+revisiting when the catalog is next touched.
+
+## Carried forward
+
+* Naming: a bench, a chain barrier or a cone close by can be called
+  `vehicle` by the shape rule; the camera's names never attach (fix 4).
+* Weak 2-point tracks 15-20 m ahead in the lane would make the van slow to
+  2-3 m/s if they were phantoms; on flat roads the road filter leaves no
+  such points (score: 0 of 153k at 10-35 m), on grades this is unmeasured.
+* The loop is still bound by YOLOX in the main thread (fix 5).
