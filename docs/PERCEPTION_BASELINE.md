@@ -128,3 +128,84 @@ ahead of the van.
 Re-measure with the same probe after each step:
 
     venv\Scripts\python.exe tools\perception_probe.py --frames 20 --distances 20,15,12,10,8,6,4 --objects barrel,cone,planter,car,person
+
+
+---
+
+# Fix 1 result: whole LiDAR sweeps (2026-09-07 evening, commit d51661d)
+
+What changed: `src/warp_av/adapters/lidar_sweep.py` glues CARLA's per-frame
+LiDAR wedges into one 360-degree sweep per rotation (de-skewed with the
+sensor pose, seam de-duplicated, the van's own body returns dropped first).
+The adapter now asks CARLA for every frame (sensor_tick 0.0) in sweep mode.
+Flag `WARP_LIDAR_SWEEP` (default on; `0` = old behaviour). Nothing in
+perception itself changed.
+
+Checks before deployment: 17 unit tests; a four-lens adversarial review
+(geometry, timing/threading, downstream consumers, tests) whose two
+actionable findings, self-returns smeared behind a moving van and seam
+double-counting, were fixed before the code left the Mac; on the CARLA
+machine a barrel placed 10 m ahead and 2 m right of the parked van landed
+0.16 m from its true world position through the accumulator's matrices
+(frame convention confirmed). Cost: about 1 ms per delivery.
+
+## What one scan contains now
+
+| | points per scan | 10-degree sectors covered (of 36) |
+|---|---|---|
+| before (one wedge per 0.1 s) | 3,000 to 5,700 | 15 to 28 |
+| after (accumulated sweep)    | 7,100 to 7,600 | 36, every scan |
+
+## Probe A/B, same pipeline, wedges vs sweeps
+
+Fraction of the 2 s window in which the object was reported (probe pipeline,
+`docs/perception_baseline/probe_2026-09-07_fix1_sweep_{off,on}.csv`):
+
+| Object | 20 m | 15 m | 12 m | 10 m | 8 m | 6 m | 4 m |
+|---|---|---|---|---|---|---|---|
+| car, wedges | 0.90 | 0.80 | 0.85 | 0.80 | 0.80 | 0.95 | n/a |
+| car, sweeps | 0.95 | 0.95 | 0.95 | 0.95 | 0.95 | 0.95 | n/a |
+| person, wedges | - | - | 0.65 | 0.55 | 0.80 | 0.85 | 0.90 |
+| person, sweeps | - | 0.75 | 0.90 | 0.90 | 0.95 | 0.95 | 0.95 |
+| cone, wedges | - | - | - | 0.60 | 0.75 | 0.85 | 0.85 |
+| cone, sweeps | - | - | - | 0.35 | 0.85 | 0.95 | 0.95 |
+| barrel, wedges | - | - | - | - | 0.85 | 0.90 | 0.95 |
+| barrel, sweeps | - | - | - | - | - | 0.80 | 0.95 |
+| planter, either | - | - | - | - | - | - | - |
+
+Cluster found per frame (the LiDAR stage on its own, before the tracker's
+memory): car at 20 m 0.35 -> 0.95, at 15 m 0.50 -> 1.00; person at 10 m
+0.25 -> 0.80, at 8 m 0.40 -> 1.00; cone at 6 m 0.40 -> 0.95, at 4 m
+0.60 -> 1.00; barrel at 6 m 0.65 -> 0.75, at 4 m 0.80 -> 0.95. The gain is
+steadiness: objects that have enough points are now seen in every frame
+instead of blinking. Objects that do not have enough points (small props
+beyond about 8 m, planters at any distance) are unchanged: that is the
+height cut and the 3x downsample, fixes 2 and 3.
+
+With the probe's camera check corrected (box right edge = x + width), the
+camera turns out to see far more than the fusion uses: a person 100% of
+frames at 4 to 20 m, a car 100% at 6 to 20 m, cone and barrel at 12 to 20 m
+as "fire hydrant", the planter at 4 to 6 m as "bench". None of it reaches
+the object list because of the fusion bug (finding 4).
+
+## Drive test: WAV-0294, barrel in the lane, camera + LiDAR
+
+| | before fix 1 (15:20) | after fix 1 (17:27) |
+|---|---|---|
+| contacts with the barrel | 892 | 0 |
+| closest approach (centre to centre) | 3.13 m (bumper on the barrel) | 5.39 m |
+| first report of the barrel | 3.3 m, blinking | 5.3 m, steady for 45 s |
+| runner verdict | FAIL (collision) | FAIL (stopped 6.4 s after the trigger, limit 6.0) |
+
+The safety criterion (no contact) now passes. The remaining FAIL is the
+runner's stop-time rule, 0.4 s over, with the van cruising at 2 to 3 m/s and
+the barrel first seen at 5.3 m: earlier detection (fixes 2 and 3) is what
+moves that number.
+
+## Watch items carried forward
+
+* Facades and hedges clipped by the 55 m range circle can now become stable
+  tracks carrying the van's own speed and the `vehicle` shape label (a
+  reviewer's unverified finding). Check the object list while driving; a
+  "structure" label for very long clusters is the likely answer.
+* The control loop still runs at about 3.5 Hz (YOLOX inline, finding 6).
