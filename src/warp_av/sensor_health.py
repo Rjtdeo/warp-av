@@ -61,7 +61,14 @@ class SensorState:
 
     @property
     def failed(self) -> bool:
-        return self.enabled and not self.healthy
+        """Not working is not working.
+
+        An earlier version excused a sensor that was switched off, on the grounds that
+        somebody meant to switch it off. That is exactly how a failure is injected in this
+        stack, and it meant a switched-off LiDAR came out as "all senses working" while the
+        van drove on. A van that cannot see does not care why.
+        """
+        return not self.healthy
 
 
 @dataclass
@@ -176,6 +183,7 @@ def read_sensors(sensor_adapter, perception_healthy: bool, perception_reason: st
         SensorState("object_detection", healthy=bool(perception_healthy), detail=perception_reason),
     ]
     if sensor_adapter is not None:
+        # note: `enabled` is reported for the operator, never used to excuse a fault
         out += [
             SensorState("lidar", healthy=ask(sensor_adapter.is_lidar_healthy),
                         enabled=enabled("lidar_enabled"), detail="the laser that finds obstacles"),

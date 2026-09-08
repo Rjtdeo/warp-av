@@ -428,7 +428,8 @@ class WarpAV:
         try:
             self._health = self.health_monitor.update(read_sensors(
                 getattr(self, "sensor_adapter", None),
-                perception_healthy=perception.healthy, perception_reason=perception.reason,
+                perception_healthy=perception.healthy and not perception.degraded,
+                perception_reason=perception.reason,
                 pose=pose, controller_healthy=self.controller._enabled,
                 vehicle_alive=self.vehicle_adapter.is_alive()))
         except Exception:

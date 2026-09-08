@@ -86,11 +86,15 @@ def test_the_worst_fault_wins():
     assert "lidar" in r.reason()
 
 
-def test_a_sense_that_is_switched_off_on_purpose_is_not_a_fault():
+def test_a_sense_that_is_switched_off_still_counts_as_missing():
+    """An earlier version excused a switched-off sensor. That is exactly how a failure is
+    injected here, and it let a switched-off LiDAR read as 'all senses working' while the
+    van drove on. A van that cannot see does not care why."""
     off = SensorState("camera", healthy=False, enabled=False)
-    assert off.failed is False
-    r = HealthMonitor().update([off] + sensors())
-    assert r.speed_cap_mps() is None
+    assert off.failed is True
+    r = HealthMonitor().update([off])
+    assert r.speed_cap_mps() == DEGRADED_SPEED_CAP_MPS
+    assert "camera" in r.reason()
 
 
 def test_a_sense_that_cannot_be_asked_counts_as_failed():
@@ -191,3 +195,77 @@ def test_every_sense_has_a_stated_policy():
     for name in ("lidar", "camera", "position", "object_detection", "gps", "imu",
                  "controller", "vehicle"):
         assert name in SENSOR_POLICY, f"{name} has no policy: it would fail in silence"
+
+
+# ---- the pipeline itself, with an eye missing --------------------------------------
+
+def test_a_lost_camera_leaves_the_van_seeing_but_unnamed():
+    """The laser finds everything solid; what a missing camera costs is the name on it.
+    Before day 8 a stale camera made the whole of perception unhealthy, so the van froze
+    in the lane even though it could still see."""
+    import numpy as np
+    import time as _t
+    import pytest as _p
+    _p.importorskip("cv2")
+    from warp_av.adapters.carla_sensor_adapter import CameraFrame, LidarScan
+    from warp_av.perception.camera_lidar_perception import CameraLidarPerception
+
+    class Detector:
+        def detect(self, image):
+            raise AssertionError("the camera is out: the model must not be asked")
+
+    class Adapter:
+        def __init__(self):
+            pts = []
+            for r in range(3, 30):
+                for a in range(0, 360, 4):
+                    import math as _m
+                    pts.append((r * _m.cos(_m.radians(a)), r * _m.sin(_m.radians(a)), -2.5, 1.0, a % 32, 0.0))
+            for k in range(60):
+                pts.append((10.0 + 0.02 * k, 0.3 * (k % 3), -1.6 + 0.01 * k, 1.0, k % 32, 0.0))
+            arr = np.array(pts, dtype=np.float32)
+            self.latest_lidar = LidarScan(points=arr, timestamp=_t.time(), frames=4, span_s=0.1,
+                                          sim_time=1.0, sensor_matrix=np.eye(4))
+            self.latest_camera = CameraFrame(image=np.zeros((600, 800, 4), dtype=np.uint8),
+                                             width=800, height=600, fov=90.0,
+                                             timestamp=_t.time() - 5.0)     # five seconds old
+            loc = types.SimpleNamespace(x=0.0, y=0.0, z=0.0)
+            rot = types.SimpleNamespace(yaw=0.0, pitch=0.0, roll=0.0)
+            tf = types.SimpleNamespace(location=loc, rotation=rot)
+            self.vehicle = types.SimpleNamespace(get_transform=lambda: tf)
+
+    adapter = Adapter()
+    perc = CameraLidarPerception(adapter, detector=Detector())
+    perc.yolox_inline = True
+    perc.inference_interval = 0.0
+    perc.min_sweep_advance_s = 0.0
+    out = None
+    for k in range(3):
+        adapter.latest_lidar = LidarScan(points=adapter.latest_lidar.points, timestamp=_t.time(),
+                                         frames=4, span_s=0.1, sim_time=1.0 + 0.1 * k,
+                                         sensor_matrix=np.eye(4))
+        out = perc.update()
+    perc.close()
+    assert out.healthy is True, "the laser still works, so the van still sees"
+    assert out.degraded is True and "CAMERA" in out.degraded_reason
+    assert out.objects, "and it still finds the thing in front of it"
+    assert all(o.object_type.value in ("obstacle", "vehicle") for o in out.objects), \
+        "with no picture, nothing may be named a person"
+
+
+def test_a_lost_lidar_is_still_a_full_stop():
+    import numpy as np
+    import time as _t
+    import pytest as _p
+    _p.importorskip("cv2")
+    from warp_av.perception.camera_lidar_perception import CameraLidarPerception
+
+    class Adapter:
+        latest_lidar = None
+        latest_camera = None
+        vehicle = None
+
+    perc = CameraLidarPerception(Adapter(), detector=types.SimpleNamespace(detect=lambda i: []))
+    out = perc.update()
+    perc.close()
+    assert out.healthy is False and "LIDAR" in out.reason

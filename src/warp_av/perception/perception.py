@@ -81,6 +81,10 @@ class PerceptionOutput:
     timestamp: float = field(default_factory=time.time)
     healthy: bool = True
     reason: str = "OK"
+    # True when the van is still seeing, but with less than all its senses: the LiDAR alone
+    # finds everything solid, and what a missing camera costs is the name on it (day 8).
+    degraded: bool = False
+    degraded_reason: str = ""
 
 
 class PerceptionSystem:

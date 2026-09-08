@@ -749,19 +749,26 @@ class CameraLidarPerception:
             now = time.time()
             camera = self.sensor_adapter.latest_camera
             lidar = self.sensor_adapter.latest_lidar
-            if camera is None:
-                return PerceptionOutput(healthy=False, reason="CAMERA_NO_DATA")
+            # Without the LiDAR the van is blind and must stop. Without the camera it can
+            # still see everything solid; what it loses is the name on each thing, so it
+            # carries on with no detections and says it is running degraded (day 8).
             if lidar is None:
                 return PerceptionOutput(healthy=False, reason="LIDAR_NO_DATA")
-            if now - camera.timestamp > 2.0:
-                return PerceptionOutput(healthy=False,
-                                        reason=f"CAMERA_STALE_{now - camera.timestamp:.1f}s")
+            camera_fault = ""
+            if camera is None:
+                camera_fault = "CAMERA_NO_DATA"
+            elif now - camera.timestamp > 2.0:
+                camera_fault = f"CAMERA_STALE_{now - camera.timestamp:.1f}s"
             if now - lidar.timestamp > 2.0:
                 return PerceptionOutput(healthy=False,
                                         reason=f"LIDAR_STALE_{now - lidar.timestamp:.1f}s")
 
             # ---- camera inference: worker thread (default) or inline (A/B) ----
-            if self.yolox_inline:
+            if camera_fault:
+                # no usable picture: run on the laser alone, with nothing named
+                self._cached_camera_detections = []
+                self.last_detection_age_s = 999.0
+            elif self.yolox_inline:
                 monotonic_now = time.monotonic()
                 if monotonic_now - self._last_inference_time >= self.inference_interval:
                     t0 = time.perf_counter()
@@ -786,6 +793,8 @@ class CameraLidarPerception:
                 if (self._worker.runs == 0 and self._worker.started_at is not None
                         and time.monotonic() - self._worker.started_at > self.detector_stall_s):
                     return PerceptionOutput(healthy=False, reason="CAMERA_LIDAR_ERROR: detector stalled")
+            if camera_fault:
+                camera = self._blank_camera_frame(camera)
             detections = self._cached_camera_detections
             # only a recent picture may overrule the shape rule: with a stale or missing
             # camera the van falls back to naming a car-sized blob a car
@@ -979,7 +988,9 @@ class CameraLidarPerception:
                 closest_obstacle_type=closest_type,
                 closest_obstacle_speed=closest_speed,
                 path_blocked=path_blocked,
-                timestamp=now, healthy=True, reason="OK")
+                timestamp=now, healthy=True,
+                reason="OK" if not camera_fault else f"LIDAR_ONLY: {camera_fault}",
+                degraded=bool(camera_fault), degraded_reason=camera_fault)
             self._last_tracked_sim_time = sim_time
             self._last_output = output
             return output
@@ -1209,6 +1220,17 @@ class CameraLidarPerception:
     # --------------------------------------------------------
     # FAULT TEST SUPPORT
     # --------------------------------------------------------
+
+    def _blank_camera_frame(self, camera):
+        """A stand-in picture, so the geometry that needs the camera's shape still works
+        while the camera itself is missing. Nothing is ever detected in it."""
+        if camera is not None:
+            return camera
+        import numpy as _np
+        from ..adapters.carla_sensor_adapter import CameraFrame
+        w, h = self.camera_model.width, self.camera_model.height
+        return CameraFrame(image=_np.zeros((h, w, 4), dtype=_np.uint8), width=w, height=h,
+                           fov=self.camera_model.fov_deg, timestamp=time.time())
 
     def close(self):
         """Stop the detector thread (shutdown)."""
