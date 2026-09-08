@@ -1022,3 +1022,101 @@ barrel parked 3 m off to the side:
 * Junctions produce about six ghost reports per update, none in the lane.
 * The planter beyond 20 m is still invisible.
 * Nothing the camera sees but the LiDAR misses is reported.
+
+# Perception V2, day 7: one sheet of what the van knows (2026-09-08)
+
+Days 1 to 6 each ended with a hunt for who else might be reading the thing I
+had just changed. The behaviour layer read three loose fields off the
+perception output, the web page rebuilt map coordinates itself, the planner
+wrote its answers back into perception's own object, and the parking learner
+read raw blobs. Day 7 puts one sheet in between.
+
+## The sheet
+
+`src/warp_av/world_model.py` holds `WorldModel`, built once a tick from the
+perception output and the van's pose:
+
+* every thing the van is following, with its place **in both frames** (metres
+  ahead of and right of the van, and where it stands on the map), its
+  measured size, what it is called, whether it is moving, how sure the van
+  is, and how old the sighting is;
+* `path`: what is in the way, how far, what kind, how fast, and which object
+  it is;
+* whether the eyes are working, and why not when they are not;
+* the traffic light, and when all of this was true.
+
+It answers the questions the rest of the stack actually asks:
+`in_corridor()`, `nearest_ahead()`, `moving_objects()`, `parked_objects()`,
+`of_kind()`, `crossing_vehicles()`, `by_id()`. It decides nothing. Nothing in
+it brakes, steers or plans.
+
+Wired in three places, all behaviour-neutral:
+
+* the state endpoint's object list is now written from the sheet, and a test
+  pins that every number matches the hand-written maths it replaced;
+* `GET /api/world` serves the whole sheet;
+* the behaviour layer's junction check asks `crossing_vehicles()` instead of
+  walking perception's list itself, and a test runs both ways over the same
+  seven vehicles and requires the same answer.
+
+## What the sheet found on its first day
+
+Publishing `stationary` for **every** object, rather than only the six placed
+ones the scorecard tracks, showed that day 6's result was too kind. On the
+four recordings, where nothing moves at all:
+
+| | before day 7 | after |
+|---|---|---|
+| things wrongly called moving, whole scene | 25.8 per update | **13.4** |
+| ... of those, within 25 m where the van acts | — | **1.8** |
+| fastest imaginary speed | 249.8 m/s | **30.0 m/s** |
+
+Day 6 measured only the six placed objects, all inside 22 m, and reported
+2.2 %. That number was true and is unchanged. It simply did not cover the far
+background, where a wall or a hedge is cut differently on every turn and its
+middle wanders metres.
+
+Four rules were added, each measured:
+
+1. **Nothing does 900 km/h.** A jump faster than any road user is two
+   different things being confused, not a measurement. The old tracker had
+   this check and I dropped it on day 6 when I replaced the update step; it
+   is back, both when a track starts and after every correction.
+2. **Scenery does not drive.** A blob longer than a bus is a wall or a hedge
+   and is never called moving.
+3. **A far thing must travel further** before it counts, 0.15 m per metre of
+   range, but never more than a walking person covers in the window, or a
+   pedestrian at 25 m would be dismissed as scenery.
+4. **The travel must be nearly a straight line** (0.92, up from 0.5). A car
+   rounding a bend still scores about 0.96; a blob whose middle shuffles
+   between two parts of the same object scores far less.
+
+Everything that really moves is still caught:
+
+| what | called moving after |
+|---|---|
+| a person walking at 25 m | 1.6 s |
+| a car crawling at 2 m/s, 12 m | 0.9 s |
+| a car at 8 m/s, 20 m | 0.4 s |
+| a car at 6 m/s, 40 m | 0.5 s |
+| a car rounding a bend | 0.4 s |
+
+## Nothing about the driving changed
+
+That was the day's constraint, and it holds:
+
+* 454 tests pass, 16 of them new;
+* the barrel drive test passes with no contact, a 7.42 m clearance and a stop
+  0.33 s after the trigger (day 4: no contact, 8.03 m, 0.31 s, at a different
+  spawn point);
+* the live probe still reports a barrel at 22, 16, 12 and 8 m, and a person
+  as a pedestrian at all four.
+
+## Still open
+
+* About 12 far ghosts per update are still called moving in junctions, all
+  beyond 25 m. They are scenery whose blob wanders; the honest fix is an
+  occupancy grid that models surfaces rather than treating every blob as an
+  object (day 9).
+* The planter beyond 20 m is invisible, and nothing the camera sees but the
+  LiDAR misses is reported.
