@@ -1299,3 +1299,87 @@ stopped and gets going again cleanly afterwards.
 * A degraded crawl is a fixed 2 m/s for 10 s. A real van would pull over
   rather than stop in a live lane, which is planning work, not perception.
 * The far-field ghosts and the invisible planter beyond 20 m are unchanged.
+
+# Perception V2, day 9: a map of free space (2026-09-08)
+
+Until today the van kept a list of things. A list answers "stop for that" and
+cannot answer two other questions it has to answer:
+
+* **where can I go?** Steering around anything needs the gap, not the object.
+* **what is that long thing?** A wall is one surface. Chopping it into blobs
+  invents objects that were never there, which is where about thirteen
+  imaginary moving objects per update were coming from.
+
+`src/warp_av/perception/occupancy.py` puts a grid on the van, 60 m across in
+squares of 25 cm, and marks every square as one of three things:
+
+| | meaning |
+|---|---|
+| **free** | a laser beam went through it and carried on |
+| **blocked** | a beam stopped there |
+| **not seen** | no beam has been through it, so nothing is claimed |
+
+**Not seen is kept apart from free on purpose.** Behind a parked van is
+unknown, not empty. A planner that treats the two the same drives into
+whatever is hiding there.
+
+Filling it in is one pass over the sweep. Every return becomes a bearing and a
+range; for each narrow slice of bearing the nearest solid return is where the
+world stops; everything nearer was passed through, so it is free; everything
+beyond is hidden. The grid is built from the same sweep and the same road
+decision the object list uses, so the two can never disagree.
+
+## Two mistakes worth recording
+
+**A thin thing can fall between two slices**, and the slice beside it would
+sweep free straight past it. Every slice is now also held back by the nearest
+wall its neighbours found. Getting this right took three attempts:
+
+* holding a slice back by its neighbours' *reach* wipes the map out, because
+  with slices this narrow most hold no points at all and a reach of zero
+  spreads everywhere;
+* holding it back by the neighbours' *wall* alone lets a slice that saw
+  nothing inherit a far wall and claim more space than it ever saw, which made
+  the numbers worse rather than better;
+* the smaller of the two is the only version that can lose free space and
+  never invent it.
+
+**Asking how far the van can go from the middle of the van** returns nothing.
+The squares under the van itself can never be seen, because its own returns
+are thrown away. The walk now starts at the nose.
+
+## Scored against the dense labelled scan
+
+| recording | road called free | things blocked | **things wrongly called free** | hidden | ms |
+|---|---|---|---|---|---|
+| straight road | 96.0 % | 72.0 % | 1.66 % | 26.3 % | 2.2 |
+| bend | 97.0 % | 72.8 % | 3.15 % | 24.1 % | 3.2 |
+| junction approach | 95.9 % | 64.3 % | 3.25 % | 32.4 % | 2.1 |
+| inside a junction | 92.8 % | 70.0 % | 2.87 % | 27.1 % | 1.9 |
+| **overall** | **95.4 %** | **69.8 %** | **2.73 %** | 27.5 % | **2.4** |
+
+The middle column looks low until you read the last: about a quarter of every
+solid thing is its own hidden interior. The laser sees the front face of a car,
+not the inside of it, and the grid correctly refuses to claim anything about
+the rest. Blocked plus hidden is 97 %.
+
+The column that matters for safety is the share of real things the map calls
+free: **2.73 %**, from 6.76 % before the shadow rule. Almost all of what is
+left is the flat planter, whose points the road filter still removes.
+
+## Live
+
+Parked on a clear road: free ahead 15.0 m. A car placed 9 m ahead: free ahead
+drops to 6.5 m and a wedge of "not seen" opens up behind it. A barrier added
+2.2 m to its right: free ahead 5.2 m and the free space to the right falls
+from 13.2 m to 5.5 m. `GET /api/grid` returns the numbers and a small picture
+of the map; the world sheet carries the summary.
+
+506 tests pass, 13 of them new.
+
+## Still open
+
+* The map is built fresh from each turn of the laser. It does not yet
+  accumulate over time, so what the van saw a second ago is forgotten.
+* Nothing steers by it yet. That is the planner's to use, and this was the
+  piece it was missing.
