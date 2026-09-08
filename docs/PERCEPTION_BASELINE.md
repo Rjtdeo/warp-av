@@ -449,3 +449,62 @@ no longer drops out of the object list.
   re-run before their old results are trusted (planned).
 * Camera boxes still lag the sweep they are matched to by up to ~0.5 s
   (was ~0.37 s); harmless at 4 m/s, and second-order to the match bug (fix 4).
+
+
+---
+
+# Perception V2, day 2: ring id, age and sensor pose on every LiDAR point; first replay fixture (2026-09-08, commit 4c68436)
+
+A foundation day: no decision changes. Every LiDAR point now carries its
+beam (ring) id, recovered from CARLA's per-channel counts before the sweep
+gluing (`decode_lidar` / `ring_ids` in the sensor adapter), and its age
+inside the sweep (`t_rel`, appended by the accumulator). `LidarScan` names
+its six columns (x, y, z, intensity, ring, t_rel), keeps the sensor pose of
+the newest delivery, and refuses a wrong column count. Every consumer reads
+the first three columns only (verified file by file). The probe now mounts
+its camera like the stack (pitch -10) and builds identical scans.
+
+Live check of the ring recovery: 32 rings, one elevation each, 10.0 down to
+-30.0 degrees, spread under 0.02 degrees within a ring.
+
+## Numbers that had to stay (fresh boot, day-1 code vs day-2 code)
+
+| | before | after |
+|---|---|---|
+| decisions per second | 9.3 | 9.2 |
+| work per tick | 29 ms | 40 ms (the probe was running alongside for part of the window) |
+| points per scan | 7,274 | 7,240 |
+| sweep errors | 0 | 0 |
+
+Probe, cluster fraction, `docs/perception_baseline/probe_2026-09-08_day2_{before,after}.csv`:
+
+| Object | 20 m | 15 m | 12 m | 10 m | 8 m | 6 m |
+|---|---|---|---|---|---|---|
+| barrel | 0.20 -> 0.35 | 0.40 -> 0.55 | 0.95 -> 1.00 | 1.00 | 1.00 | 1.00 |
+| cone | 0.60 -> 0.80 | 0.75 -> 0.75 | 1.00 | 1.00 | 1.00 | 1.00 |
+| planter | 0 | 0.55 -> 0.45 | 0.75 -> 0.75 | 1.00 | 1.00 | 1.00 |
+| car | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+| person | 0.95 -> 0.90 | 0.95 -> 1.00 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+Within run-to-run noise; the far barrel/cone rows moved up a little.
+
+## The first replay fixture
+
+`tests/fixtures/perception/town03_straight_a/` (3.8 MB), recorded with
+`tools/record_fixture.py` from the parked van with a barrel (9 m), planter
+(13 m), cone (16 m), car (22 m), pedestrian (6 m) and bin (12 m) placed:
+
+* `deliveries.npz`: 50 deliveries of a plain LiDAR configured exactly like
+  the van's own, with CARLA's drop-off: 95,921 points, about 7,360 per
+  rotation (the live stack reports 7,240), columns x, y, z, intensity, ring,
+  plus each delivery's simulation time and sensor pose;
+* `labels.npz`: the same seconds from the labelled LiDAR (no drop-off, about
+  twice as dense): the answer key, never fed to the pipeline;
+* 12 front-camera JPEGs with timestamps, `objects.json` with the true pose
+  and box of every placed object, `meta.json`.
+
+`tests/test_fixture_town03.py` glues the deliveries with the real
+accumulator (36 of 36 sectors), runs the real ground filter and clusterer,
+and requires a cluster within reach of every placed object. It passes on
+the Mac with no CARLA and no camera model. Day 3 turns this into the scored
+harness.
