@@ -48,6 +48,9 @@ class DetectedObject:
     width_m: float = 0.0
     height_m: float = 0.0
     yaw_deg: float = 0.0
+    # True while the van is satisfied this thing is parked: slow, and it has not gone
+    # anywhere over the last second and a half. A parked car reports speed exactly 0.0.
+    stationary: bool = True
     timestamp: float = field(default_factory=time.time)
 
 

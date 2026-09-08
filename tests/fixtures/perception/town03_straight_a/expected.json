@@ -5,37 +5,43 @@
    "min_recall": 0.9,
    "distance_m": 9.1,
    "visible": true,
-   "labelled_points": 16
+   "labelled_points": 16,
+   "expected_type": "obstacle"
   },
   "plantpot04": {
    "min_recall": 0.76,
    "distance_m": 13.0,
    "visible": true,
-   "labelled_points": 5
+   "labelled_points": 5,
+   "expected_type": "obstacle"
   },
   "trafficcone01": {
    "min_recall": 0.9,
    "distance_m": 16.1,
    "visible": true,
-   "labelled_points": 6
+   "labelled_points": 6,
+   "expected_type": "obstacle"
   },
   "model3": {
    "min_recall": 0.9,
    "distance_m": 22.0,
    "visible": true,
-   "labelled_points": 18
+   "labelled_points": 18,
+   "expected_type": "vehicle"
   },
   "walker": {
    "min_recall": 0.9,
    "distance_m": 6.0,
    "visible": true,
-   "labelled_points": 54
+   "labelled_points": 54,
+   "expected_type": "pedestrian"
   },
   "bin": {
    "min_recall": 0.9,
    "distance_m": 12.3,
    "visible": true,
-   "labelled_points": 14
+   "labelled_points": 14,
+   "expected_type": "obstacle"
   }
  },
  "max_phantoms_in_lane": 0,

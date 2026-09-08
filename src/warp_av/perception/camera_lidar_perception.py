@@ -904,6 +904,7 @@ class CameraLidarPerception:
                     "cls": c["cls"],
                     "confidence": c["conf"],
                     "weak": bool(c.get("weak", False)),   # a 2-point far blob: three sightings before it counts
+                    "distance": c["distance"],            # how much to trust this sighting (day 6)
                     "length_m": c.get("length_m", 0.0),
                     "width_m": c.get("width_m", 0.0),
                     "height_m": c.get("height") or 0.0,
@@ -931,6 +932,7 @@ class CameraLidarPerception:
                     confidence=(tr.confidence if tr.cls else 0.65) if not getattr(tr, "weak_only", False) else 0.35,
                     length_m=getattr(tr, "length_m", 0.0), width_m=getattr(tr, "width_m", 0.0),
                     height_m=getattr(tr, "height_m", 0.0), yaw_deg=getattr(tr, "yaw_deg", 0.0),
+                    stationary=bool(getattr(tr, "stationary", True)),
                     id=tr.tid, timestamp=now))
 
             # ---- simple forward in-path summary (route corridor refines) ----

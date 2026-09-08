@@ -303,6 +303,9 @@ class ObjectScore:
     seen_width_m: List[float] = field(default_factory=list)
     seen_height_m: List[float] = field(default_factory=list)
     seen_yaw_err_deg: List[float] = field(default_factory=list)
+    seen_speed_mps: List[float] = field(default_factory=list)    # what the van thought it was doing
+    seen_ids: List[int] = field(default_factory=list)            # the track number it was given
+    seen_stationary: List[bool] = field(default_factory=list)    # did the van call it parked?
 
     def box_distance(self, px: float, py: float) -> float:
         """How far a point lies outside this object's real footprint (0 = on it)."""
@@ -330,6 +333,30 @@ class ObjectScore:
         """Share of the sightings in which the van gave this thing the right name."""
         total = sum(self.types.values())
         return self.types.get(self.expected_type, 0) / total if total else None
+
+    @property
+    def max_speed_mps(self) -> Optional[float]:
+        """The fastest the van ever thought this thing was going."""
+        return max(self.seen_speed_mps) if self.seen_speed_mps else None
+
+    @property
+    def moving_share(self) -> Optional[float]:
+        """Share of sightings reported as moving at all."""
+        if not self.seen_speed_mps:
+            return None
+        return sum(1 for v in self.seen_speed_mps if v > 0.0) / len(self.seen_speed_mps)
+
+    @property
+    def called_parked(self) -> Optional[float]:
+        """Share of sightings in which the van said this thing was parked."""
+        if not self.seen_stationary:
+            return None
+        return sum(1 for v in self.seen_stationary if v) / len(self.seen_stationary)
+
+    @property
+    def id_switches(self) -> int:
+        """How many times the van gave this thing a new number."""
+        return sum(1 for a, b in zip(self.seen_ids, self.seen_ids[1:]) if a != b)
 
     @property
     def median_error_m(self) -> Optional[float]:
@@ -517,7 +544,8 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
            use_camera_frames: bool = True, cluster_cell_m: Optional[float] = None,
            keep_above_m: Optional[float] = None, far_range_m: Optional[float] = None,
            scripted_camera: bool = False, camera_miss: float = 0.0,
-           shape_naming_outside_camera_only: Optional[bool] = None) -> ReplayResult:
+           shape_naming_outside_camera_only: Optional[bool] = None,
+           gate_m: Optional[float] = None) -> ReplayResult:
     van = fx.meta["van"]
     adapter = ReplayAdapter(van)
     perc = CameraLidarPerception(adapter, detector=detector or StubDetector())
@@ -537,6 +565,8 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
         perc.ground_filter.keep_above_m = float(keep_above_m)
     if far_range_m:
         perc.far_range_m = float(far_range_m)
+    if gate_m:
+        perc.tracker.GATE_M = float(gate_m)
 
     # the tracker's clock: the van hands it the wall clock; here consecutive sweeps are
     # milliseconds apart in wall time but 0.1 s apart in simulation time, so feed it the
@@ -633,6 +663,9 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
                 tgt.hits += 1
                 tgt.errors_m.append(d)
                 tgt.types[ob.object_type.value] = tgt.types.get(ob.object_type.value, 0) + 1
+                tgt.seen_speed_mps.append(float(getattr(ob, "speed", 0.0)))
+                tgt.seen_stationary.append(bool(getattr(ob, "stationary", True)))
+                tgt.seen_ids.append(int(getattr(ob, "id", 0)))
                 if getattr(ob, "length_m", 0.0):
                     tgt.seen_length_m.append(float(ob.length_m))
                     tgt.seen_width_m.append(float(ob.width_m))
@@ -688,6 +721,13 @@ def format_report(results: List[ReplayResult]) -> str:
             names = f"{o.types} -> {'?' if nm is None else format(nm, '.2f')} right ({o.expected_type})"
             note = "" if o.visible else "   (hidden from the sensor: not scored)"
             lines.append(f"   {o.name:14s} {o.distance:5.1f} {o.size_m:5.1f} {pts:>9s} {o.recall:7.2f} {o.cluster_recall:8.2f} {err:>6s}  {names}{note}")
+        moving = [(o.name, o.moving_share, o.max_speed_mps, o.id_switches) for o in r.objects
+                  if o.visible and o.seen_speed_mps]
+        if moving:
+            lines.append("   standing still? (every one of these is parked, so the right answer is 0.00)")
+            for name, share, mx, sw in moving:
+                lines.append(f"   {name:14s} reported moving in {share:.2f} of sightings, "
+                             f"fastest {mx:.1f} m/s, renumbered {sw}x")
         rows = r.footprint_rows()
         if rows:
             lines.append(f"   footprint (long x short x tall, metres){'':6s} true{'':18s} measured      heading err")

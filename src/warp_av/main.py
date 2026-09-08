@@ -760,6 +760,9 @@ class WarpAV:
                         "width_m": round(getattr(obj, "width_m", 0.0), 2),
                         "height_m": round(getattr(obj, "height_m", 0.0), 2),
                         "yaw_deg": round(getattr(obj, "yaw_deg", 0.0), 1),
+                        # is it parked, or is it going somewhere? (Perception V2 day 6)
+                        "stationary": bool(getattr(obj, "stationary", True)),
+                        "speed": round(getattr(obj, "speed", 0.0), 2),
                     }
                     for obj in perception.objects
                 ],

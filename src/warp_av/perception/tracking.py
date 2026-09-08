@@ -150,17 +150,46 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
 # Tracking
 # ----------------------------------------------------------------------
 
+# ---- how much the sighting of a thing wobbles, and how hard a thing can accelerate ----
+# The LiDAR sees a different part of an object on every turn, so the middle of the blob
+# jitters even when nothing moves; that jitter grows with range. Believing it is what made
+# a parked bin look like it was doing 6.7 m/s (Perception V2 day 6).
+MEAS_NOISE_BASE_M = 0.25            # wobble of a near blob's middle
+MEAS_NOISE_PER_M = 0.02             # ... plus this much per metre of range
+ACCEL_NOISE_MPS2 = 2.5              # how briskly a road user may change speed: normal braking.
+                                    # Too small and the filter is so sure of itself that a car
+                                    # which stops takes 1.5 s to be believed; too large and
+                                    # parked things start to jitter again.
+STILL_SPEED_MPS = 0.6               # under this, and going nowhere, it is standing still
+MOVING_SPEED_MPS = 1.2              # over this it is moving again (a gap, so it cannot flicker)
+STILL_WINDOW_S = 1.5                # how far back to look when asking "has it gone anywhere?"
+STILL_TRAVEL_M = 0.7                # ... and how far it must have gone to count as moving
+STILL_STRAIGHTNESS = 0.5            # ... and that travel must be in one direction, not a shuffle
+STILL_MIN_SIGHTINGS = 4             # ... over at least this many sightings
+
+
 class Track:
-    __slots__ = ("tid", "wx", "wy", "vx", "vy", "cls", "confidence",
+    """One thing the van is following, with a constant-velocity motion filter.
+
+    The filter holds where the thing is and how fast it is going, and how sure it is of
+    each. A sighting nudges the estimate rather than replacing it, by an amount that
+    depends on how noisy that sighting is: a blob 30 m away barely moves the answer, a
+    solid one at 8 m moves it a lot. Standing still therefore looks like standing still.
+    """
+
+    __slots__ = ("tid", "x", "P", "cls", "confidence",
                  "last_seen", "hits", "strong_hits",
-                 "length_m", "width_m", "height_m", "yaw_deg")
+                 "length_m", "width_m", "height_m", "yaw_deg",
+                 "_history", "_still")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
-        self.wx = wx
-        self.wy = wy
-        self.vx = 0.0
-        self.vy = 0.0
+        self.x = [float(wx), float(wy), 0.0, 0.0]          # position and velocity, world frame
+        # sure about where it is, unsure how fast it is going
+        self.P = [[0.5, 0.0, 0.0, 0.0],
+                  [0.0, 0.5, 0.0, 0.0],
+                  [0.0, 0.0, 4.0, 0.0],
+                  [0.0, 0.0, 0.0, 4.0]]
         self.cls = None            # 'vehicle' | 'pedestrian' | None (unknown)
         self.confidence = 0.5
         self.last_seen = t
@@ -172,6 +201,25 @@ class Track:
         self.width_m = 0.0
         self.height_m = 0.0
         self.yaw_deg = 0.0         # heading of the long side, degrees, van frame at the sighting
+        self._history = [(t, float(wx), float(wy))]        # where it has been lately
+        self._still = True         # a thing is taken to be parked until it shows otherwise
+
+    # ---- what the rest of the stack reads -------------------------------------------
+    @property
+    def wx(self):
+        return self.x[0]
+
+    @property
+    def wy(self):
+        return self.x[1]
+
+    @property
+    def vx(self):
+        return self.x[2]
+
+    @property
+    def vy(self):
+        return self.x[3]
 
     @property
     def weak_only(self) -> bool:
@@ -179,7 +227,110 @@ class Track:
 
     @property
     def speed(self):
-        return math.hypot(self.vx, self.vy)
+        return math.hypot(self.x[2], self.x[3])
+
+    @property
+    def stationary(self) -> bool:
+        """True while the thing is parked: slow, and it has not gone anywhere."""
+        return self._still
+
+    @property
+    def travelled_m(self) -> float:
+        """How far it has actually moved over the last second and a half."""
+        if len(self._history) < 2:
+            return 0.0
+        _, x0, y0 = self._history[0]
+        _, x1, y1 = self._history[-1]
+        return math.hypot(x1 - x0, y1 - y0)
+
+    @property
+    def straightness(self) -> float:
+        """Of all the wandering it did, how much got it somewhere: 1 = a straight line,
+        near 0 = a shuffle on the spot. A blob whose middle jumps between two parts of the
+        same object shuffles; a car going past does not."""
+        if len(self._history) < 3:
+            return 1.0
+        path = sum(math.hypot(b[1] - a[1], b[2] - a[2])
+                   for a, b in zip(self._history, self._history[1:]))
+        return self.travelled_m / path if path > 1e-6 else 1.0
+
+    # ---- the motion filter ----------------------------------------------------------
+    def predict(self, dt: float) -> None:
+        """Carry the estimate forward by dt seconds, growing the uncertainty."""
+        if dt <= 0.0:
+            return
+        x, y, vx, vy = self.x
+        self.x = [x + vx * dt, y + vy * dt, vx, vy]
+        p = self.P
+        # P = F P F' + Q, written out for the 2 x (position, velocity) blocks
+        for i, j in ((0, 2), (1, 3)):
+            pii, pij, pjj = p[i][i], p[i][j], p[j][j]
+            p[i][i] = pii + 2.0 * dt * pij + dt * dt * pjj
+            p[i][j] = p[j][i] = pij + dt * pjj
+            p[j][j] = pjj
+        q = ACCEL_NOISE_MPS2 ** 2
+        for i, j in ((0, 2), (1, 3)):
+            p[i][i] += q * dt ** 4 / 4.0
+            p[i][j] += q * dt ** 3 / 2.0
+            p[j][i] = p[i][j]
+            p[j][j] += q * dt * dt
+
+    def correct(self, zx: float, zy: float, sigma_m: float, t: float) -> None:
+        """Fold in one sighting, trusting it as much as `sigma_m` says."""
+        r = max(0.05, sigma_m) ** 2
+        if len(self._history) == 1:
+            # second sighting: take the speed straight from the two positions. Waiting for
+            # the filter to work it out lets its guess fall behind a fast car, and the track
+            # then breaks and starts again every frame (day 6).
+            dt = t - self._history[0][0]
+            if dt > 1e-3:
+                self.x[2] = (zx - self._history[0][1]) / dt
+                self.x[3] = (zy - self._history[0][2]) / dt
+                spread = 2.0 * r / (dt * dt)
+                self.P[2][2] = self.P[3][3] = spread
+        for axis, (i, j) in enumerate(((0, 2), (1, 3))):
+            z = zx if axis == 0 else zy
+            p = self.P
+            innovation = z - self.x[i]
+            s = p[i][i] + r
+            k_pos = p[i][i] / s
+            k_vel = p[j][i] / s
+            self.x[i] += k_pos * innovation
+            self.x[j] += k_vel * innovation
+            pii, pij, pjj = p[i][i], p[i][j], p[j][j]
+            p[i][i] = pii - k_pos * pii
+            p[i][j] = p[j][i] = pij - k_pos * pij
+            p[j][j] = pjj - k_vel * pij
+        self.last_seen = t
+        self._history.append((t, self.x[0], self.x[1]))
+        while len(self._history) > 2 and t - self._history[0][0] > STILL_WINDOW_S:
+            self._history.pop(0)
+        self._update_still()
+
+    def _update_still(self) -> None:
+        """Parked or moving, decided over time and with a gap, so it cannot flicker."""
+        if len(self._history) < STILL_MIN_SIGHTINGS:
+            return          # too new to accuse of moving: two jittery sightings prove nothing
+        speed, travelled = self.speed, self.travelled_m
+        if self._still:
+            if (speed > MOVING_SPEED_MPS and travelled > STILL_TRAVEL_M
+                    and self.straightness > STILL_STRAIGHTNESS):
+                self._still = False
+        else:
+            if speed < STILL_SPEED_MPS and travelled < STILL_TRAVEL_M:
+                self._still = True
+
+
+def measurement_noise_m(o: dict) -> float:
+    """How much to distrust one sighting: mostly its range, since a far blob's middle
+    jumps about as different parts of the thing come back."""
+    d = o.get("distance")
+    if d is None:
+        d = math.hypot(o.get("wx", 0.0), o.get("wy", 0.0))
+    sigma = MEAS_NOISE_BASE_M + MEAS_NOISE_PER_M * float(d)
+    if o.get("weak"):
+        sigma *= 2.0               # a two-point far blob is barely a measurement
+    return sigma
 
 
 def _grow_size(tr: Track, o: dict) -> None:
@@ -200,7 +351,10 @@ class ObjectTracker:
     returns the live tracks (confirmed = seen at least `min_hits` times).
     """
 
-    GATE_M = 2.6            # max association distance per step
+    GATE_M = 2.0            # how far a sighting may sit from where a track was predicted...
+    GATE_SPEED_MPS = 4.0    # ... plus a step's worth of travel, for at least this speed, so a
+                            #     fast car is still caught on its second sighting while two
+                            #     parked things 2.4 m apart never swap tracks (day 6)
     DROP_AFTER_S = 1.2      # unseen this long -> forget
     VEL_ALPHA = 0.35        # velocity smoothing
     SPEED_DEADBAND = 0.4    # below this, report standing still
@@ -215,13 +369,17 @@ class ObjectTracker:
         # forget first, then associate: a track unseen for DROP_AFTER_S is
         # gone before this frame's sightings can revive it ("in a row" holds)
         self._tracks = [tr for tr in self._tracks if t - tr.last_seen <= self.DROP_AFTER_S]
+        for o in observations:
+            if "distance" not in o:
+                o["distance"] = None
         # Greedy nearest-neighbour association (fine at these densities).
         unmatched = list(range(len(observations)))
         pairs = []
         for tr in self._tracks:
-            best_j, best_d = None, self.GATE_M
-            px = tr.wx + tr.vx * max(0.0, t - tr.last_seen)
-            py = tr.wy + tr.vy * max(0.0, t - tr.last_seen)
+            dt = max(0.0, t - tr.last_seen)
+            best_j, best_d = None, self.GATE_M + dt * max(self.GATE_SPEED_MPS, tr.speed)
+            px = tr.wx + tr.vx * dt
+            py = tr.wy + tr.vy * dt
             for j in unmatched:
                 o = observations[j]
                 d = math.hypot(o["wx"] - px, o["wy"] - py)
@@ -233,15 +391,11 @@ class ObjectTracker:
 
         for tr, j in pairs:
             o = observations[j]
-            dt = max(1e-3, t - tr.last_seen)
-            ivx = (o["wx"] - tr.wx) / dt
-            ivy = (o["wy"] - tr.wy) / dt
-            # Reject teleport-grade velocity (association glitch)
-            if math.hypot(ivx, ivy) < 30.0:
-                tr.vx = (1 - self.VEL_ALPHA) * tr.vx + self.VEL_ALPHA * ivx
-                tr.vy = (1 - self.VEL_ALPHA) * tr.vy + self.VEL_ALPHA * ivy
-            tr.wx, tr.wy = o["wx"], o["wy"]
-            tr.last_seen = t
+            dt = max(0.0, t - tr.last_seen)
+            # carry the estimate forward, then let the sighting nudge it as much as its
+            # own noise deserves: no more turning blob jitter into speed (day 6)
+            tr.predict(dt)
+            tr.correct(o["wx"], o["wy"], measurement_noise_m(o), t)
             if o.get("weak"):
                 tr.hits += self.WEAK_HIT
             else:
@@ -268,5 +422,8 @@ class ObjectTracker:
         return [tr for tr in self._tracks if tr.hits >= self.MIN_HITS - 1e-6]
 
     def reported_speed(self, tr: Track) -> float:
+        """A thing the van has decided is parked reports exactly zero, not a wobble."""
+        if getattr(tr, "stationary", False):
+            return 0.0
         s = tr.speed
         return 0.0 if s < self.SPEED_DEADBAND else s
