@@ -121,7 +121,9 @@ def test_tracker_forgets_before_it_associates():
 
 def test_perception_wiring_for_fix3():
     src = open(PERC).read()
-    assert "vehicle_shaped(c, min_points=12 if self.thin_step <= 1 else 6)" in src
+    # day 5 split this into a loose rule outside the camera's view and a strict one inside
+    assert "base_points = 12 if self.thin_step <= 1 else 6" in src
+    assert "vehicle_shaped(c, min_points=base_points)" in src
     assert "self.last_clusters_before_cap = _tracking.LAST_CLUSTER_TOTAL" in src
     assert 'c.get("weak") and (c.get("height") is not None and c["height"] < 0.30)' in src
     assert '"weak": bool(c.get("weak", False))' in src

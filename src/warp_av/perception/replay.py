@@ -42,9 +42,11 @@ import numpy as np
 
 from ..adapters.carla_sensor_adapter import CameraFrame, LidarScan
 from ..adapters.lidar_sweep import LidarSweepAccumulator, azimuth_coverage_bins
-from .camera_lidar_perception import CameraLidarPerception
+from .camera_lidar_perception import (PERSON_CLASS, CameraDetection, CameraLidarPerception,
+                                       VEHICLE_CLASSES)
+from .camera_model import CameraModel
 from .ground_filter import GroundFilter, flat_cut
-from .tracking import cluster_points
+from .tracking import VEHICLE_MIN_EXTENT_M, VEHICLE_MIN_HEIGHT_M, cluster_points
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "perception"
 MIN_ADVANCE_S = 0.08              # the van's own rule: re-run the tracker when the sweep has moved on
@@ -52,6 +54,8 @@ WARMUP_UPDATES = 3                # the tracker needs two sightings; ignore the 
 GROUND_TAGS = {0, 1, 2, 10, 24, 25}   # unlabeled, road, sidewalk, terrain, road line, ground
 OBJECT_TAGS = (12, 13, 14, 15, 16, 18, 19, 20, 21)   # people, vehicles, props
 MIN_VISIBLE_POINTS = 3
+LIDAR_HEIGHT_M = 2.5
+VEHICLE_NAMES = {"model3", "tesla", "audi", "mercedes", "sprinter", "cybertruck", "mkz"}
 MATCH_SLACK_M = 1.0               # how far outside its real footprint a report still counts
 GRAB_RADIUS_M = 2.0               # labelled points this far from a placed object belong to it
 BANDS = ((0.0, 10.0), (10.0, 20.0), (20.0, 35.0))
@@ -108,6 +112,66 @@ class StubDetector:
     def detect(self, image):
         self.calls += 1
         return list(self.detections)
+
+
+class ScriptedCamera:
+    """A perfect camera, for testing the fusion instead of the model (day 5).
+
+    It draws a box around every placed person and car exactly where the geometry says
+    it must appear, and ignores props, which is what YOLOX does: the COCO classes have
+    no barrel, cone or planter. What this measures is whether the van attaches the box
+    to the right blob and gives it the right name.
+    """
+
+    def __init__(self, targets: List["ObjectScore"], camera: Optional[CameraModel] = None,
+                 miss: float = 0.0):
+        self.targets = targets
+        self.camera = camera or CameraModel()
+        self.miss = miss           # share of frames in which the camera sees nothing
+        self.calls = 0
+
+    def detect(self, image):
+        self.calls += 1
+        if self.miss and (self.calls % max(1, round(1.0 / self.miss)) == 0):
+            return []
+        out = []
+        for t in self.targets:
+            kind = PERSON_CLASS if t.name.startswith("walker") else (2 if t.name in VEHICLE_NAMES else None)
+            if kind is None or t.true_length_m <= 0.0:
+                continue
+            box = self.box_for(t)
+            if box is not None:
+                out.append(CameraDetection(class_id=kind, label="person" if kind == PERSON_CLASS else "car",
+                                           confidence=0.9, box=box))
+        return out
+
+    def box_for(self, t: "ObjectScore") -> Optional[Tuple[float, float, float, float]]:
+        """The image box around an object, from the corners of its whole body.
+
+        A real detector draws its box around the object it recognises, not around the
+        part the LiDAR happens to hit, so this uses CARLA's own box, which is right for
+        people and cars (for static props it is world-aligned and unusable, but the
+        scripted camera never draws those).
+        """
+        cx, cy = t.x, t.y
+        a = math.radians(t.body_yaw_deg)
+        hl, hw = max(t.body_length_m, t.true_length_m) / 2.0, max(t.body_width_m, t.true_width_m) / 2.0
+        us, vs = [], []
+        for du in (-hl, hl):
+            for dv in (-hw, hw):
+                px = cx + du * math.cos(a) - dv * math.sin(a)
+                py = cy + du * math.sin(a) + dv * math.cos(a)
+                for pz in (-LIDAR_HEIGHT_M, -LIDAR_HEIGHT_M + max(0.3, max(t.body_height_m, t.true_height_m))):
+                    uv = self.camera.project(px, py, pz)
+                    if uv is None:
+                        return None
+                    us.append(uv[0]); vs.append(uv[1])
+        if not us:
+            return None
+        x1, x2, y1, y2 = min(us), max(us), min(vs), max(vs)
+        if x2 < 0 or y2 < 0 or x1 > self.camera.width or y1 > self.camera.height:
+            return None            # outside the picture: the camera cannot see it
+        return (x1, y1, x2 - x1, y2 - y1)
 
 
 class ReplayAdapter:
@@ -222,6 +286,10 @@ class ObjectScore:
     true_width_m: float = 0.0
     true_height_m: float = 0.0
     true_yaw_deg: float = 0.0     # heading of its long side in the van's frame
+    body_length_m: float = 0.0    # the whole body from CARLA (right for people and cars)
+    body_width_m: float = 0.0
+    body_height_m: float = 0.0
+    body_yaw_deg: float = 0.0
     box_x: Optional[float] = None  # centre of the outline the labelled scan shows (the visible face)
     box_y: Optional[float] = None
     labelled_points: int = -1     # points the labelled LiDAR (no drop-off) returned from it: -1 = no answer key
@@ -230,6 +298,7 @@ class ObjectScore:
     cluster_hits: int = 0
     errors_m: List[float] = field(default_factory=list)
     types: Dict[str, int] = field(default_factory=dict)
+    expected_type: str = "obstacle"        # what the van should call this thing
     seen_length_m: List[float] = field(default_factory=list)     # the footprint the van measured
     seen_width_m: List[float] = field(default_factory=list)
     seen_height_m: List[float] = field(default_factory=list)
@@ -255,6 +324,12 @@ class ObjectScore:
     @property
     def cluster_recall(self) -> float:
         return self.cluster_hits / self.updates if self.updates else 0.0
+
+    @property
+    def named_right(self) -> Optional[float]:
+        """Share of the sightings in which the van gave this thing the right name."""
+        total = sum(self.types.values())
+        return self.types.get(self.expected_type, 0) / total if total else None
 
     @property
     def median_error_m(self) -> Optional[float]:
@@ -440,10 +515,18 @@ def classify_report(x: float, y: float, solid_xy: np.ndarray, walk_xy: Optional[
 
 def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=None,
            use_camera_frames: bool = True, cluster_cell_m: Optional[float] = None,
-           keep_above_m: Optional[float] = None, far_range_m: Optional[float] = None) -> ReplayResult:
+           keep_above_m: Optional[float] = None, far_range_m: Optional[float] = None,
+           scripted_camera: bool = False, camera_miss: float = 0.0,
+           shape_naming_outside_camera_only: Optional[bool] = None) -> ReplayResult:
     van = fx.meta["van"]
     adapter = ReplayAdapter(van)
     perc = CameraLidarPerception(adapter, detector=detector or StubDetector())
+    if shape_naming_outside_camera_only is not None:
+        # False = the old behaviour: shape names a vehicle anywhere, camera or not
+        if not shape_naming_outside_camera_only:
+            perc.strict_vehicle_extent_m = VEHICLE_MIN_EXTENT_M
+            perc.strict_vehicle_points = 0
+            perc.strict_vehicle_height_m = VEHICLE_MIN_HEIGHT_M
     perc.yolox_inline = True                 # the stand-in runs inline, every update
     perc.inference_interval = 0.0
     perc.ground_filter_mode = ground_mode
@@ -484,10 +567,16 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
         if any(t.name == label for t in targets):
             label = f"{label}_{sum(t.name.startswith(label) for t in targets) + 1}"
         tl, tw, th, tyaw = carla_footprint(o, van)
+        expected = ("pedestrian" if label.startswith("walker")
+                    else "vehicle" if label in VEHICLE_NAMES else "obstacle")
         targets.append(ObjectScore(label, ox, oy, math.hypot(ox, oy), object_reach(o),
                                    size_m=max(0.5, math.hypot(ext[0], ext[1])),
-                                   true_length_m=tl, true_width_m=tw, true_height_m=th, true_yaw_deg=tyaw))
+                                   true_length_m=tl, true_width_m=tw, true_height_m=th, true_yaw_deg=tyaw,
+                                   body_length_m=tl, body_width_m=tw, body_height_m=th, body_yaw_deg=tyaw,
+                                   expected_type=expected))
     measure_targets(targets, lab)
+    if scripted_camera and detector is None:
+        perc.detector = ScriptedCamera(targets, perc.camera_model, miss=camera_miss)
 
     solid_xy = walk_xy = None
     if lab is not None:
@@ -595,8 +684,10 @@ def format_report(results: List[ReplayResult]) -> str:
         for o in sorted(r.objects, key=lambda o: o.distance):
             err = "-" if o.median_error_m is None else f"{o.median_error_m:.2f}"
             pts = "?" if o.labelled_points < 0 else str(o.labelled_points)
+            nm = o.named_right
+            names = f"{o.types} -> {'?' if nm is None else format(nm, '.2f')} right ({o.expected_type})"
             note = "" if o.visible else "   (hidden from the sensor: not scored)"
-            lines.append(f"   {o.name:14s} {o.distance:5.1f} {o.size_m:5.1f} {pts:>9s} {o.recall:7.2f} {o.cluster_recall:8.2f} {err:>6s}  {o.types}{note}")
+            lines.append(f"   {o.name:14s} {o.distance:5.1f} {o.size_m:5.1f} {pts:>9s} {o.recall:7.2f} {o.cluster_recall:8.2f} {err:>6s}  {names}{note}")
         rows = r.footprint_rows()
         if rows:
             lines.append(f"   footprint (long x short x tall, metres){'':6s} true{'':18s} measured      heading err")

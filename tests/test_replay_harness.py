@@ -166,6 +166,20 @@ def test_labels_are_the_answer_key():
     assert g["road_deleted"] > 0.9, "the ground filter should delete nearly all road points of the labelled sweep"
 
 
+@needs_fixtures
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.name for p in FIXTURES])
+def test_the_camera_names_things_right(path):
+    """Day 5: with a camera that boxes every person and car exactly where the geometry
+    says, the van must give every object its right name. This tests the fusion, not the
+    detector: whether the box lands on the right blob and the name reaches the output."""
+    r = rp.replay(rp.load_fixture(path), scripted_camera=True)
+    for o in r.objects:
+        if not o.visible or o.named_right is None:
+            continue
+        assert o.named_right >= 0.9, \
+            f"{path.name}: {o.name} should be a {o.expected_type}, was called {o.types}"
+
+
 def test_box_distance():
     # a 4 m long, 2 m wide box pointing straight ahead, centred 10 m in front
     assert rp.box_distance(10.0, 0.0, 10.0, 0.0, 0.0, 4.0, 2.0) == 0.0

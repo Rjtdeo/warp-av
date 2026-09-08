@@ -103,6 +103,22 @@ def box_contains(box, u: float, v: float, margin_px: float = 12.0) -> bool:
     return (x1 - margin_px) <= u <= (x2 + margin_px) and (y1 - margin_px) <= v <= (y2 + margin_px)
 
 
+def box_centre(box) -> Tuple[float, float]:
+    x1, y1, x2, y2 = box_edges(box)
+    return (x1 + x2) / 2.0, (y1 + y2) / 2.0
+
+
+def box_foot(box) -> Tuple[float, float]:
+    """The middle of the box's bottom edge: where the thing meets the ground."""
+    x1, _, x2, y2 = box_edges(box)
+    return (x1 + x2) / 2.0, y2
+
+
+def ground_point(cluster: dict, lidar_height_m: float = LIDAR_MOUNT[2]) -> Tuple[float, float, float]:
+    """The road directly under a cluster: what the bottom of a camera box looks at."""
+    return float(cluster["x"]), float(cluster["y"]), -lidar_height_m
+
+
 def cluster_point(cluster: dict, lidar_height_m: float = LIDAR_MOUNT[2]) -> Tuple[float, float, float]:
     """A cluster is a footprint on the ground plus a height; aim at the middle of the
     thing, which is where a detector's box is centred, not at its feet."""

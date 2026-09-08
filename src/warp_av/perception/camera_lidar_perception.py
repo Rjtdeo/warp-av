@@ -39,7 +39,8 @@ import cv2
 import numpy as np
 
 from . import tracking as _tracking
-from .camera_model import CameraModel, box_contains, cluster_point
+from .camera_model import (CameraModel, box_contains, box_edges, box_foot, cluster_point,
+                           ground_point)
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import cluster_points, ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped
 from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
@@ -668,9 +669,15 @@ class CameraLidarPerception:
         self.camera_model = CameraModel()
         self.last_camera_model = self.camera_model
         self.fusion_margin_px = 12.0
+        # how far the box height may differ from what the blob's size and range imply
+        self.fusion_size_ratio = 2.5
         # inside the camera's view the camera names things; the boxy-means-vehicle rule
         # is for the sides and the back, where the front camera cannot see
-        self.shape_naming_outside_camera_only = True
+        # inside the camera's view a blob must be plainly car-sized before shape alone names
+        # it a vehicle; outside the view the old, looser rule still applies
+        self.strict_vehicle_extent_m = 1.6
+        self.strict_vehicle_points = 25
+        self.strict_vehicle_height_m = 0.7
         self.last_camera_labels = 0
         self.last_camera_detections = 0
         self._last_tracked_sim_time = None
@@ -825,6 +832,7 @@ class CameraLidarPerception:
                 c["cls"] = None
                 c["conf"] = 0.0
                 c["uv"] = cam.project(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M))
+                c["uv_foot"] = cam.project(*ground_point(c, DEFAULT_LIDAR_HEIGHT_M))
             matched_boxes = 0
             for det in detections:
                 cls = ("pedestrian" if det.class_id == PERSON_CLASS
@@ -832,13 +840,27 @@ class CameraLidarPerception:
                        else None)
                 if cls is None:
                     continue
-                best = None
+                # Which blob is this box drawn around? Not simply the nearest one inside it:
+                # a cone standing in front of a car sits inside the car's box and would steal
+                # its name. The bottom of a box is where the thing touches the road, so the
+                # blob whose own ground point lands nearest that edge is the right one, and
+                # the box's height must suit the blob's range (day 5).
+                fu, fv = box_foot(det.box)
+                _, by1, _, by2 = box_edges(det.box)
+                box_h = max(1.0, by2 - by1)
+                best, best_score = None, None
                 for c in clusters:
-                    if c["uv"] is None or c["cls"] is not None:
+                    if c["uv"] is None or c["cls"] is not None or c["uv_foot"] is None:
                         continue
-                    if box_contains(det.box, c["uv"][0], c["uv"][1], self.fusion_margin_px):
-                        if best is None or c["distance"] < best["distance"]:
-                            best = c
+                    if not box_contains(det.box, c["uv"][0], c["uv"][1], self.fusion_margin_px):
+                        continue
+                    height_m = c.get("height") or 0.5
+                    want_px = cam.focal_px * max(0.3, height_m) / max(1.0, c["distance"])
+                    if not (1.0 / self.fusion_size_ratio) <= (want_px / box_h) <= self.fusion_size_ratio:
+                        continue          # a thing of that size at that range cannot fill this box
+                    score = math.hypot(c["uv_foot"][0] - fu, c["uv_foot"][1] - fv)
+                    if best_score is None or score < best_score:
+                        best, best_score = c, score
                 if best is not None:
                     best["cls"] = cls
                     best["conf"] = float(det.confidence)
@@ -849,18 +871,25 @@ class CameraLidarPerception:
             # Shape naming, for the sides and the back where the front camera cannot look:
             # a car-sized solid blob out there is a car. Inside the camera's view the
             # camera decides, so a bin is no longer called a vehicle for being boxy (day 5).
+            base_points = 12 if self.thin_step <= 1 else 6
             for c in clusters:
                 if c["cls"] is not None:
                     continue
-                # 12 raw points with every point kept (fix 3); 6 under the old 3x thinning
-                if not vehicle_shaped(c, min_points=12 if self.thin_step <= 1 else 6):
-                    continue
-                if self.shape_naming_outside_camera_only and c.get("uv") is not None \
-                        and cam.in_view(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M), margin_px=0.0) \
-                        and camera_fresh:
-                    continue
-                c["cls"] = "vehicle"
-                c["conf"] = 0.45
+                seen_by_camera = (camera_fresh and c.get("uv") is not None
+                                  and cam.in_view(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M)))
+                if seen_by_camera:
+                    # the camera looked straight at it and did not call it a car, so only a
+                    # blob that is unmistakably car-sized may still be named one. This is what
+                    # stops a bin, or a bin glued to a planter, from becoming a "vehicle".
+                    ok = vehicle_shaped(c, min_points=max(base_points, self.strict_vehicle_points),
+                                        min_extent=self.strict_vehicle_extent_m,
+                                        min_height=self.strict_vehicle_height_m)
+                else:
+                    # to the sides and behind, the camera never looked: shape is all we have
+                    ok = vehicle_shaped(c, min_points=base_points)
+                if ok:
+                    c["cls"] = "vehicle"
+                    c["conf"] = 0.45 if not seen_by_camera else 0.40
 
             # ---- ego -> world, then track ----
             tf = self.sensor_adapter.vehicle.get_transform()

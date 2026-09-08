@@ -33,6 +33,12 @@ def main():
     ap.add_argument("--thin", type=int, default=1)
     ap.add_argument("--cell", type=float, default=None, help="clustering grid in metres (default: the van's)")
     ap.add_argument("--keep-above", type=float, default=None, help="ground cut in metres (default: the van's)")
+    ap.add_argument("--camera", choices=["none", "perfect"], default="none",
+                    help="none = no camera at all (LiDAR shape only); perfect = a scripted camera that "
+                         "boxes every person and car exactly where the geometry says, which tests the "
+                         "fusion instead of the model")
+    ap.add_argument("--camera-miss", type=float, default=0.0,
+                    help="with --camera perfect, the share of frames in which it sees nothing")
     ap.add_argument("--fixture", default=None, help="one fixture name; default all")
     ap.add_argument("--json", default=None)
     ap.add_argument("--set-baseline", action="store_true")
@@ -43,7 +49,8 @@ def main():
     for p in paths:
         fx = load_fixture(p)
         results.append(replay(fx, ground_mode=a.ground, thin=a.thin,
-                              cluster_cell_m=a.cell, keep_above_m=a.keep_above))
+                              cluster_cell_m=a.cell, keep_above_m=a.keep_above,
+                              scripted_camera=(a.camera == "perfect"), camera_miss=a.camera_miss))
     print(format_report(results))
     if a.json:
         Path(a.json).write_text(json.dumps([{"fixture": r.fixture, "updates": r.updates, "rows": r.as_rows(),
@@ -59,7 +66,8 @@ def main():
                         "that drops below them fails tests/test_replay_harness.py",
                 "objects": {o.name: {"min_recall": round(max(0.0, o.recall - RECALL_MARGIN), 2) if o.visible else 0.0,
                                      "distance_m": round(o.distance, 1), "visible": o.visible,
-                                     "labelled_points": o.labelled_points} for o in r.objects},
+                                     "labelled_points": o.labelled_points,
+                                     "expected_type": o.expected_type} for o in r.objects},
                 "max_phantoms_in_lane": r.phantoms_in_lane,
                 "max_merged_per_update": round(r.merged / max(1, r.updates - WARMUP_UPDATES - r.unhealthy) + MERGE_MARGIN, 2),
                 "max_phantoms_per_update": round(r.phantoms / max(1, r.updates - WARMUP_UPDATES - r.unhealthy) + PHANTOM_MARGIN, 2),

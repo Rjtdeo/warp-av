@@ -1,0 +1,60 @@
+== town03_bend_a: 24 updates, 35/36 sectors, 10.7 ms each; per update: 76.4 reports = placed objects + 63.6 solid things + 6.2 kerb + 1.6 phantoms (0.0 within 20 m, 0.0 in lane); merged blobs 0.1; road deleted 100.0 %, object points kept 82.8 %, 0-10 m 90 %, 10-20 m 84 %, 20-35 m 100 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           5.5   0.5        62    1.00     1.00   0.10  {'pedestrian': 21} -> 1.00 right (pedestrian)
+   barrel           8.3   0.5        16    0.95     0.95   0.17  {'obstacle': 20} -> 1.00 right (obstacle)
+   bin             11.5   0.5        19    1.00     1.00   0.14  {'obstacle': 21} -> 1.00 right (obstacle)
+   plantpot04      11.7   2.5        14    0.05     0.10   3.01  {'obstacle': 1} -> 1.00 right (obstacle)
+   trafficcone01   14.7   0.6        12    1.00     0.95   0.23  {'obstacle': 21} -> 1.00 right (obstacle)
+   model3          19.6   2.6        36    1.00     1.00   1.28  {'vehicle': 21} -> 1.00 right (vehicle)
+   footprint (long x short x tall, metres)       true                   measured      heading err
+   barrel           8.3        0.33 x 0.09 x 0.77       0.36 x 0.11 x 0.77       19.3 deg
+   plantpot04      11.7        2.04 x 0.65 x 0.17       2.27 x 0.70 x 0.77       18.0 deg
+   trafficcone01   14.7        1.39 x 0.35 x 1.08       1.29 x 0.38 x 1.08        9.2 deg
+   model3          19.6        3.89 x 1.48 x 1.56       4.40 x 1.48 x 1.56        1.9 deg
+   walker           5.5        0.47 x 0.26 x 1.83       0.53 x 0.25 x 1.83        7.2 deg
+   bin             11.5        0.51 x 0.42 x 1.10       2.26 x 0.50 x 1.11       24.8 deg
+== town03_in_junction_a: 26 updates, 35/36 sectors, 11.0 ms each; per update: 85.8 reports = placed objects + 66.4 solid things + 3.3 kerb + 11.3 phantoms (2.5 within 20 m, 0.0 in lane); merged blobs 0.0; road deleted 99.7 %, object points kept 89.5 %, 0-10 m 99 %, 10-20 m 90 %, 20-35 m 55 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           5.8   0.5        52    1.00     1.00   0.10  {'pedestrian': 23} -> 1.00 right (pedestrian)
+   barrel           8.2   0.5        16    1.00     1.00   0.17  {'obstacle': 23} -> 1.00 right (obstacle)
+   bin             10.5   0.5        17    1.00     1.00   0.22  {'obstacle': 23} -> 1.00 right (obstacle)
+   plantpot04      11.9   2.5         9    0.30     0.13   1.51  {'obstacle': 7} -> 1.00 right (obstacle)
+   trafficcone01   14.1   0.6        10    0.52     0.30   0.23  {'obstacle': 12} -> 1.00 right (obstacle)
+   model3          19.2   2.6        37    1.00     1.00   1.26  {'vehicle': 23} -> 1.00 right (vehicle)
+   footprint (long x short x tall, metres)       true                   measured      heading err
+   barrel           8.2        0.33 x 0.07 x 0.80       0.37 x 0.13 x 0.80       36.9 deg
+   plantpot04      11.9        2.01 x 0.72 x 0.17       3.03 x 0.31 x 1.03       19.2 deg
+   trafficcone01   14.1        1.87 x 0.14 x 0.83       2.92 x 1.06 x 1.13       41.5 deg
+   model3          19.2        3.89 x 1.24 x 1.58       4.33 x 1.53 x 1.58        1.9 deg
+   walker           5.8        0.52 x 0.24 x 1.80       0.52 x 0.26 x 1.80        2.5 deg
+   bin             10.5        0.45 x 0.37 x 1.03       2.85 x 2.45 x 1.03       26.2 deg
+== town03_junction_a: 25 updates, 35/36 sectors, 10.8 ms each; per update: 70.5 reports = placed objects + 45.7 solid things + 14.2 kerb + 4.7 phantoms (0.6 within 20 m, 0.0 in lane); merged blobs 0.0; road deleted 100.0 %, object points kept 77.8 %, 0-10 m 98 %, 10-20 m 80 %, 20-35 m 83 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           6.1   0.5        47    1.00     1.00   0.11  {'pedestrian': 22} -> 1.00 right (pedestrian)
+   barrel           9.0   0.5        12    1.00     1.00   0.18  {'obstacle': 22} -> 1.00 right (obstacle)
+   bin             12.1   0.5        13    1.00     1.00   0.21  {'obstacle': 22} -> 1.00 right (obstacle)
+   plantpot04      13.0   2.5         5    0.91     0.64   1.34  {'obstacle': 20} -> 1.00 right (obstacle)
+   trafficcone01   16.0   0.6         6    1.00     1.00   0.24  {'obstacle': 22} -> 1.00 right (obstacle)
+   model3          22.2   2.6        17    1.00     1.00   2.13  {'vehicle': 22} -> 1.00 right (vehicle)
+   footprint (long x short x tall, metres)       true                   measured      heading err
+   barrel           9.0        0.24 x 0.02 x 0.83       0.37 x 0.14 x 0.83       18.1 deg
+   plantpot04      13.0        0.58 x 0.39 x 0.17       1.86 x 0.59 x 0.17       77.3 deg
+   trafficcone01   16.0        0.21 x 0.02 x 0.96       2.57 x 0.69 x 0.97       52.9 deg
+   model3          22.2        1.62 x 0.43 x 1.46       2.23 x 1.39 x 1.48       22.6 deg
+   walker           6.1        0.52 x 0.29 x 1.76       0.54 x 0.26 x 1.76        7.3 deg
+   bin             12.1        0.56 x 0.29 x 1.07       0.61 x 0.25 x 1.07       15.9 deg
+== town03_straight_a: 24 updates, 35/36 sectors, 10.0 ms each; per update: 56.4 reports = placed objects + 48.3 solid things + 1.2 kerb + 1.0 phantoms (0.0 within 20 m, 0.0 in lane); merged blobs 0.0; road deleted 99.9 %, object points kept 88.3 %, 0-10 m 94 %, 10-20 m 86 %, 20-35 m 100 %
+   object          dist  size lidar pts  recall  cluster  err m  named as
+   walker           6.0   0.5        54    1.00     1.00   0.10  {'pedestrian': 21} -> 1.00 right (pedestrian)
+   barrel           9.1   0.5        16    1.00     1.00   0.16  {'obstacle': 21} -> 1.00 right (obstacle)
+   bin             12.3   0.5        14    1.00     1.00   0.23  {'obstacle': 21} -> 1.00 right (obstacle)
+   plantpot04      13.0   2.5         5    0.86     0.67   1.22  {'obstacle': 18} -> 1.00 right (obstacle)
+   trafficcone01   16.1   0.6         6    1.00     1.00   0.23  {'obstacle': 21} -> 1.00 right (obstacle)
+   model3          22.0   2.6        18    1.00     1.00   2.11  {'vehicle': 21} -> 1.00 right (vehicle)
+   footprint (long x short x tall, metres)       true                   measured      heading err
+   barrel           9.1        0.36 x 0.11 x 0.82       0.37 x 0.13 x 0.82       17.3 deg
+   plantpot04      13.0        0.66 x 0.43 x 0.17       1.83 x 0.65 x 0.17       88.1 deg
+   trafficcone01   16.1        0.21 x 0.02 x 0.96       2.34 x 0.59 x 0.96       59.3 deg
+   model3          22.0        1.62 x 0.49 x 1.47       1.92 x 1.09 x 1.47       24.6 deg
+   walker           6.0        0.43 x 0.22 x 1.78       0.51 x 0.24 x 1.78        3.2 deg
+   bin             12.3        0.50 x 0.15 x 1.06       0.60 x 0.31 x 1.06       34.2 deg
