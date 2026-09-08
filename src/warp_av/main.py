@@ -753,6 +753,13 @@ class WarpAV:
                             + math.cos(pose.yaw) * obj.y,
                             2
                         ),
+
+                        # the footprint the LiDAR measured (Perception V2 day 4);
+                        # 0.0 means not measured, as in camera-only and ground-truth modes
+                        "length_m": round(getattr(obj, "length_m", 0.0), 2),
+                        "width_m": round(getattr(obj, "width_m", 0.0), 2),
+                        "height_m": round(getattr(obj, "height_m", 0.0), 2),
+                        "yaw_deg": round(getattr(obj, "yaw_deg", 0.0), 1),
                     }
                     for obj in perception.objects
                 ],
