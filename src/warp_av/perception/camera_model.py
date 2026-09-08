@@ -103,6 +103,19 @@ def box_contains(box, u: float, v: float, margin_px: float = 12.0) -> bool:
     return (x1 - margin_px) <= u <= (x2 + margin_px) and (y1 - margin_px) <= v <= (y2 + margin_px)
 
 
+def box_overlap(box, other) -> float:
+    """What share of `box` sits over `other`. 0 = they do not touch, 1 = box is inside other.
+
+    Used to tell a person standing beside a bicycle from a person riding one.
+    """
+    ax1, ay1, ax2, ay2 = box_edges(box)
+    bx1, by1, bx2, by2 = box_edges(other)
+    w = max(0.0, min(ax2, bx2) - max(ax1, bx1))
+    h = max(0.0, min(ay2, by2) - max(ay1, by1))
+    area = max(1e-9, (ax2 - ax1) * (ay2 - ay1))
+    return (w * h) / area
+
+
 def box_centre(box) -> Tuple[float, float]:
     x1, y1, x2, y2 = box_edges(box)
     return (x1 + x2) / 2.0, (y1 + y2) / 2.0

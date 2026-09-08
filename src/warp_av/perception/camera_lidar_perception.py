@@ -39,8 +39,8 @@ import cv2
 import numpy as np
 
 from . import tracking as _tracking
-from .camera_model import (CameraModel, box_contains, box_edges, box_foot, cluster_point,
-                           ground_point)
+from .camera_model import (CameraModel, box_contains, box_edges, box_foot, box_overlap,
+                           cluster_point, ground_point)
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import (cluster_points, clearance_radius_m, ObjectTracker, MIN_POINTS_FAR,
                        FAR_RANGE_M, vehicle_shaped)
@@ -88,6 +88,14 @@ VEHICLE_CLASSES = {
     5,   # bus
     7,   # truck
 }
+
+# A cyclist is not a class the camera model knows: it reports a person and a bicycle in the
+# same place. When a person's box sits on top of one of these, that person is riding.
+RIDDEN_CLASSES = {
+    1,   # bicycle
+    3,   # motorcycle
+}
+RIDER_OVERLAP = 0.35        # share of the person's box that must sit over the bike
 
 
 # ============================================================
@@ -835,10 +843,17 @@ class CameraLidarPerception:
                 c["uv"] = cam.project(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M))
                 c["uv_foot"] = cam.project(*ground_point(c, DEFAULT_LIDAR_HEIGHT_M))
             matched_boxes = 0
+            ridden = [d for d in detections if d.class_id in RIDDEN_CLASSES]
             for det in detections:
-                cls = ("pedestrian" if det.class_id == PERSON_CLASS
-                       else "vehicle" if det.class_id in VEHICLE_CLASSES
-                       else None)
+                if det.class_id == PERSON_CLASS:
+                    # a person standing on a bicycle's box is riding it, and a cyclist needs
+                    # a vehicle's room while still being a person to give way to
+                    cls = "cyclist" if any(box_overlap(det.box, b.box) >= RIDER_OVERLAP
+                                           for b in ridden) else "pedestrian"
+                elif det.class_id in VEHICLE_CLASSES:
+                    cls = "vehicle"
+                else:
+                    cls = None
                 if cls is None:
                     continue
                 # Which blob is this box drawn around? Not simply the nearest one inside it:
@@ -923,6 +938,7 @@ class CameraLidarPerception:
                 if dist > self.detection_range:
                     continue
                 otype = (ObjectType.PEDESTRIAN if tr.cls == "pedestrian"
+                         else ObjectType.CYCLIST if tr.cls == "cyclist"
                          else ObjectType.VEHICLE if tr.cls == "vehicle"
                          else ObjectType.OBSTACLE)
                 objects.append(DetectedObject(

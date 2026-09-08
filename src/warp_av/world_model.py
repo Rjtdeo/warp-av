@@ -71,6 +71,15 @@ class WorldObject:
         return self.kind == ObjectType.PEDESTRIAN.value
 
     @property
+    def is_cyclist(self) -> bool:
+        return self.kind == ObjectType.CYCLIST.value
+
+    @property
+    def is_vulnerable(self) -> bool:
+        """A person, on foot or on a bike: always give way, never drive around."""
+        return self.kind in (ObjectType.PEDESTRIAN.value, ObjectType.CYCLIST.value)
+
+    @property
     def moving(self) -> bool:
         return not self.stationary
 
@@ -151,6 +160,10 @@ class WorldModel:
     def moving_objects(self) -> List[WorldObject]:
         return [o for o in self.objects if o.moving]
 
+    def vulnerable(self) -> List[WorldObject]:
+        """People, on foot or on bikes."""
+        return [o for o in self.objects if o.is_vulnerable]
+
     def parked_objects(self) -> List[WorldObject]:
         return [o for o in self.objects if o.stationary]
 
@@ -206,7 +219,8 @@ class WorldModel:
                 "counts": {"total": len(self.objects),
                            "moving": len(self.moving_objects()),
                            "vehicles": len(self.of_kind(ObjectType.VEHICLE)),
-                           "pedestrians": len(self.of_kind(ObjectType.PEDESTRIAN))},
+                           "pedestrians": len(self.of_kind(ObjectType.PEDESTRIAN)),
+                           "cyclists": len(self.of_kind(ObjectType.CYCLIST))},
                 "objects": [o.as_dict() for o in self.objects]}
 
 

@@ -193,6 +193,7 @@ CLASS_SIZE_LIMITS = {
     # 2 m long, one pushing a pram about 1.5 m, and a group walking abreast is wider than
     # one person. Only a merge with a wall gets past these.
     "pedestrian": (2.5, 1.8, 2.4),
+    "cyclist": (2.8, 1.8, 2.4),            # rider plus bicycle, or a motorbike
     "vehicle": (14.0, 4.0, 4.5),           # a bus or a lorry is still a vehicle
 }
 # When do the sightings disagree enough to admit the van does not know the size? Not as a
@@ -205,7 +206,7 @@ SIZE_SPREAD_BASE_M = 0.15
 SIZE_SPREAD_PER_M = 0.02
 # What the van should leave room for, whatever it measured. People change direction without
 # warning, so their margin is generous however small they look.
-MIN_CLEARANCE_M = {"pedestrian": 0.6, "vehicle": 1.2}
+MIN_CLEARANCE_M = {"pedestrian": 0.6, "cyclist": 0.8, "vehicle": 1.2}
 DEFAULT_MIN_CLEARANCE_M = 0.4
 
 

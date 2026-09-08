@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from ..perception.perception import PerceptionOutput, ObjectType
+from ..perception.perception import PerceptionOutput, ObjectType, VULNERABLE_TYPES
 from ..localization.localization import Pose, LocalizationQuality
 
 
@@ -206,6 +206,7 @@ class BehaviorSystem:
             and perception.closest_obstacle_type
             not in (
                 ObjectType.PEDESTRIAN,
+                ObjectType.CYCLIST,     # a cyclist will move on; the road is not blocked
                 ObjectType.VEHICLE,
             )
         ):
@@ -230,13 +231,14 @@ class BehaviorSystem:
             self._blocked_since = None
 
         # (helper for the release latch below)
-        # --- Path blocked by pedestrian (ALWAYS stop for pedestrians) ---
-        if perception.path_blocked and perception.closest_obstacle_type == ObjectType.PEDESTRIAN:
+        # --- Path blocked by a person on foot or on a bike (ALWAYS stop) ---
+        if perception.path_blocked and perception.closest_obstacle_type in VULNERABLE_TYPES:
             self._note_block(DrivingBehavior.STOPPED_PEDESTRIAN,
                              perception.closest_obstacle_distance)
+            who = perception.closest_obstacle_type.value.upper()
             return self._decide(
                 DrivingBehavior.STOPPED_PEDESTRIAN,
-                f"PEDESTRIAN in path at {perception.closest_obstacle_distance:.1f}m — stopped",
+                f"{who} in path at {perception.closest_obstacle_distance:.1f}m — stopped",
                 speed=0.0, stop=True
             )
 

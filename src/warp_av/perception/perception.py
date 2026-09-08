@@ -25,8 +25,15 @@ from enum import Enum
 class ObjectType(Enum):
     VEHICLE = "vehicle"
     PEDESTRIAN = "pedestrian"
+    # someone on a bicycle or a motorbike: a person, and treated as one, but shaped and
+    # moving like a small vehicle (Perception V2 day 7)
+    CYCLIST = "cyclist"
     OBSTACLE = "obstacle"
     UNKNOWN = "unknown"
+
+
+#: the road users the van must always stop for and never write off as a blocked road
+VULNERABLE_TYPES = (ObjectType.PEDESTRIAN, ObjectType.CYCLIST)
 
 
 @dataclass
