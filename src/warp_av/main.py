@@ -3098,6 +3098,18 @@ def clear_estop():
     av_system.api_clear_estop()
     return jsonify({"success": True})
 
+@app.route('/api/grid')
+def api_grid():
+    """The free-space map as a small picture, for an operator (Perception V2 day 9)."""
+    grid = getattr(getattr(av_system, "perception", None), "grid", None)
+    if grid is None or not grid.updated:
+        return jsonify({"available": False, "reason": "no free-space map yet"}), 503
+    span = float(request.args.get("span_m", 14.0))
+    return jsonify({**grid.summary().as_dict(),
+                    "legend": {".": "free", "#": "blocked", " ": "not seen"},
+                    "picture": grid.as_text(span_m=span).split("\n")})
+
+
 @app.route('/api/world')
 def api_world():
     """What the van knows right now, in one sheet (Perception V2 day 7)."""
