@@ -409,6 +409,9 @@ class WarpAV:
         try:
             grid = getattr(self.perception, "grid", None)
             free_space = grid.summary().as_dict() if (grid is not None and grid.updated) else None
+            edges = getattr(self.perception, "road_edges", None)
+            if free_space is not None and edges is not None:
+                free_space["kerbs"] = edges.as_dict()
             self._world = build_world_model(perception, pose, source=self.perception_mode,
                                             free_space=free_space)
         except Exception as e:
@@ -3105,7 +3108,9 @@ def api_grid():
     if grid is None or not grid.updated:
         return jsonify({"available": False, "reason": "no free-space map yet"}), 503
     span = float(request.args.get("span_m", 14.0))
+    edges = getattr(getattr(av_system, "perception", None), "road_edges", None)
     return jsonify({**grid.summary().as_dict(),
+                    "kerbs": edges.as_dict() if edges is not None else None,
                     "legend": {".": "free", "#": "blocked", " ": "not seen"},
                     "picture": grid.as_text(span_m=span).split("\n")})
 

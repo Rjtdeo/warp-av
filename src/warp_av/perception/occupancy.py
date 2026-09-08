@@ -42,6 +42,12 @@ UNKNOWN = 0
 FREE = 1
 OCCUPIED = 2
 
+# A second, thinner layer over the same squares: which of them the laser actually saw
+# ROAD SURFACE in, rather than merely passed a beam through. Free is not drivable: a beam
+# travels along a pavement perfectly well (Perception V2 day 10).
+NOT_ROAD = 0
+ROAD = 1
+
 DEFAULT_RANGE_M = 30.0        # how far the grid reaches, in every direction
 DEFAULT_CELL_M = 0.25         # how big one square is
 DEFAULT_BEARING_STEP_DEG = 0.25   # at 30 m two neighbouring slices are then 13 cm apart,
@@ -66,6 +72,9 @@ class GridSummary:
     unknown_cells: int
     cell_m: float
     range_m: float
+    road_left_m: Optional[float] = None    # where the road surface reaches, 8 m ahead
+    road_right_m: Optional[float] = None
+    road_width_m: Optional[float] = None
 
     def as_dict(self) -> dict:
         total = max(1, self.free_cells + self.occupied_cells + self.unknown_cells)
@@ -75,6 +84,9 @@ class GridSummary:
                 "cells": {"free": self.free_cells, "occupied": self.occupied_cells,
                           "unknown": self.unknown_cells},
                 "seen_share": round((self.free_cells + self.occupied_cells) / total, 3),
+                "road": {"left_m": None if self.road_left_m is None else round(self.road_left_m, 2),
+                         "right_m": None if self.road_right_m is None else round(self.road_right_m, 2),
+                         "width_m": None if self.road_width_m is None else round(self.road_width_m, 2)},
                 "cell_m": self.cell_m, "range_m": self.range_m}
 
 
@@ -90,6 +102,8 @@ class OccupancyGrid:
         self.spread_slices = int(spread_slices)
         self.n = int(round(2.0 * self.range_m / self.cell_m))
         self.cells = np.full((self.n, self.n), UNKNOWN, dtype=np.uint8)
+        #: squares the laser hit road surface in. Sparse near the van, sparser far away.
+        self.road = np.full((self.n, self.n), NOT_ROAD, dtype=np.uint8)
         self.bearings = int(round(360.0 / self.bearing_step_deg))
         #: nearest thing along each bearing, metres. inf = nothing seen that way
         self.wall_range = np.full(self.bearings, np.inf, dtype=np.float32)
@@ -120,6 +134,7 @@ class OccupancyGrid:
         """One turn of the laser: `points_xy` is Nx2 in the van's frame, `occupied` says
         which of those returns came off something solid rather than the road."""
         self.cells[:] = UNKNOWN
+        self.road[:] = NOT_ROAD
         self.wall_range[:] = np.inf
         self.updated = True
         pts = np.asarray(points_xy, dtype=np.float32)
@@ -176,6 +191,30 @@ class OccupancyGrid:
                 ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
                 self.cells[r[ok], c[ok]] = FREE
 
+        # Flat ground: where a beam actually landed on a surface the van could roll on,
+        # as opposed to free space it merely passed through. Marking only the squares the
+        # returns land in draws thin arcs, because the laser's rings touch the ground in
+        # rings; so each slice is filled out to its furthest ground return, exactly the way
+        # free space is filled, and never past the nearest solid thing.
+        ground = (~occ) & (rng <= self.range_m)
+        if ground.any():
+            surface = np.zeros(self.bearings, dtype=np.float32)
+            np.maximum.at(surface, slot[ground], rng[ground])
+            surface = np.minimum(surface, np.where(np.isinf(self.wall_range),
+                                                   self.range_m, self.wall_range))
+            live_s = surface > step
+            if live_s.any():
+                angles_s = np.radians((np.arange(self.bearings, dtype=np.float32) + 0.5)
+                                      * self.bearing_step_deg)
+                steps_s = np.arange(1, int(self.range_m / step) + 1, dtype=np.float32) * step
+                keep_s = (steps_s[None, :] <= surface[:, None]) & live_s[:, None]
+                if keep_s.any():
+                    bi, si = np.nonzero(keep_s)
+                    dist = steps_s[si]
+                    r, c = self.to_cell(dist * np.cos(angles_s[bi]), dist * np.sin(angles_s[bi]))
+                    ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
+                    self.road[r[ok], c[ok]] = ROAD
+
         # occupied: where the beams actually stopped. Written last so it always wins.
         if solid.any():
             r, c = self.to_cell(pts[solid, 0], pts[solid, 1])
@@ -211,17 +250,61 @@ class OccupancyGrid:
             d += self.cell_m
         return max_m
 
+    def road_edge(self, x_m: float, side: str, max_m: float = 12.0,
+                  gap_m: float = 1.5) -> Optional[float]:
+        """How far the road surface reaches sideways at a given distance ahead.
+
+        Walk out from the van's own line until the road runs out and stays out for
+        `gap_m`. A short break is stepped over, because the laser's rings leave gaps
+        between them and a single empty square is not the edge of the road.
+        Returns None when the road was never found there at all.
+        """
+        sign = -1.0 if side == "left" else 1.0
+        step = self.cell_m
+        last_road = None
+        y = 0.0
+        while abs(y) <= max_m:
+            r, c = self.to_cell(x_m, y)
+            r, c = int(r), int(c)
+            if not self.inside(r, c):
+                break
+            if self.road[r, c] == ROAD:
+                last_road = y
+            elif last_road is not None and abs(y - last_road) > gap_m:
+                break
+            y += sign * step
+        return last_road
+
+    def road_width(self, x_m: float = 8.0) -> Optional[float]:
+        left = self.road_edge(x_m, "left")
+        right = self.road_edge(x_m, "right")
+        if left is None or right is None:
+            return None
+        return abs(right - left)
+
+    def drivable_at(self, x_m: float, y_m: float) -> bool:
+        """Free AND road: somewhere the van could actually put a wheel."""
+        r, c = self.to_cell(x_m, y_m)
+        r, c = int(r), int(c)
+        if not self.inside(r, c):
+            return False
+        return bool(self.cells[r, c] == FREE and self.road[r, c] == ROAD)
+
     def summary(self, lane_m: float = 3.5) -> GridSummary:
         free = int(np.count_nonzero(self.cells == FREE))
         occupied = int(np.count_nonzero(self.cells == OCCUPIED))
         unknown = int(self.cells.size - free - occupied)
         side = math.degrees(math.atan2(lane_m, 10.0))     # a lane over, ten metres ahead
+        left = self.road_edge(8.0, "left")
+        right = self.road_edge(8.0, "right")
         return GridSummary(
             free_ahead_m=self.free_distance(0.0),
             free_left_m=self.free_distance(-side),
             free_right_m=self.free_distance(side),
             free_cells=free, occupied_cells=occupied, unknown_cells=unknown,
-            cell_m=self.cell_m, range_m=self.range_m)
+            cell_m=self.cell_m, range_m=self.range_m,
+            road_left_m=left, road_right_m=right,
+            road_width_m=None if (left is None or right is None) else abs(right - left))
 
     def as_text(self, span_m: float = 12.0, step_cells: int = 2) -> str:
         """A small picture for a terminal: the van at the bottom, ahead going up."""

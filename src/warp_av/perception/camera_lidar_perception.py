@@ -42,6 +42,7 @@ from . import tracking as _tracking
 from .camera_model import (CameraModel, box_contains, box_edges, box_foot, box_overlap,
                            cluster_point, ground_point)
 from .occupancy import OccupancyGrid
+from .road_edges import RoadEdges, find_road_edges
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import (cluster_points, clearance_radius_m, ObjectTracker, MIN_POINTS_FAR,
                        FAR_RANGE_M, vehicle_shaped)
@@ -692,6 +693,7 @@ class CameraLidarPerception:
         self.last_camera_detections = 0
         # the free-space map (day 9), rebuilt from every sweep
         self.grid = OccupancyGrid()
+        self.road_edges = RoadEdges()      # the kerb lines, when the laser can see them (day 10)
         self.last_grid_ms = 0.0
         self.last_grid_error = None
         self._last_tracked_sim_time = None
@@ -849,6 +851,8 @@ class CameraLidarPerception:
             try:
                 t_grid = time.perf_counter()
                 self.grid.update(pts[:, :2], mask)
+                # where the road stops, when a kerb is there to be seen (day 10)
+                self.road_edges = find_road_edges(pts[:, :2], ground.above)
                 self.last_grid_ms = (time.perf_counter() - t_grid) * 1000.0
             except Exception as grid_error:
                 self.last_grid_ms = 0.0
