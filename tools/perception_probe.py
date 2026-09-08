@@ -43,7 +43,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import numpy as np  # noqa: E402
 import carla        # noqa: E402
 
-from warp_av.adapters.carla_sensor_adapter import CameraFrame, LidarScan          # noqa: E402
+from warp_av.adapters.carla_sensor_adapter import CameraFrame, LidarScan, decode_lidar  # noqa: E402
 from warp_av.adapters.lidar_sweep import LidarSweepAccumulator, azimuth_coverage_bins  # noqa: E402
 from warp_av.perception.camera_lidar_perception import (CameraLidarPerception,   # noqa: E402
                                                         COCO_CLASSES)
@@ -97,14 +97,17 @@ class FakeAdapter:
                                          fov=float(image.fov), timestamp=time.time())
 
     def on_lidar(self, scan):
-        pts = np.frombuffer(scan.raw_data, dtype=np.float32).reshape((-1, 4))
+        pts = decode_lidar(scan)                                  # x, y, z, intensity, ring
         frames, span = 1, 0.0
+        matrix = np.asarray(scan.transform.get_matrix(), dtype=np.float64).reshape(4, 4)
+        sim_time = float(scan.timestamp)
         if self.sweep is not None:
-            pts = self.sweep.add(pts, scan.transform.get_matrix(), float(scan.timestamp))
+            pts = self.sweep.add(pts, matrix, sim_time)
             frames, span = self.sweep.frames_in_sweep, self.sweep.span_s
         else:
-            pts = pts.copy()
-        self.latest_lidar = LidarScan(points=pts, timestamp=time.time(), frames=frames, span_s=span)
+            pts = np.c_[pts, np.zeros(pts.shape[0], dtype=np.float32)]
+        self.latest_lidar = LidarScan(points=pts, timestamp=time.time(), frames=frames, span_s=span,
+                                      sim_time=sim_time, sensor_matrix=matrix)
         self.frames += 1
 
 
@@ -113,7 +116,8 @@ def attach_sensors(world, vehicle, adapter, sensor_tick="0.1"):
     cam_bp = bl.find("sensor.camera.rgb")
     for k, v in (("image_size_x", "800"), ("image_size_y", "600"), ("fov", "90"), ("sensor_tick", "0.1")):
         cam_bp.set_attribute(k, v)
-    cam = world.spawn_actor(cam_bp, carla.Transform(carla.Location(x=2.0, z=1.8)), attach_to=vehicle)
+    cam = world.spawn_actor(cam_bp, carla.Transform(carla.Location(x=2.0, z=1.8), carla.Rotation(pitch=-10.0)),
+                            attach_to=vehicle)                   # the stack's own mount: pitch -10
     cam.listen(adapter.on_camera)
     lid_bp = bl.find("sensor.lidar.ray_cast")
     for k, v in (("channels", "32"), ("points_per_second", "150000"), ("range", "50.0"),

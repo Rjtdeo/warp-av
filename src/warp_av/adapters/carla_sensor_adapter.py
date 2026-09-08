@@ -43,13 +43,51 @@ class CameraFrame:
     timestamp: float = field(default_factory=time.time)
 
 
+LIDAR_COLUMNS = ("x", "y", "z", "intensity", "ring", "t_rel")
+# ring: the beam (0..channels-1) that made the point, -1 when unknown
+# t_rel: seconds between the point's delivery and the newest delivery in the scan (<= 0)
+
+
 @dataclass
 class LidarScan:
-    points: np.ndarray       # Nx4 (x, y, z, intensity), sensor frame: x forward, y right, z up
+    points: np.ndarray       # Nx6, columns LIDAR_COLUMNS; sensor frame: x forward, y right, z up
     timestamp: float = field(default_factory=time.time)
     frames: int = 1          # CARLA deliveries merged into this scan (1 = a single per-frame wedge)
     span_s: float = 0.0      # simulation seconds those deliveries cover (about 0.1 = one rotation)
     sim_time: Optional[float] = None   # simulation time of the newest delivery in the scan
+    sensor_matrix: Optional[np.ndarray] = None   # 4x4 sensor->world pose at the newest delivery
+    columns: tuple = LIDAR_COLUMNS
+
+    def __post_init__(self):
+        pts = self.points
+        if pts is not None and getattr(pts, "ndim", 0) == 2 and pts.shape[0] and pts.shape[1] != len(self.columns):
+            raise ValueError(f"LidarScan has {pts.shape[1]} columns, expected {len(self.columns)} {self.columns}")
+
+
+def ring_ids(measurement, n: int) -> np.ndarray:
+    """Ring (beam) id of each of the n points of a CARLA LiDAR measurement.
+    Points arrive channel by channel and `get_point_count(channel)` gives the
+    counts. -1 for every point when the counts do not add up or the API lacks
+    them. Shared by the stack, the probe and the fixture recorder."""
+    ring = np.full(n, -1.0, dtype=np.float32)
+    try:
+        channels = int(measurement.channels)
+        counts = [int(measurement.get_point_count(ch)) for ch in range(channels)]
+        if sum(counts) == n and n > 0:
+            ring = np.repeat(np.arange(channels, dtype=np.float32), counts)
+    except Exception:
+        pass
+    return ring
+
+
+def decode_lidar(scan) -> np.ndarray:
+    """CARLA LidarMeasurement -> Nx5 float32 [x, y, z, intensity, ring]."""
+    pts = np.frombuffer(scan.raw_data, dtype=np.float32).reshape((-1, 4))
+    n = pts.shape[0]
+    out = np.empty((n, 5), dtype=np.float32)
+    out[:, :4] = pts
+    out[:, 4] = ring_ids(scan, n)
+    return out
 
 
 @dataclass
@@ -228,27 +266,31 @@ class CarlaSensorAdapter:
     def _on_lidar(self, scan):
         if not self.lidar_enabled:
             return
-        points = np.frombuffer(scan.raw_data, dtype=np.float32)
-        points = points.reshape((-1, 4))  # x, y, z, intensity
+        points = decode_lidar(scan)      # Nx5: x, y, z, intensity, ring (our own memory)
         frames, span = 1, 0.0
         sim_time = None
+        matrix = None
         try:
             sim_time = float(scan.timestamp)
+            matrix = np.asarray(scan.transform.get_matrix(), dtype=np.float64).reshape(4, 4)
         except Exception:
             pass
         if self._sweep is not None:
             try:
-                points = self._sweep.add(points, scan.transform.get_matrix(), float(scan.timestamp))
+                if matrix is None or sim_time is None:
+                    raise ValueError("delivery without a usable transform or timestamp")
+                points = self._sweep.add(points, matrix, sim_time)     # Nx6: ..., t_rel appended
                 frames, span = self._sweep.frames_in_sweep, self._sweep.span_s
             except Exception as e:          # never lose the raw delivery over a bookkeeping error
                 self.lidar_sweep_errors += 1
-                points = points.copy()
+                points = np.c_[points, np.zeros(points.shape[0], dtype=np.float32)]
+                matrix = None                # not to be trusted either
                 if self.lidar_sweep_errors in (1, 10, 100, 1000):
                     print(f"[CarlaSensorAdapter] LiDAR sweep accumulation failed ({self.lidar_sweep_errors}x): {e}")
         else:
-            points = points.copy()          # our own memory, not CARLA's reusable receive buffer
+            points = np.c_[points, np.zeros(points.shape[0], dtype=np.float32)]   # t_rel = 0: one delivery
         self.latest_lidar = LidarScan(points=points, timestamp=time.time(), frames=frames, span_s=span,
-                                      sim_time=sim_time)
+                                      sim_time=sim_time, sensor_matrix=matrix)
         self._last_lidar_time = time.time()
         for cb in self._lidar_callbacks:
             cb(self.latest_lidar)

@@ -42,9 +42,9 @@ def ring(az_from_deg, az_to_deg, n, r=10.0, z=-1.0, intensity=0.5):
 def test_two_half_rotations_make_one_full_sweep():
     acc = LidarSweepAccumulator(rotation_hz=10.0)
     first = acc.add(ring(-180, 0, 180), pose(), sim_time=100.00)
-    assert first.shape == (180, 4) and azimuth_coverage_bins(first) == 18
+    assert first.shape == (180, 5) and azimuth_coverage_bins(first) == 18
     sweep = acc.add(ring(0, 180, 180), pose(), sim_time=100.05)
-    assert sweep.shape == (360, 4)
+    assert sweep.shape == (360, 5)
     assert azimuth_coverage_bins(sweep) == 36                 # the whole circle
     assert acc.frames_in_sweep == 2 and abs(acc.span_s - 0.05) < 1e-9
     assert sweep.dtype == np.float32
@@ -67,13 +67,13 @@ def test_seam_is_not_counted_twice():
     acc = LidarSweepAccumulator(rotation_hz=10.0)
     for k in range(6):                                        # 6 x 72 = 432 degrees
         sweep = acc.add(ring(72 * k, 72 * k + 72, 36), pose(), sim_time=300.0 + 0.02 * k)
-    assert sweep.shape == (5 * 36, 4)                         # exactly one rotation of points
+    assert sweep.shape == (5 * 36, 5)                         # exactly one rotation of points
     assert azimuth_coverage_bins(sweep) == 36
     assert acc.frames_in_sweep == 5                           # the fully replaced wedge is gone
     # keep going: it stays at one rotation
     for k in range(6, 30):
         sweep = acc.add(ring(72 * k, 72 * k + 72, 36), pose(), sim_time=300.0 + 0.02 * k)
-        assert sweep.shape == (5 * 36, 4)
+        assert sweep.shape == (5 * 36, 5)
 
 
 def test_a_whole_circle_in_one_delivery_replaces_everything():
@@ -81,7 +81,7 @@ def test_a_whole_circle_in_one_delivery_replaces_everything():
     acc.add(ring(0, 90, 40), pose(), sim_time=1.00)
     acc.add(ring(90, 180, 40), pose(), sim_time=1.02)
     sweep = acc.add(ring(-180, 180, 720, r=12.0), pose(), sim_time=1.04)
-    assert sweep.shape == (720, 4) and acc.frames_in_sweep == 1
+    assert sweep.shape == (720, 5) and acc.frames_in_sweep == 1
     assert np.allclose(np.hypot(sweep[:, 0], sweep[:, 1]), 12.0, atol=1e-3)
 
 
@@ -89,7 +89,7 @@ def test_sparse_deliveries_do_not_erase_older_data():
     acc = LidarSweepAccumulator(rotation_hz=10.0)
     acc.add(ring(0, 90, 40), pose(), sim_time=1.00)
     sweep = acc.add(ring(0, 90, 5), pose(), sim_time=1.02)   # 5 points: too few to trust its arc
-    assert sweep.shape == (45, 4)
+    assert sweep.shape == (45, 5)
 
 
 # ---------------------------------------------------------------- de-skew
@@ -102,7 +102,7 @@ def test_points_are_deskewed_with_the_sensor_motion():
     acc.add(post, pose(0.0, 0.0), sim_time=300.00)
     post_now = np.array([[8.8, 0.0, -1.0, 0.9]], dtype=np.float32)   # the van drove 1.2 m
     sweep = acc.add(post_now, pose(1.2, 0.0), sim_time=300.05)
-    assert sweep.shape == (2, 4)
+    assert sweep.shape == (2, 5)
     assert np.allclose(sweep[:, 0], 8.8, atol=1e-4)           # both copies at 8.8 m
     assert np.allclose(sweep[:, 1], 0.0, atol=1e-4)
     assert np.allclose(sweep[:, 3], 0.9)                      # intensity untouched
@@ -127,14 +127,14 @@ def test_the_vans_own_returns_never_enter_the_sweep():
     far = [10.0, 0.0, -1.0, 0.9]
     acc.add(np.array([body, far], dtype=np.float32), pose(0.0, 0.0), sim_time=1.00)
     sweep = acc.add(np.array([body, [9.2, 0.0, -1.0, 0.9]], dtype=np.float32), pose(0.8, 0.0), sim_time=1.10)
-    assert sweep.shape == (2, 4)
+    assert sweep.shape == (2, 5)
     assert (sweep[:, 0] > 0).all()                            # nothing behind the van
     assert np.allclose(sweep[:, 0], 9.2, atol=1e-4)
     assert acc.dropped_self_returns == 2
     # the box can be switched off
     raw = LidarSweepAccumulator(rotation_hz=10.0, ego_box=None)
     out = raw.add(np.array([body], dtype=np.float32), pose(), sim_time=5.0)
-    assert out.shape == (1, 4)
+    assert out.shape == (1, 5)
 
 
 # ---------------------------------------------------------------- edges
@@ -143,9 +143,9 @@ def test_empty_delivery_and_time_going_backwards():
     acc = LidarSweepAccumulator(rotation_hz=10.0)
     acc.add(ring(0, 90, 20), pose(), sim_time=50.00)
     out = acc.add(np.zeros((0, 4), dtype=np.float32), pose(), sim_time=50.02)
-    assert out.shape == (20, 4) and acc.frames_in_sweep == 2
+    assert out.shape == (20, 5) and acc.frames_in_sweep == 2
     out = acc.add(ring(0, 90, 5), pose(), sim_time=3.0)      # simulator reloaded: time jumps back
-    assert out.shape == (5, 4) and acc.frames_in_sweep == 1
+    assert out.shape == (5, 5) and acc.frames_in_sweep == 1
 
 
 def test_non_finite_pose_is_rejected_and_does_not_poison_the_buffer():
@@ -156,7 +156,7 @@ def test_non_finite_pose_is_rejected_and_does_not_poison_the_buffer():
     with pytest.raises(ValueError):
         acc.add(ring(90, 180, 20), bad, sim_time=1.02)
     out = acc.add(ring(90, 180, 20), pose(), sim_time=1.04)
-    assert np.isfinite(out).all() and out.shape == (40, 4)
+    assert np.isfinite(out).all() and out.shape == (40, 5)
 
 
 def test_coverage_helper():
@@ -203,7 +203,7 @@ def test_adapter_accumulates_in_sweep_mode_and_passes_wedges_through_when_off():
     on._on_lidar(_FakeDelivery(ring(-180, 0, 50), pose(), 10.00))
     on._on_lidar(_FakeDelivery(ring(0, 180, 50), pose(), 10.04))
     assert isinstance(on.latest_lidar, LidarScan)
-    assert on.latest_lidar.points.shape == (100, 4)
+    assert on.latest_lidar.points.shape == (100, 6)
     assert on.latest_lidar.frames == 2 and abs(on.latest_lidar.span_s - 0.04) < 1e-9
     assert len(got) == 2 and got[-1] is on.latest_lidar
     assert on.is_lidar_healthy()
@@ -211,7 +211,7 @@ def test_adapter_accumulates_in_sweep_mode_and_passes_wedges_through_when_off():
     off = CarlaSensorAdapter(world=None, vehicle=None, full_sweep=False)
     off._on_lidar(_FakeDelivery(ring(-180, 0, 50), pose(), 10.00))
     off._on_lidar(_FakeDelivery(ring(0, 180, 50), pose(), 10.04))
-    assert off.latest_lidar.points.shape == (50, 4)          # the old behaviour: last wedge only
+    assert off.latest_lidar.points.shape == (50, 6)          # the old behaviour: last wedge only
     assert off.latest_lidar.frames == 1
     assert off.latest_lidar.points.flags.owndata or off.latest_lidar.points.base is None or True
     # the published array is our own memory, not a view of the delivery
@@ -223,7 +223,7 @@ def test_adapter_survives_a_bad_delivery_in_sweep_mode():
     bad = _FakeDelivery(ring(0, 90, 10), pose(), 1.0)
     bad.transform = object()                                  # no get_matrix
     on._on_lidar(bad)
-    assert on.latest_lidar.points.shape == (10, 4)           # raw wedge still published
+    assert on.latest_lidar.points.shape == (10, 6)           # raw wedge still published
     assert on.latest_lidar.frames == 1 and on.latest_lidar.span_s == 0.0
     assert on.lidar_sweep_errors == 1
     nan = pose()
@@ -237,7 +237,7 @@ def test_lidar_re_enable_starts_a_fresh_sweep():
     on._on_lidar(_FakeDelivery(ring(-180, 0, 50), pose(), 10.00))
     on.lidar_enabled = False                                  # fault injection: drop the lidar
     on._on_lidar(_FakeDelivery(ring(0, 180, 50), pose(), 10.02))
-    assert on.latest_lidar.points.shape == (50, 4)           # ignored while disabled
+    assert on.latest_lidar.points.shape == (50, 6)           # ignored while disabled
     on.lidar_enabled = True
     on._on_lidar(_FakeDelivery(ring(0, 180, 50), pose(), 10.04))
     assert on.latest_lidar.frames == 1                        # not stitched onto the pre-drop wedge

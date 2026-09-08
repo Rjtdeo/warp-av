@@ -22,7 +22,8 @@ This module glues the deliveries back into whole sweeps:
     exactly once, whatever the frame rate;
   * deliveries older than about one rotation (window_s) are dropped;
   * the union is expressed in the LATEST sensor frame, the frame the rest of
-    the stack expects (x forward, y right, z up, metres, Nx4 with intensity).
+    the stack expects (x forward, y right, z up, metres), with the input
+    columns kept and one appended: t_rel, the point's age inside the sweep.
 
 Pure numpy; no CARLA import, so it is unit-tested offline.
 """
@@ -55,7 +56,7 @@ class LidarSweepAccumulator:
         self.window_s = float(window_factor) / float(rotation_hz)
         self.max_frames = int(max_frames)
         self.ego_box = ego_box
-        # each frame: [sim_time, world-frame Nx4, capture-frame azimuth (N,)]
+        # each frame: [sim_time, world-frame NxK, capture-frame azimuth (N,)]
         self._frames: Deque[List] = deque()
         self._last_time = None
         # diagnostics of the last sweep returned
@@ -116,11 +117,12 @@ class LidarSweepAccumulator:
 
     # ---- main entry -----------------------------------------------------
     def add(self, points, sensor_to_world, sim_time: float) -> np.ndarray:
-        """Add one delivery. `points`: Nx4 (x, y, z, intensity) in the sensor
+        """Add one delivery. `points`: NxK, K >= 4 (x, y, z, intensity, ...) in the sensor
         frame at capture. `sensor_to_world`: the 4x4 matrix CARLA gives for
         the sensor's transform at capture (Transform.get_matrix()).
         `sim_time`: the delivery's simulation timestamp in seconds.
-        Returns the sweep (Nx4, float32) in THIS delivery's sensor frame."""
+        Returns the sweep in THIS delivery's sensor frame: the input columns
+        followed by one more, t_rel (seconds before the newest delivery)."""
         pts = np.asarray(points, dtype=np.float32)
         pts = pts.reshape(-1, 4) if pts.ndim != 2 or pts.shape[1] < 4 else pts
         M = np.asarray(sensor_to_world, dtype=np.float64).reshape(4, 4)
@@ -170,6 +172,10 @@ class LidarSweepAccumulator:
         world_all = (self._frames[0][1] if len(self._frames) == 1
                      else np.concatenate([f[1] for f in self._frames], axis=0))
         sweep = self._apply(np.linalg.inv(M), world_all)
+        # the age of every point relative to the newest delivery (<= 0 s), as
+        # the last column: a proper tracker and time matching read it later
+        t_rel = np.concatenate([np.full(f[1].shape[0], f[0] - t, dtype=np.float32) for f in self._frames])
+        sweep = np.c_[sweep, t_rel]
 
         self.frames_in_sweep = len(self._frames)
         self.span_s = t - self._frames[0][0]

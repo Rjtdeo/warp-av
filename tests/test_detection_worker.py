@@ -124,7 +124,7 @@ def test_lidar_scan_carries_sim_time_and_camera_frames_are_copies():
     import inspect
     src = inspect.getsource(CarlaSensorAdapter)
     assert src.count(".reshape((image.height, image.width, 4)).copy()") == 2
-    assert LidarScan(points=np.zeros((0, 4), np.float32)).sim_time is None
+    assert LidarScan(points=np.zeros((0, 6), np.float32)).sim_time is None
     assert "sim_time=sim_time" in src
 
 
