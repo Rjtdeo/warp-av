@@ -1120,3 +1120,55 @@ That was the day's constraint, and it holds:
   object (day 9).
 * The planter beyond 20 m is invisible, and nothing the camera sees but the
   LiDAR misses is reported.
+
+## Day 7 follow-up: how big is it, when things really do differ? (2026-09-08)
+
+The live run of the world sheet showed a person reported as 8.6 m long and 4 m
+tall. The cause was a rule written on day 4: a track keeps the largest view of
+itself the van has ever had. That is right for a car, which reveals more of
+itself as you approach, and wrong the moment one frame glues an object to a
+wall, because the inflated size then sticks for the life of the track.
+
+The obvious fix, clamping to a standard person size, would be worse: people are
+not a standard size. A child, an adult, someone pushing a pram and someone
+wheeling a bicycle are all people, and all need different room.
+
+What replaced it:
+
+* **the middle of the recent sightings**, twelve of them, rather than the
+  largest ever. One merged frame is outvoted; a size that several frames agree
+  on still comes through, which is how a person with a bicycle keeps their
+  length;
+* **the largest view only until there are three sightings to vote on**, since
+  before that there is no majority;
+* **limits that reject the impossible and never rewrite the real**: a thing the
+  camera calls a person may be up to 2.5 m long, 1.8 m wide and 2.4 m tall, and
+  a vehicle up to 14 m. A sighting past that is a merge, so it is thrown away,
+  and the object is marked unsure rather than silently reported wrong;
+* **`size_uncertain`**, true when recent sightings disagree by more than 60 %,
+  so a reader knows the size is a guess;
+* **`clearance_radius_m`**, the room to leave: what was measured, but never less
+  than the kind of thing deserves. A small child gets a person's 0.6 m margin
+  whatever the laser saw of them.
+
+Measured on the four recordings, against the dense labelled scan:
+
+| | old rule | new rule |
+|---|---|---|
+| median size error | 0.30 m | **0.06 m** |
+| worst | 2.39 m, on the bin | 1.22 m, on the cone |
+
+Live, three different walkers placed 10 m ahead at two different spots:
+
+| who | real | the van says | room to leave |
+|---|---|---|---|
+| a slim adult | 0.38 x 0.38 x 1.86 | 0.40 x 0.12 x 1.75 | 0.60 m |
+| a child | 0.50 x 0.50 x 1.10 | 0.16 x 0.05 x 1.06 | 0.60 m |
+| a broader adult | 0.38 x 0.38 x 1.86 | 0.54 x 0.15 x 1.75 | 0.60 m |
+
+The 8.6 m person is gone, and the van now tells a child from an adult by
+height, 1.06 m against 1.75 m. The measured width stays much thinner than the
+real body because the laser only sees the front surface, which is exactly why
+the clearance is a floor rather than the measurement.
+
+461 tests pass, 7 of them new for sizes.
