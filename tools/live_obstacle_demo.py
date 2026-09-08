@@ -22,6 +22,10 @@ import carla
 
 OBJECTS = {"barrel": ("static.prop.barrel", 0.05), "cone": ("static.prop.trafficcone01", 0.05),
            "planter": ("static.prop.plantpot04", 0.05), "barrier": ("static.prop.streetbarrier", 0.05),
+           "trolley": ("static.prop.shoppingtrolley", 0.05), "bench": ("static.prop.bench01", 0.05),
+           "bin": ("static.prop.bin", 0.05), "trashbag": ("static.prop.trashbag", 0.05),
+           "suitcase": ("static.prop.travelcase", 0.05), "dirt": ("static.prop.dirtdebris01", 0.05),
+           "chain": ("static.prop.chainbarrier", 0.05), "warning": ("static.prop.warningconstruction", 0.05),
            "car": ("vehicle.tesla.model3", 0.3), "person": ("walker.pedestrian.0001", 1.0)}
 
 
@@ -92,6 +96,9 @@ def run_sequence(a, world, cmap, van, placed, chase, t0):
             print(f"route nearly over ({arc:.0f} of {line.total:.0f} m): stopping the sequence", flush=True)
             break
         x, y, yaw_deg = line.at(arc)
+        if name not in OBJECTS:
+            print(f"{name}: unknown object, skipping (known: {', '.join(sorted(OBJECTS))})", flush=True)
+            continue
         bp_id, z_up = OBJECTS[name]
         z = cmap.get_waypoint(carla.Location(x=x, y=y, z=vloc.z)).transform.location.z
         actor = world.try_spawn_actor(bl.find(bp_id), carla.Transform(carla.Location(x=x, y=y, z=z + z_up),
@@ -222,7 +229,7 @@ def main():
         placed.append((name, actor))
         print(f"{name} placed {label}, {right:+.1f} m right, at ({loc.x:.1f}, {loc.y:.1f})", flush=True)
 
-    if a.at_route_fraction is None:
+    if a.at_route_fraction is None and not a.sequence:
         for name, ahead, right in wanted:
             w = wp.next(ahead)[0].transform
             place(name, w.location.x, w.location.y, w.rotation.yaw, right, f"{ahead:.0f} m ahead")
