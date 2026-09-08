@@ -768,3 +768,31 @@ heights for objects the van holds in at least half its updates.
 * Naming without the camera is still wrong (a bin called "vehicle"); day 5.
 
 401 tests pass, 9 of them new for footprints.
+
+## Day 4 live validation (2026-09-08, watched in CARLA)
+
+`tools/live_obstacle_demo.py --sequence planter,barrel,cone,bin --drop-ahead 24
+--dest 200`: the van drives a real mission, each object is dropped 24 m ahead
+of it while it moves, and is removed once the van has seen it and stopped.
+
+| object | first seen | stopped short by |
+|---|---|---|
+| planter (12.5 cm tall) | 17.3 m | 12.9 m |
+| barrel | 19.2 m | 8.0 m |
+| cone | 18.8 m | 13.8 m |
+| bin | 17.4 m | 14.7 m |
+
+No contact, no false stop. On day 3 the same planter was not detected at all
+beyond about 13 m, and the barrel drive test triggered at 16.4 m.
+
+A separate live run printed the size the van measures as it closes in on a
+planter: first sighting at 18.2 m as `0.68 x 0.05 x 0.17 m`, growing to
+`2.34 x 0.67 x 0.18 m` at the stop, against a real `4.95 x 0.86 x 0.12 m`.
+Height is right to a few centimetres; length and width grow as more of the
+object comes into view, as expected from a sensor that sees one face.
+
+Two operational notes from this session, both of them my own mistakes rather
+than the van's: restarting the stack while an old process still holds a van
+leaves a second Sprinter parked on the road, which the van correctly reports
+as a vehicle blocking its path; and a scenario or demo that is interrupted
+can leave props behind. Clear both before a live run.
