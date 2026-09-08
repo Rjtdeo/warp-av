@@ -921,3 +921,104 @@ path. That cost two live runs today before I noticed.
 * The barrel is called a fire hydrant by the detector at some ranges. It is
   ignored, since neither is a class the van acts on, but a cone in a
   construction zone deserves better than "obstacle" one day.
+
+# Perception V2, day 6: is it moving, or is it parked? (2026-09-08)
+
+Day 5 told the van what a thing is. Day 6 tells it whether the thing is
+going anywhere. This matters because the planner treats the two differently:
+you wait for a moving car and you drive around a parked one.
+
+## What was wrong
+
+Speed came from subtracting two sightings and smoothing the result. The
+middle of a LiDAR blob jumps about between turns, because a different part
+of the object comes back each time, so the subtraction turned that jitter
+into speed. Measured on the four recordings, where the van and every object
+are parked:
+
+* objects were reported as **moving in 41 % of sightings**;
+* the fastest imaginary speed was **6.7 m/s** (24 km/h), on a bin.
+
+## What replaced it
+
+Each track now carries a small motion filter that holds where a thing is and
+how fast it is going, together with how sure it is of each. A sighting nudges
+the estimate rather than replacing it, by an amount that depends on how noisy
+that sighting is: a blob 30 m away barely moves the answer, a solid one at
+8 m moves it a lot.
+
+On top of the filter, four rules decide "parked" or "moving":
+
+1. the filtered speed must pass 1.2 m/s to become moving, and drop under
+   0.6 m/s to become parked again, so it cannot flicker on the boundary;
+2. the thing must actually have gone somewhere: 0.7 m over the last 1.5 s;
+3. that travel must be in one direction. A blob whose middle hops between two
+   parts of the same object wanders a long way and gets nowhere, and this
+   rule tells the difference;
+4. none of it counts until the fourth sighting: two jumpy sightings prove
+   nothing.
+
+A new track also takes its speed straight from its first two positions,
+because waiting for the filter to work it out lets its guess fall behind a
+fast car, and the track then breaks and restarts every frame.
+
+Two settings changed with it, both measured: the association distance from
+2.6 m to **2.0 m** (a bin and a planter 2.4 m apart were swapping tracks,
+which looks exactly like movement), and the allowance for how briskly a road
+user may change speed, set to **2.5 m/s²**, ordinary braking. Too small and
+the van takes 1.5 s to believe a car has stopped; too large and parked things
+start to jitter again.
+
+`DetectedObject` gained `stationary`, and a parked thing reports its speed as
+exactly 0.0. The state endpoint publishes both.
+
+## Measured offline
+
+Four recordings in which the van and every object are parked, so the right
+answer is "never moving":
+
+| | day 5 | day 6 |
+|---|---|---|
+| wrongly called moving | 41 % of sightings | **2.2 %** |
+| fastest imaginary speed | 6.7 m/s | **2.6 m/s** |
+| objects given a new number | 4 | **1** |
+| recall | 0.91 | 0.90 |
+| position error | 0.21 m | 0.23 m |
+| ghosts per update, off the lane | 4.8 | 6.2 |
+| ghosts **in the lane** | 0 | **0** |
+
+A thing driven past at a steady speed, with the same blob jitter on top:
+
+|真 speed | measured | called moving after | track numbers |
+|---|---|---|---|
+| 1.5 m/s | 1.51 m/s | 0.4 s | 1 |
+| 5 m/s | 5.00 m/s | 0.2 s | 1 |
+| 15 m/s | 15.00 m/s | 0.2 s | 1 |
+
+The tighter association gate costs about 1.4 extra ghosts per update in
+junctions, where blobs wander over the road edge; none of them is in the
+van's lane, and none changes what the van does today. The alternative, asking
+for a third sighting before a track is reported, removed a fifth of them but
+also cost recall on the small far objects, so I kept recall.
+
+## Measured live on CARLA
+
+A Tesla driven down the lane towards the parked van at a steady 6 m/s, with a
+barrel parked 3 m off to the side:
+
+| car's distance | its real speed | the van's answer | the barrel |
+|---|---|---|---|
+| 38.0 m | 6.2 m/s | 5.3 m/s, moving, vehicle | parked, 0.0 |
+| 27.5 m | 5.8 m/s | 7.0 m/s, moving, vehicle | parked, 0.0 |
+| 22.6 m | 6.0 m/s | 6.0 m/s, moving, vehicle | parked, 0.0 |
+| 17.7 m | 6.2 m/s | 5.7 m/s, moving, vehicle | parked, 0.0 |
+| 13.3 m | 6.1 m/s | 5.9 m/s, moving, vehicle | parked, 0.0 |
+| 8.3 m | 6.0 m/s | 5.5 m/s, moving, vehicle | parked, 0.0 |
+
+436 tests pass, 13 of them new for motion.
+
+## Still open
+
+* Junctions produce about six ghost reports per update, none in the lane.
+* The planter beyond 20 m is still invisible.
+* Nothing the camera sees but the LiDAR misses is reported.
