@@ -1172,3 +1172,22 @@ real body because the laser only sees the front surface, which is exactly why
 the clearance is a floor rather than the measurement.
 
 461 tests pass, 7 of them new for sizes.
+
+### The unsure flag, fixed (2026-09-08)
+
+Live, the flag fired on almost everything, including a person and a car whose
+readings were perfectly steady. It compared the swing between sightings with a
+share of the object's own size, and any natural swing is a big share of
+something 0.4 m across, so every pedestrian came out unsure and the warning was
+noise.
+
+It is now an absolute swing, and it grows with range because the LiDAR's points
+spread out: `0.15 m + 0.02 m per metre`. That comes from the recordings, where a
+walker at 6 m swings 0.05 to 0.17 m, a barrel at 9 m 0.15 m, a bin at 12 m
+0.27 m and a car at 22 m 0.32 m, while a blob merging with its neighbour swings
+1.1 to 2.7 m.
+
+On the four recordings the flag now agrees with the measured swing on **22 of
+22** objects: the walker, the barrel, the bin and the car on the straight road
+read steady, while the cone, the planter and the objects that merge inside
+junctions are flagged. 463 tests pass.

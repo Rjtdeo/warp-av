@@ -195,8 +195,14 @@ CLASS_SIZE_LIMITS = {
     "pedestrian": (2.5, 1.8, 2.4),
     "vehicle": (14.0, 4.0, 4.5),           # a bus or a lorry is still a vehicle
 }
-SIZE_UNCERTAIN_SPREAD = 0.6         # sightings disagreeing by more than 60 % of the middle
-                                    #   value means the van does not really know the size
+# When do the sightings disagree enough to admit the van does not know the size? Not as a
+# share of the size: any natural swing is a big share of a person, so a ratio test calls
+# every pedestrian unsure and the warning becomes noise. It is an absolute swing, and it
+# grows with range because the LiDAR's points spread out. Measured on the four recordings:
+# a walker at 6 m swings 0.05-0.17 m, a barrel at 9 m 0.15 m, a bin at 12 m 0.27 m, a car at
+# 22 m 0.32 m, while a blob that merges with its neighbour swings 1.1-2.7 m.
+SIZE_SPREAD_BASE_M = 0.15
+SIZE_SPREAD_PER_M = 0.02
 # What the van should leave room for, whatever it measured. People change direction without
 # warning, so their margin is generous however small they look.
 MIN_CLEARANCE_M = {"pedestrian": 0.6, "vehicle": 1.2}
@@ -436,7 +442,13 @@ def _note_size(tr: Track, o: dict) -> None:
     # the heading of the sighting nearest that middle length, so it matches the shape reported
     tr.yaw_deg = min(tr._sizes, key=lambda s: abs(s[0] - tr.length_m))[3]
     spread = max(lengths) - min(lengths)
-    tr.size_uncertain = bool(tr.length_m > 1e-6 and spread / tr.length_m > SIZE_UNCERTAIN_SPREAD)
+    tr.size_uncertain = bool(spread > expected_size_spread_m(tr.range_m))
+
+
+def expected_size_spread_m(range_m: float) -> float:
+    """How much a thing's measured length is expected to wobble at that range, from the
+    LiDAR's points spreading out. Beyond this, the sightings genuinely disagree."""
+    return SIZE_SPREAD_BASE_M + SIZE_SPREAD_PER_M * max(0.0, float(range_m))
 
 
 def clearance_radius_m(cls, length_m: float, width_m: float) -> float:

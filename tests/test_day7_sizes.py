@@ -89,6 +89,30 @@ def test_it_says_when_it_does_not_know():
     assert jumpy.size_uncertain is True, "wildly different sightings should be admitted as unsure"
 
 
+def test_the_normal_wobble_of_a_person_is_not_called_unsure():
+    """A ratio test called every pedestrian unsure, because any natural swing is a big share
+    of something 0.4 m across. The test is an absolute swing instead, and it grows with
+    range, because the LiDAR's points spread out."""
+    from warp_av.perception.tracking import expected_size_spread_m
+    assert expected_size_spread_m(6.0) < expected_size_spread_m(22.0)
+    # measured on the recordings: a walker at 6 m swings 0.17 m, a bin at 12 m 0.27 m,
+    # a car at 22 m 0.32 m; a blob merged with its neighbour swings over a metre
+    assert expected_size_spread_m(6.0) > 0.17
+    assert expected_size_spread_m(12.0) > 0.27
+    assert expected_size_spread_m(22.0) > 0.32
+    assert expected_size_spread_m(15.0) < 1.0
+    person = run([(0.42, 0.3, 1.8), (0.5, 0.28, 1.75), (0.38, 0.31, 1.82),
+                  (0.47, 0.29, 1.78), (0.44, 0.3, 1.8), (0.4, 0.3, 1.77)], cls="pedestrian", x=10.0)
+    assert person.size_uncertain is False, "a person's ordinary wobble is not a warning"
+
+
+def test_a_merged_frame_is_admitted_as_unsure_at_any_range():
+    near = run([(0.5, 0.3, 1.8)] * 3 + [(2.4, 0.4, 1.9)] + [(0.5, 0.3, 1.8)] * 3,
+               cls="pedestrian", x=8.0)
+    assert near.size_uncertain is True
+    assert near.length_m == pytest.approx(0.5, abs=0.15), "and the size itself is unharmed"
+
+
 def test_room_to_leave_is_never_less_than_the_kind_deserves():
     small_person = clearance_radius_m("pedestrian", 0.35, 0.3)
     assert small_person >= 0.6, "a small person can still step sideways without warning"
