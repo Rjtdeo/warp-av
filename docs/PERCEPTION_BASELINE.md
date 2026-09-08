@@ -664,3 +664,107 @@ and both agree it is the one object the pipeline cannot rely on.
 382 tests pass (355 before day 3, 27 new). No pipeline behaviour changed:
 the only van-code edits are the injectable detector (default unchanged) and
 an optional CARLA import in the adapter (identical when CARLA is installed).
+
+# Perception V2, day 4: how big is it? (2026-09-08)
+
+Until today the van reported a thing as a point: "an obstacle, 12.3 m ahead,
+0.2 m to the right". It never said how big it was. Day 4 measures the
+footprint, and then uses the measurement to fix the day-3 finding that flat
+objects disappear.
+
+## What the van now reports
+
+`DetectedObject` carries four new numbers, all in metres and degrees:
+
+| field | meaning |
+|---|---|
+| `length_m` | the long side of the footprint the LiDAR has seen |
+| `width_m` | the short side |
+| `height_m` | how tall, measured above the local road |
+| `yaw_deg` | which way the long side points, in the van's frame |
+
+A cluster gets them from the 2D spread of its own points (the same principal
+axis the road-edge rule already used), and the track keeps the largest view
+of each side, because the LiDAR only ever catches part of a thing and a
+bigger view is the truer one. `0.0` means "not measured", which is what the
+camera-only and ground-truth modes still report.
+
+The replay harness scores them against the dense labelled scan of each
+object, which is the fair answer key: it asks how much of the *visible*
+object the van recovered, not how big the object is in the map.
+
+## Two settings changed, both measured first
+
+| setting | was | now | why |
+|---|---|---|---|
+| clustering grid | 1.0 m | **0.8 m** | at 1.0 m a barrel and the planter beside it became one 4.4 m blob |
+| ground cut | 12 cm | **8 cm** | a 12.5 cm planter had almost all its points thrown away as road |
+
+Across the four fixtures, replaying the same recordings through the same
+pipeline with only these two settings different:
+
+| | day 3 settings | day 4 settings |
+|---|---|---|
+| mean recall | 0.89 | **0.90** |
+| objects seen in 9 updates out of 10 | 18 of 24 | **20 of 24** |
+| blobs covering two objects at once, per update | 0.11 | **0.03** |
+| median size error | 0.42 m | **0.26 m** |
+| phantoms per update | 4.3 | 4.8 |
+| phantoms **in the lane** per update | 0.00 | **0.00** |
+| object points kept by the road filter | 85 % | **90 %** |
+| ms per update | 9.9 | 10.0 |
+
+The extra 0.5 phantoms per update all sit off the lane, mostly in junctions
+where the road meets grass. Nothing new appears in the van's path.
+
+## Live check on CARLA
+
+The probe places one object at a time in front of the parked van and counts
+how often the live stack reports it (`logs/perception_probe_20260908_123004.csv`
+against day 3's `..._115020.csv`):
+
+| object, distance | day 3 cluster / tracked | day 4 cluster / tracked |
+|---|---|---|
+| planter 22 m | 0.00 / 0.00 | 0.00 / 0.00 |
+| **planter 16 m** | **0.00 / 0.00** | **0.87 / 0.93** |
+| **planter 13 m** | **0.47 / 0.97** | **0.97 / 0.97** |
+| planter 9 m | 1.00 / 0.97 | 1.00 / 0.97 |
+| cone 16 m | 0.93 / 0.93 | 1.00 / 0.97 |
+| cone 13 m | 0.93 / 0.93 | 1.00 / 0.97 |
+| barrel 22 m | 0.73 / 0.90 | 0.57 / 0.70 |
+| barrel 9 m | 1.00 / 0.97 | 1.00 / 0.97 |
+| car, person, all ranges | 0.97–1.00 | 0.97–1.00 |
+
+Points surviving the road filter on the planter: 1.0 → 5.4 at 16 m, 3.3 →
+8.7 at 13 m, 13.4 → 28.8 at 9 m. The one loss is the barrel at 22 m, where
+a 0.8 m grid splits its two or three far points into separate blobs.
+
+Drive test, barrel standing in the lane (`scenarios/run_scenario.py
+WAV-0294`): **PASS**, no contact, stopped 8.03 m short of it, and the stop
+came 0.31 s after the trigger (the rule allows 6 s). The van began slowing
+at **19.0 m**, against 16.4 m on day 3.
+
+## What the size numbers look like
+
+Height is measured well: 0.77 m against 0.77 for the barrel, 1.83 against
+1.83 for the pedestrian, 1.56 against 1.56 for the car, on the bend fixture.
+Length and width are lower bounds, because the LiDAR sees one face: the car
+reads 4.40 x 1.48 m where the visible outline is 3.89 x 1.48. Heading is
+good when two faces are visible (2° on the car) and meaningless for round
+things like a barrel or a cone, where the long side is whichever way the
+noise falls.
+
+Known limit, recorded in the tests: the track keeps the largest view it has
+ever had, so if one frame glues an object to a taller neighbour, that
+inflated size sticks until the track is dropped. The tests only check
+heights for objects the van holds in at least half its updates.
+
+## What is still open
+
+* The planter at 20 m and beyond is still invisible: at that range the road
+  filter has nothing left to keep.
+* Junctions still produce about 11 phantom reports per update, none in the
+  lane.
+* Naming without the camera is still wrong (a bin called "vehicle"); day 5.
+
+401 tests pass, 9 of them new for footprints.
