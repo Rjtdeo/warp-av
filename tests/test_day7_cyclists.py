@@ -86,3 +86,17 @@ def test_a_cyclist_never_makes_the_road_count_as_blocked():
         out = bs.update(perception=p, pose=pose, destination_distance=50.0, safety_ok=True)
     assert bs._blocked_since is None, "a cyclist must not start the blocked-road clock"
     assert out.behavior == DrivingBehavior.STOPPED_PEDESTRIAN
+
+
+def test_the_rider_claims_the_blob_before_a_person_standing_beside_the_bike():
+    """The camera reported two people and one bicycle around a motorbike: one person
+    barely overlapping it, one sitting squarely on it. Whichever is processed first takes
+    the blob, so the rider has to go first or the cyclist is named a pedestrian."""
+    from warp_av.perception.camera_model import box_overlap
+    bike = (334, 259, 34, 70)
+    bystander = (311, 224, 31, 94)
+    rider = (334, 241, 36, 78)
+    overlaps = [(box_overlap(bystander, bike), "bystander"), (box_overlap(rider, bike), "rider")]
+    overlaps.sort(reverse=True)
+    assert overlaps[0][1] == "rider", "the rider overlaps the bike far more"
+    assert overlaps[0][0] >= 0.35 > overlaps[1][0], "and only the rider passes the test"

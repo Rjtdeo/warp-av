@@ -844,16 +844,19 @@ class CameraLidarPerception:
                 c["uv_foot"] = cam.project(*ground_point(c, DEFAULT_LIDAR_HEIGHT_M))
             matched_boxes = 0
             ridden = [d for d in detections if d.class_id in RIDDEN_CLASSES]
+            named = []
             for det in detections:
                 if det.class_id == PERSON_CLASS:
-                    # a person standing on a bicycle's box is riding it, and a cyclist needs
-                    # a vehicle's room while still being a person to give way to
-                    cls = "cyclist" if any(box_overlap(det.box, b.box) >= RIDER_OVERLAP
-                                           for b in ridden) else "pedestrian"
+                    # a person standing over a bicycle's box is riding it, and a cyclist needs
+                    # a bicycle's room while still being a person to give way to
+                    over = max((box_overlap(det.box, b.box) for b in ridden), default=0.0)
+                    named.append((det, "cyclist" if over >= RIDER_OVERLAP else "pedestrian", over))
                 elif det.class_id in VEHICLE_CLASSES:
-                    cls = "vehicle"
-                else:
-                    cls = None
+                    named.append((det, "vehicle", 0.0))
+            # riders first: with a person beside the bike and a person on it, the one on it
+            # must claim the blob, or the rider ends up named a pedestrian
+            named.sort(key=lambda n: (n[1] != "cyclist", -n[2]))
+            for det, cls, _over in named:
                 if cls is None:
                     continue
                 # Which blob is this box drawn around? Not simply the nearest one inside it:
