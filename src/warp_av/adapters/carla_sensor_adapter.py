@@ -49,6 +49,7 @@ class LidarScan:
     timestamp: float = field(default_factory=time.time)
     frames: int = 1          # CARLA deliveries merged into this scan (1 = a single per-frame wedge)
     span_s: float = 0.0      # simulation seconds those deliveries cover (about 0.1 = one rotation)
+    sim_time: Optional[float] = None   # simulation time of the newest delivery in the scan
 
 
 @dataclass
@@ -201,8 +202,9 @@ class CarlaSensorAdapter:
         def _cb(image):
             if not self.camera_enabled:
                 return
-            array = np.frombuffer(image.raw_data, dtype=np.uint8)
-            array = array.reshape((image.height, image.width, 4))
+            # a COPY: raw_data is CARLA's reusable receive buffer, and the frame is
+            # read later from another thread (the detector worker, the dashboard)
+            array = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4)).copy()
             self.latest_frames[view_name] = CameraFrame(
                 image=array, width=image.width, height=image.height,
                 fov=float(image.fov), timestamp=time.time()
@@ -212,8 +214,9 @@ class CarlaSensorAdapter:
     def _on_camera(self, image):
         if not self.camera_enabled:
             return
-        array = np.frombuffer(image.raw_data, dtype=np.uint8)
-        array = array.reshape((image.height, image.width, 4))
+        # a COPY: raw_data is CARLA's reusable receive buffer, and the detector
+        # worker reads this frame from its own thread
+        array = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4)).copy()
         self.latest_camera = CameraFrame(
             image=array, width=image.width, height=image.height,
             fov=float(image.fov), timestamp=time.time()
@@ -228,6 +231,11 @@ class CarlaSensorAdapter:
         points = np.frombuffer(scan.raw_data, dtype=np.float32)
         points = points.reshape((-1, 4))  # x, y, z, intensity
         frames, span = 1, 0.0
+        sim_time = None
+        try:
+            sim_time = float(scan.timestamp)
+        except Exception:
+            pass
         if self._sweep is not None:
             try:
                 points = self._sweep.add(points, scan.transform.get_matrix(), float(scan.timestamp))
@@ -239,7 +247,8 @@ class CarlaSensorAdapter:
                     print(f"[CarlaSensorAdapter] LiDAR sweep accumulation failed ({self.lidar_sweep_errors}x): {e}")
         else:
             points = points.copy()          # our own memory, not CARLA's reusable receive buffer
-        self.latest_lidar = LidarScan(points=points, timestamp=time.time(), frames=frames, span_s=span)
+        self.latest_lidar = LidarScan(points=points, timestamp=time.time(), frames=frames, span_s=span,
+                                      sim_time=sim_time)
         self._last_lidar_time = time.time()
         for cb in self._lidar_callbacks:
             cb(self.latest_lidar)

@@ -28,7 +28,9 @@ Important:
     the stable fallback.
 """
 
+import dataclasses
 import math
+import os
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -37,6 +39,7 @@ import cv2
 import numpy as np
 
 from . import tracking as _tracking
+from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import cluster_points, ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped
 from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
                             lidar_thin_step_from_env, remove_road_edge_points, DEFAULT_LIDAR_HEIGHT_M)
@@ -160,6 +163,12 @@ class YoloXDetector:
         self.net = cv2.dnn.readNetFromONNX(
             str(self.model_path)
         )
+        # the model runs in a background thread now: leave two cores for the
+        # driving loop and the sensor callbacks
+        try:
+            cv2.setNumThreads(max(1, (os.cpu_count() or 4) - 2))
+        except Exception:
+            pass
 
         # CPU is intentionally used for the first version.
         self.net.setPreferableBackend(
@@ -623,6 +632,21 @@ class CameraLidarPerception:
 
         self.last_inference_ms = 0.0
 
+        # Perception V2 day 1 (fix 5): the detector runs in its own thread;
+        # the loop reads the newest finished result. WARP_YOLO_INLINE=1 puts
+        # it back inside the loop (A/B and rollback).
+        self.yolox_inline = yolox_inline_from_env()
+        self.detection_max_age_s = 1.0
+        self.last_detection_age_s = 0.0
+        self._worker = None
+        self.detector_fail_after = 3          # consecutive detector errors -> perception unhealthy (as before)
+        self.detector_stall_s = 5.0           # no first result this long after start -> unhealthy
+        # at 10 Hz two ticks can see the same LiDAR rotation; the tracker only
+        # runs when the sweep has advanced, otherwise the last output is reused
+        self.min_sweep_advance_s = 0.08
+        self._last_tracked_sim_time = None
+        self._last_output = None
+
         # ----------------------------------------------------
         # SHORT LIDAR TEMPORAL MEMORY
         #
@@ -690,14 +714,39 @@ class CameraLidarPerception:
                 return PerceptionOutput(healthy=False,
                                         reason=f"LIDAR_STALE_{now - lidar.timestamp:.1f}s")
 
-            # ---- camera inference, cached at inference_interval ----
-            monotonic_now = time.monotonic()
-            if monotonic_now - self._last_inference_time >= self.inference_interval:
-                t0 = time.perf_counter()
-                self._cached_camera_detections = self.detector.detect(camera.image[:, :, :3])
-                self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
-                self._last_inference_time = monotonic_now
+            # ---- camera inference: worker thread (default) or inline (A/B) ----
+            if self.yolox_inline:
+                monotonic_now = time.monotonic()
+                if monotonic_now - self._last_inference_time >= self.inference_interval:
+                    t0 = time.perf_counter()
+                    self._cached_camera_detections = self.detector.detect(camera.image[:, :, :3])
+                    self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
+                    self._last_inference_time = monotonic_now
+                self.last_detection_age_s = time.monotonic() - self._last_inference_time
+            else:
+                if self._worker is None:
+                    self._worker = DetectionWorker(self.detector.detect,
+                                                   lambda: self.sensor_adapter.latest_camera,
+                                                   interval_s=self.inference_interval, name="yolox")
+                    self._worker.start()
+                elif not self._worker.running:
+                    self._worker.start()          # a died thread is restarted, never silently missing
+                self._cached_camera_detections, self.last_detection_age_s = self._worker.latest(self.detection_max_age_s)
+                self.last_inference_ms = self._worker.last_inference_ms
+                # a failing or stalled detector stops the van, as an inline error did before
+                if self._worker.consecutive_errors >= self.detector_fail_after:
+                    return PerceptionOutput(healthy=False,
+                                            reason=f"CAMERA_LIDAR_ERROR: detector failed {self._worker.consecutive_errors}x")
+                if (self._worker.runs == 0 and self._worker.started_at is not None
+                        and time.monotonic() - self._worker.started_at > self.detector_stall_s):
+                    return PerceptionOutput(healthy=False, reason="CAMERA_LIDAR_ERROR: detector stalled")
             detections = self._cached_camera_detections
+
+            # ---- same LiDAR rotation as last tick? reuse the last output ----
+            sim_time = getattr(lidar, "sim_time", None)
+            if (sim_time is not None and self._last_tracked_sim_time is not None and self._last_output is not None
+                    and 0.0 <= sim_time - self._last_tracked_sim_time < self.min_sweep_advance_s):
+                return dataclasses.replace(self._last_output, timestamp=now)
 
             # ---- LiDAR -> 2D clusters (sensor frame: x fwd, y right) ----
             pts = lidar.points
@@ -823,13 +872,16 @@ class CameraLidarPerception:
                         path_blocked = True
 
             self.last_track_count = len(objects)
-            return PerceptionOutput(
+            output = PerceptionOutput(
                 objects=objects,
                 closest_obstacle_distance=closest_dist,
                 closest_obstacle_type=closest_type,
                 closest_obstacle_speed=closest_speed,
                 path_blocked=path_blocked,
                 timestamp=now, healthy=True, reason="OK")
+            self._last_tracked_sim_time = sim_time
+            self._last_output = output
+            return output
 
         except Exception as error:
             print("[CameraLidar] ERROR:", error)
@@ -1056,6 +1108,11 @@ class CameraLidarPerception:
     # --------------------------------------------------------
     # FAULT TEST SUPPORT
     # --------------------------------------------------------
+
+    def close(self):
+        """Stop the detector thread (shutdown)."""
+        if self._worker is not None:
+            self._worker.stop()
 
     def disable(self):
 

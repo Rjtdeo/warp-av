@@ -36,6 +36,7 @@ from .adapters.carla_vehicle_adapter import CarlaVehicleAdapter
 from .adapters.carla_sensor_adapter import CarlaSensorAdapter
 from .perception.perception import PerceptionSystem, DetectedObject, ObjectType
 from .perception.camera_lidar_perception import CameraLidarPerception
+from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import RoutePlanner
@@ -160,6 +161,8 @@ class WarpAV:
         self._current_state = {}
         self._route = None
         self._tick_count = 0
+        self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
+        self._tick_ms = 0.0           # measured work per tick (EMA)
         self._last_tick_error = ""
 
         # Route selected on the dashboard before START is pressed.
@@ -779,6 +782,12 @@ class WarpAV:
                     ),
                     1
                 ),
+                # Perception V2 day 1: where the detector runs and how old its result is
+                "yolox_mode": (("inline" if getattr(self.camera_lidar_perception, "yolox_inline", True) else "thread")
+                               if (self.camera_lidar_perception is not None and self.perception_mode == "camera_lidar") else "n/a"),
+                "detection_age_s": (round(float(getattr(self.camera_lidar_perception, "last_detection_age_s", 0.0) or 0.0), 2)
+                                    if self.perception_mode == "camera_lidar" else "n/a"),
+                "detector_errors": int(getattr(getattr(self.camera_lidar_perception, "_worker", None), "errors", 0) or 0),
                 # perception fix 2: road removal by local patches
                 "ground_filter": getattr(self.camera_lidar_perception, "ground_filter_mode", "n/a"),
                 "ground_filter_ms": round(float(getattr(self.camera_lidar_perception, "last_ground_ms", 0.0) or 0.0), 1),
@@ -847,6 +856,8 @@ class WarpAV:
             "errors": self.safety.errors + ([self.vehicle_adapter.last_command_rejected] if getattr(self.vehicle_adapter, "last_command_rejected", "") else []),
             "timestamp": time.time(),
             "tick": self._tick_count,
+            "loop_hz": round(self._loop_hz, 1) if self._loop_hz else None,
+            "tick_ms": round(self._tick_ms, 1),
             "autonomy_state": self.vehicle_adapter._autonomy_state.value,
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
@@ -890,11 +901,20 @@ class WarpAV:
         self._running = True
         dt = 1.0 / tick_rate
         print(f"\n[WarpAV] Running at {tick_rate} Hz. Console at http://localhost:5000")
+        last_start = None
 
         while self._running:
             try:
+                started = time.monotonic()
+                if last_start is not None:
+                    period = started - last_start
+                    if period > 0:
+                        hz = 1.0 / period
+                        self._loop_hz = hz if self._loop_hz is None else 0.9 * self._loop_hz + 0.1 * hz
+                last_start = started
                 self.tick()
-                time.sleep(dt)
+                self._tick_ms = 0.9 * self._tick_ms + 0.1 * (time.monotonic() - started) * 1000.0
+                sleep_remainder(started, dt)
             except KeyboardInterrupt:
                 print("\n[WarpAV] Shutting down...")
                 break
@@ -913,6 +933,11 @@ class WarpAV:
 
     def shutdown(self):
         self._running = False
+        if getattr(self, "camera_lidar_perception", None) is not None:
+            try:
+                self.camera_lidar_perception.close()
+            except Exception:
+                pass
 
         # Remove temporary scenario actors before destroying vehicle.
         self.clear_scenario()
@@ -2552,6 +2577,11 @@ class WarpAV:
             }
 
         if mode == "ground_truth":
+            if self.camera_lidar_perception is not None:
+                try:
+                    self.camera_lidar_perception.close()     # no detector thread while on ground truth
+                except Exception:
+                    pass
 
             self.perception = self.ground_truth_perception
             self.perception_mode = "ground_truth"

@@ -92,7 +92,7 @@ class FakeAdapter:
         self.sweep = sweep            # LidarSweepAccumulator or None (raw per-frame wedges)
 
     def on_camera(self, image):
-        arr = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
+        arr = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4)).copy()
         self.latest_camera = CameraFrame(image=arr, width=image.width, height=image.height,
                                          fov=float(image.fov), timestamp=time.time())
 
@@ -317,6 +317,7 @@ def main():
         sensors = attach_sensors(world, van, adapter, sensor_tick=a.sensor_tick)
         while adapter.latest_camera is None or adapter.latest_lidar is None:
             time.sleep(0.05)
+        os.environ.setdefault("WARP_YOLO_INLINE", "1")     # measurement tool: run the detector inline, deterministic
         perc = CameraLidarPerception(adapter)
         perc.ground_filter_mode = a.ground
         perc.thin_step = max(1, a.thin)
