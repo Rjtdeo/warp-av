@@ -62,7 +62,21 @@ OBJECTS = {
     "box":     ("static.prop.creasedbox01", 0.0),
     "car":     ("vehicle.tesla.model3", 0.3),
     "person":  ("walker.pedestrian.0001", 1.0),
+    # "random things": what a road throws at you that is not a cone
+    "trashbag": ("static.prop.trashbag", 0.0),
+    "trolley":  ("static.prop.shoppingtrolley", 0.0),
+    "bin":      ("static.prop.bin", 0.0),
+    "bench":    ("static.prop.bench01", 0.0),
+    "dirt":     ("static.prop.dirtdebris01", 0.0),
+    "warning":  ("static.prop.warningconstruction", 0.0),
+    "chain":    ("static.prop.chainbarrier", 0.0),
+    "haybale":  ("static.prop.haybale", 0.0),
+    "plank":    ("static.prop.ironplank", 0.0),
+    "bag":      ("static.prop.plasticbag", 0.0),
+    "can":      ("static.prop.colacan", 0.0),
+    "suitcase": ("static.prop.travelcase", 0.0),
 }
+RANDOM_SET = "trashbag,trolley,bin,bench,dirt,warning,chain,haybale,plank,bag,can,suitcase"
 NEAR_M = 1.5           # a reported object this close to the truth counts as "seen"
 ROW_PERIOD_S = 0.1     # sampling cadence of the measurement rows (same in every mode)
 
@@ -168,8 +182,8 @@ def measure(perc, adapter, vehicle, actor, api, frames):
         else:
             hmask = (pts[:, 2] > perc.minimum_lidar_z) & (pts[:, 2] < perc.maximum_lidar_z)
         masked_n = int((horiz & hmask).sum())
-        # the pipeline keeps every 3rd height-masked point: count what survives on the object
-        idx = np.where(hmask)[0][::3]
+        # the pipeline keeps every `thin_step`-th height-masked point (fix 3: every one)
+        idx = np.where(hmask)[0][::max(1, int(perc.thin_step))]
         down_n = int(horiz[idx].sum()) if masked_n else 0
 
         out = perc.update()                            # stages 2-4, the real code
@@ -257,7 +271,8 @@ def main():
     # every request can lose a second or two
     ap.add_argument("--api", default=os.environ.get("WARP_API", "http://127.0.0.1:5000"))
     ap.add_argument("--distances", default="25,20,15,12,10,8,6,4")
-    ap.add_argument("--objects", default="barrel,cone,barrier,planter,car,person")
+    ap.add_argument("--objects", default="barrel,cone,barrier,planter,car,person",
+                    help="comma list of names, 'random' for the random-things set, or bp:<blueprint id>")
     ap.add_argument("--frames", type=int, default=30)
     ap.add_argument("--lateral", type=float, default=0.0, help="metres right of the lane centre")
     ap.add_argument("--sweep", choices=["on", "off"], default="on",
@@ -267,6 +282,7 @@ def main():
                     help="LiDAR sensor_tick override (default: 0.0 with --sweep on, 0.1 with off)")
     ap.add_argument("--ground", choices=["patches", "flat"], default="patches",
                     help="road removal: patches (fix 2) or flat (the old 35 cm line)")
+    ap.add_argument("--thin", type=int, default=1, help="keep every n-th point: 1 = fix 3 (all), 3 = the old thinning")
     ap.add_argument("--no-stack", action="store_true", help="skip the live-stack cross-check")
     a = ap.parse_args()
     if a.no_stack:
@@ -303,11 +319,20 @@ def main():
             time.sleep(0.05)
         perc = CameraLidarPerception(adapter)
         perc.ground_filter_mode = a.ground
-        print(f"road removal: {a.ground}")
+        perc.thin_step = max(1, a.thin)
+        print(f"road removal: {a.ground}; thinning: every {perc.thin_step} point(s)")
         dists = [float(d) for d in a.distances.split(",")]
-        for name in a.objects.split(","):
-            bp_id, z_up = OBJECTS[name]
-            bp = bl.find(bp_id)
+        names = RANDOM_SET.split(",") if a.objects == "random" else a.objects.split(",")
+        for name in names:
+            if name.startswith("bp:"):                    # any blueprint id, e.g. bp:static.prop.gnome
+                bp_id, z_up = name[3:], 0.0
+            else:
+                bp_id, z_up = OBJECTS[name]
+            try:
+                bp = bl.find(bp_id)
+            except Exception:
+                print(f"  {name}: no blueprint {bp_id}")
+                continue
             for d in dists:
                 nxt = wp0.next(d)
                 if not nxt:
@@ -326,11 +351,21 @@ def main():
                 if actor is None:
                     print(f"  {name} @ {d} m: spawn failed")
                     continue
-                spawned.append(actor)
                 try:
                     actor.set_simulate_physics(False)
                 except Exception:
                     pass
+                # some meshes have their origin at the centre, not the base: lift them so they
+                # stand on the road instead of being half buried in it
+                try:
+                    bb = actor.bounding_box
+                    bottom = bb.location.z - bb.extent.z
+                    if bottom < -0.03:
+                        lifted = carla.Location(x=loc.x, y=loc.y, z=w.location.z + z_up - bottom)
+                        actor.set_transform(carla.Transform(lifted, w.rotation))
+                except Exception:
+                    pass
+                spawned.append(actor)
                 time.sleep(0.6)                                   # let both sensors see it
                 rows = measure(perc, adapter, van, actor, a.api, a.frames)
                 s = summarise(name, d, rows)
@@ -367,7 +402,7 @@ def main():
     (out_dir / f"perception_probe_{stamp}.json").write_text(json.dumps(
         {"map": cmap.name, "van": [tf0.location.x, tf0.location.y, tf0.rotation.yaw],
          "lateral_m": a.lateral, "sweep": a.sweep, "sensor_tick": a.sensor_tick, "ground": a.ground,
-         "results": results}, indent=1))
+         "thin": a.thin, "results": results}, indent=1))
     print(f"\nwrote {csv_path}")
 
 

@@ -786,6 +786,11 @@ class WarpAV:
                 "borrowed_tiles": int(getattr(self.camera_lidar_perception, "last_borrowed_tiles", 0) or 0),
                 "points_kept": int(getattr(self.camera_lidar_perception, "last_points_kept", 0) or 0),
                 "road_edges_dropped": int(getattr(self.camera_lidar_perception, "last_road_edges_dropped", 0) or 0),
+                # perception fix 3: thinning step (1 = every point) and how many blobs came out
+                "lidar_thin_step": (int(getattr(self.camera_lidar_perception, "thin_step", 0) or 0)
+                                    if self.camera_lidar_perception is not None else "n/a"),
+                "clusters": int(len(getattr(self.camera_lidar_perception, "last_clusters", []) or [])),
+                "clusters_before_cap": int(getattr(self.camera_lidar_perception, "last_clusters_before_cap", 0) or 0),
             },
 
             "mission": self.mission_manager.get_status(),

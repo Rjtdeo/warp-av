@@ -2,6 +2,7 @@
 Perception fix 2: road removal by local patches, the road-edge rule, and the
 wiring in camera+LiDAR perception (switchable back to the old flat line).
 """
+import math
 import os
 import time
 import warnings
@@ -276,6 +277,29 @@ def test_kerb_is_a_road_edge_and_a_planter_is_not():
     # a long, low thing IN the lane (a traffic island, a slab) is not a road edge
     assert is_road_edge({"extent": 2.3, "height": 0.28, "y": 0.2}) is False
     assert is_road_edge({"extent": 2.3, "height": 0.28, "y": 1.9}) is True
+    # a long, low thing lying ACROSS the road (a planter trough) is not a road edge either
+    assert is_road_edge({"extent": 2.3, "height": 0.28, "y": 1.9, "axis_deg": 85.0}) is False
+    assert is_road_edge({"extent": 2.3, "height": 0.28, "y": 1.9, "axis_deg": 20.0}) is True
+
+
+def test_kerb_on_a_bend_is_still_an_edge_and_a_trough_across_a_bend_is_not():
+    """On a 30 m bend the kerb 4-14 m ahead turns by ~20 degrees: still 'along
+    the road'. A 5 m trough across the lane on the same bend is not."""
+    R = 30.0
+    kerb = []
+    for arc in np.arange(4.0, 14.0, 0.4):
+        a = arc / R
+        kerb.append((R * math.sin(a), R * (1 - math.cos(a)) + 1.9))          # kerb 1.9 m right of a road curving right
+    kerb_h = [0.15] * len(kerb)
+    cl = cluster_points(kerb, heights=kerb_h)
+    assert len(cl) == 1 and cl[0]["axis_deg"] < 40 and is_road_edge(cl[0]) is True
+    a = 9.0 / R
+    cx, cy = R * math.sin(a), R * (1 - math.cos(a))                            # lane centre 9 m along the bend
+    heading = a                                                                # road direction there
+    trough = [(cx - u * math.sin(heading), cy + u * math.cos(heading)) for u in np.arange(-2.4, 2.5, 0.3)]
+    trough_h = [0.2] * len(trough)
+    cl = cluster_points(trough, heights=trough_h)
+    assert len(cl) == 1 and cl[0]["axis_deg"] > 50 and is_road_edge(cl[0]) is False
 
 
 def test_kerb_strip_cannot_drag_a_lamp_post():
@@ -318,7 +342,10 @@ def test_mode_from_env_and_perception_wiring():
     assert 'if self.ground_filter_mode == "patches":' in src
     assert "ground = self.ground_filter.apply(pts)" in src
     assert "flat_cut(pts" in src
-    assert "cluster_points(xy.tolist(), heights=heights.tolist())" in src
+    assert "cluster_points(xy.tolist(), heights=heights.tolist(),\n" in src
+    assert "min_points_far=MIN_POINTS_FAR, far_range_m=FAR_RANGE_M)" in src
     assert "remove_road_edge_points(sel, heights, cluster_points)" in src
+    # fix 3: every point is kept unless WARP_LIDAR_THIN says otherwise
+    assert "sel = pts[mask][::step]" in src and "self.thin_step = lidar_thin_step_from_env()" in src
     # the old numbers are still the flat fallback, unchanged
     assert "self.minimum_lidar_z = -2.15" in src and "self.maximum_lidar_z = 1.5" in src

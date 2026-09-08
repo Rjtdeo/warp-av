@@ -63,10 +63,22 @@ NEIGHBOUR_STEP_M = 0.5              # a nearest tile more than this above a poin
 
 ROAD_EDGE_MAX_HEIGHT_M = 0.30       # a blob lower than this ...
 ROAD_EDGE_MIN_EXTENT_M = 1.5        # ... and longer than 2 x this ...
-ROAD_EDGE_MIN_LATERAL_M = 1.2       # ... and centred this far off the van's axis is a kerb / road edge.
-                                    # A low, long thing IN our lane (a traffic island, a slab) stays an obstacle.
+ROAD_EDGE_MIN_LATERAL_M = 1.2       # ... and centred this far off the van's axis ...
+ROAD_EDGE_MAX_AXIS_DEG = 40.0       # ... and running along the road (long axis within this of the van's heading)
+                                    # is a kerb / road edge. A low, long thing IN our lane (a traffic island,
+                                    # a slab) or lying ACROSS the road (a planter trough) stays an obstacle.
 
 MODES = ("patches", "flat")
+
+
+def lidar_thin_step_from_env(env=None) -> int:
+    """WARP_LIDAR_THIN=1 (default, perception fix 3: keep every point) | 3 (the old one-in-three)."""
+    env = os.environ if env is None else env
+    try:
+        v = int(str(env.get("WARP_LIDAR_THIN", "1")).strip())
+    except ValueError:
+        return 1
+    return max(1, min(10, v))
 
 
 def ground_filter_mode_from_env(env=None) -> str:
@@ -276,16 +288,21 @@ def flat_cut(points, lidar_height_m: float = DEFAULT_LIDAR_HEIGHT_M, min_above_m
 
 def is_road_edge(cluster: dict, max_height_m: float = ROAD_EDGE_MAX_HEIGHT_M,
                  min_extent_m: float = ROAD_EDGE_MIN_EXTENT_M,
-                 min_lateral_m: float = ROAD_EDGE_MIN_LATERAL_M) -> bool:
-    """A long, low blob beside the lane is a kerb or a road edge, not
-    something to stop for. A long, low blob in the lane is kept.
+                 min_lateral_m: float = ROAD_EDGE_MIN_LATERAL_M,
+                 max_axis_deg: float = ROAD_EDGE_MAX_AXIS_DEG) -> bool:
+    """A long, low blob beside the lane that runs along the road is a kerb
+    or a road edge, not something to stop for. A long, low blob in the lane,
+    or one lying across the road, is kept.
     `cluster` is a cluster_points() dict with 'extent', 'y' (sensor frame,
-    metres off the van's axis) and (optionally) 'height'."""
+    metres off the van's axis), 'axis_deg' (long axis vs the van's heading)
+    and (optionally) 'height'."""
     height = cluster.get("height")
     if height is None:
         return False
+    axis = cluster.get("axis_deg")
+    along_road = True if axis is None else float(axis) <= max_axis_deg
     return (float(height) < max_height_m and float(cluster.get("extent", 0.0)) > min_extent_m
-            and abs(float(cluster.get("y", 0.0))) > min_lateral_m)
+            and abs(float(cluster.get("y", 0.0))) > min_lateral_m and along_road)
 
 
 def remove_road_edge_points(sel: np.ndarray, heights: np.ndarray, cluster_fn=None):

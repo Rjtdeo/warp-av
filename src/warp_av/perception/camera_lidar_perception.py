@@ -36,9 +36,10 @@ from typing import List, Optional
 import cv2
 import numpy as np
 
-from .tracking import cluster_points, ObjectTracker
+from . import tracking as _tracking
+from .tracking import cluster_points, ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped
 from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
-                            remove_road_edge_points, DEFAULT_LIDAR_HEIGHT_M)
+                            lidar_thin_step_from_env, remove_road_edge_points, DEFAULT_LIDAR_HEIGHT_M)
 
 from .perception import (
     DetectedObject,
@@ -645,12 +646,16 @@ class CameraLidarPerception:
         # Perception fix 2: road removal by local patches instead of the flat
         # 35 cm line above. WARP_GROUND_FILTER=flat restores the old line.
         self.ground_filter_mode = ground_filter_mode_from_env()
+        # Perception fix 3: keep every point the road filter leaves (the old
+        # code kept one in three). WARP_LIDAR_THIN=3 restores the old thinning.
+        self.thin_step = lidar_thin_step_from_env()
         self.ground_filter = GroundFilter(lidar_height_m=DEFAULT_LIDAR_HEIGHT_M)
         self.last_ground_ms = 0.0
         self.last_ground_tiles = 0
         self.last_borrowed_tiles = 0
         self.last_road_edges_dropped = 0
         self.last_points_kept = 0
+        self.last_clusters_before_cap = 0
 
         print(
             "[CameraLidar] Camera + LiDAR "
@@ -708,8 +713,9 @@ class CameraLidarPerception:
             self.last_ground_tiles = ground.ground_tiles
             self.last_borrowed_tiles = ground.borrowed_tiles
             self.last_points_kept = int(mask.sum())
-            sel = pts[mask][::3]             # downsample 3x: plenty for van-sized objects (fix 3 revisits this)
-            heights = ground.above[mask][::3]
+            step = max(1, int(self.thin_step))
+            sel = pts[mask][::step]          # fix 3: every point (step 1); the old code kept one in three
+            heights = ground.above[mask][::step]
             # Pass 1 (fix 2): kerbs and road edges. Cluster the LOW points on
             # their own; a long, low blob clear of the lane is a road edge and
             # its POINTS are removed now, before the main clustering, so a
@@ -718,7 +724,13 @@ class CameraLidarPerception:
             sel, heights, edges_dropped = remove_road_edge_points(sel, heights, cluster_points)
             # Pass 2: everything that is left
             xy = sel[:, :2]
-            clusters = cluster_points(xy.tolist(), heights=heights.tolist())
+            clusters = cluster_points(xy.tolist(), heights=heights.tolist(),
+                                      min_points_far=MIN_POINTS_FAR, far_range_m=FAR_RANGE_M)
+            self.last_clusters_before_cap = _tracking.LAST_CLUSTER_TOTAL
+            # a 2-point blob that is low and beside the lane is a kerb crumb, not an object
+            clusters = [c for c in clusters
+                        if not (c.get("weak") and (c.get("height") is not None and c["height"] < 0.30)
+                                and abs(c["y"]) > 1.2)]
             self.last_road_edges_dropped = edges_dropped
             self.last_clusters = clusters     # sensor frame (x fwd, y right): the learned parker's feelers read these
 
@@ -755,7 +767,8 @@ class CameraLidarPerception:
             # camera confirmation or not (side/rear objects never enter the
             # front camera's view and were all labelled OBSTACLE).
             for c in clusters:
-                if c["cls"] is None and c["extent"] >= 0.9 and c["n"] >= 6:
+                # 12 raw points with every point kept (fix 3); 6 under the old 3x thinning
+                if c["cls"] is None and vehicle_shaped(c, min_points=12 if self.thin_step <= 1 else 6):
                     c["cls"] = "vehicle"
                     c["conf"] = 0.45
 
@@ -771,6 +784,7 @@ class CameraLidarPerception:
                     "wy": ey0 + c["x"] * sy + c["y"] * cy,
                     "cls": c["cls"],
                     "confidence": c["conf"],
+                    "weak": bool(c.get("weak", False)),   # a 2-point far blob: three sightings before it counts
                 })
             tracks = self.tracker.update(observations, now)
 
@@ -790,7 +804,8 @@ class CameraLidarPerception:
                     object_type=otype, x=ex, y=ey, distance=dist,
                     speed=self.tracker.reported_speed(tr),
                     vx_world=tr.vx, vy_world=tr.vy,
-                    confidence=tr.confidence if tr.cls else 0.65,
+                    # a track built only from 2-point far sightings is reported, but with low confidence
+                    confidence=(tr.confidence if tr.cls else 0.65) if not getattr(tr, "weak_only", False) else 0.35,
                     id=tr.tid, timestamp=now))
 
             # ---- simple forward in-path summary (route corridor refines) ----
