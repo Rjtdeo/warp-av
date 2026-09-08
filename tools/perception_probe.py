@@ -44,6 +44,7 @@ import numpy as np  # noqa: E402
 import carla        # noqa: E402
 
 from warp_av.adapters.carla_sensor_adapter import CameraFrame, LidarScan          # noqa: E402
+from warp_av.adapters.lidar_sweep import LidarSweepAccumulator, azimuth_coverage_bins  # noqa: E402
 from warp_av.perception.camera_lidar_perception import (CameraLidarPerception,   # noqa: E402
                                                         COCO_CLASSES)
 from warp_av.perception.tracking import ObjectTracker                            # noqa: E402
@@ -63,16 +64,18 @@ OBJECTS = {
     "person":  ("walker.pedestrian.0001", 1.0),
 }
 NEAR_M = 1.5           # a reported object this close to the truth counts as "seen"
+ROW_PERIOD_S = 0.1     # sampling cadence of the measurement rows (same in every mode)
 
 
 class FakeAdapter:
     """What CameraLidarPerception reads: latest_camera, latest_lidar, vehicle."""
 
-    def __init__(self, vehicle):
+    def __init__(self, vehicle, sweep=None):
         self.vehicle = vehicle
         self.latest_camera = None
         self.latest_lidar = None
         self.frames = 0
+        self.sweep = sweep            # LidarSweepAccumulator or None (raw per-frame wedges)
 
     def on_camera(self, image):
         arr = np.frombuffer(image.raw_data, dtype=np.uint8).reshape((image.height, image.width, 4))
@@ -81,7 +84,13 @@ class FakeAdapter:
 
     def on_lidar(self, scan):
         pts = np.frombuffer(scan.raw_data, dtype=np.float32).reshape((-1, 4))
-        self.latest_lidar = LidarScan(points=pts.copy(), timestamp=time.time())
+        frames, span = 1, 0.0
+        if self.sweep is not None:
+            pts = self.sweep.add(pts, scan.transform.get_matrix(), float(scan.timestamp))
+            frames, span = self.sweep.frames_in_sweep, self.sweep.span_s
+        else:
+            pts = pts.copy()
+        self.latest_lidar = LidarScan(points=pts, timestamp=time.time(), frames=frames, span_s=span)
         self.frames += 1
 
 
@@ -129,12 +138,17 @@ def measure(perc, adapter, vehicle, actor, api, frames):
     r_obj = math.hypot(bb.x, bb.y)
     rows = []
     last = adapter.frames
+    last_row_t = 0.0
     deadline = time.time() + frames * 0.5 + 5.0
     while len(rows) < frames and time.time() < deadline:
-        if adapter.frames == last:
+        # one row per ROW_PERIOD_S in BOTH arms: with sweeps on the LiDAR
+        # delivers ~50 times a second, with sweeps off 10 times, and the two
+        # runs must watch the object for the same length of time
+        if adapter.frames == last or time.time() - last_row_t < ROW_PERIOD_S:
             time.sleep(0.005)
             continue
         last = adapter.frames
+        last_row_t = time.time()
         t_row = time.perf_counter()
         tf = vehicle.get_transform()
         loc = actor.get_location()
@@ -144,8 +158,7 @@ def measure(perc, adapter, vehicle, actor, api, frames):
         # stage 0: what one LiDAR scan contains (points, and how much of the
         # circle it covers in 10-degree bins: 36 = a full sweep)
         pts = adapter.latest_lidar.points
-        az = np.degrees(np.arctan2(pts[:, 1], pts[:, 0]))
-        scan_cover = int(len(np.unique((az // 10).astype(int)))) if len(pts) else 0
+        scan_cover = azimuth_coverage_bins(pts)
 
         # stage 1: raw points on the object
         horiz = np.hypot(pts[:, 0] - ox, pts[:, 1] - oy) <= r_obj + 0.35
@@ -244,12 +257,19 @@ def main():
     ap.add_argument("--objects", default="barrel,cone,barrier,planter,car,person")
     ap.add_argument("--frames", type=int, default=30)
     ap.add_argument("--lateral", type=float, default=0.0, help="metres right of the lane centre")
-    ap.add_argument("--sensor-tick", default="0.1",
-                    help="LiDAR sensor_tick; the stack uses 0.1 (0.0 = every simulator frame)")
+    ap.add_argument("--sweep", choices=["on", "off"], default="on",
+                    help="on: glue per-frame wedges into full sweeps like the fixed stack; "
+                         "off: one raw wedge per scan like the stack before fix 1")
+    ap.add_argument("--sensor-tick", default=None,
+                    help="LiDAR sensor_tick override (default: 0.0 with --sweep on, 0.1 with off)")
     ap.add_argument("--no-stack", action="store_true", help="skip the live-stack cross-check")
     a = ap.parse_args()
     if a.no_stack:
         a.api = None
+    if a.sensor_tick is None:
+        a.sensor_tick = "0.0" if a.sweep == "on" else "0.1"
+    if a.sweep == "on" and float(a.sensor_tick) != 0.0:
+        sys.exit("--sweep on needs every simulator frame: use --sensor-tick 0.0 (the stack does)")
 
     client = carla.Client(a.host, a.port)
     client.set_timeout(20.0)
@@ -266,7 +286,8 @@ def main():
     print(f"van at ({tf0.location.x:.1f}, {tf0.location.y:.1f}) yaw {tf0.rotation.yaw:.1f}, "
           f"map {cmap.name}, lane width {wp0.lane_width:.2f}")
 
-    adapter = FakeAdapter(van)
+    adapter = FakeAdapter(van, sweep=LidarSweepAccumulator() if a.sweep == "on" else None)
+    print(f"lidar mode: {'full sweeps' if a.sweep == 'on' else 'raw per-frame wedges'} (sensor_tick {a.sensor_tick})")
     spawned = []
     sensors = []
     results = []
@@ -338,7 +359,7 @@ def main():
         wr.writerows(results)
     (out_dir / f"perception_probe_{stamp}.json").write_text(json.dumps(
         {"map": cmap.name, "van": [tf0.location.x, tf0.location.y, tf0.rotation.yaw],
-         "lateral_m": a.lateral, "results": results}, indent=1))
+         "lateral_m": a.lateral, "sweep": a.sweep, "sensor_tick": a.sensor_tick, "results": results}, indent=1))
     print(f"\nwrote {csv_path}")
 
 

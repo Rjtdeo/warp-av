@@ -15,10 +15,23 @@ The rest of the stack never imports carla — only this adapter touches it.
 
 import carla
 import numpy as np
+import os
 import time
 import threading
 from dataclasses import dataclass, field
 from typing import Optional, List, Callable
+
+from .lidar_sweep import LidarSweepAccumulator
+
+LIDAR_ROTATION_HZ = 10.0
+
+
+def lidar_full_sweep_enabled(env=None) -> bool:
+    """Perception fix 1 (2026-09-07): glue CARLA's per-frame LiDAR wedges into
+    whole 360-degree sweeps. ON by default; WARP_LIDAR_SWEEP=0 restores the
+    old one-wedge-per-scan behaviour for A/B comparison."""
+    env = os.environ if env is None else env
+    return str(env.get("WARP_LIDAR_SWEEP", "1")).strip().lower() not in ("0", "off", "false", "no")
 
 
 @dataclass
@@ -32,8 +45,10 @@ class CameraFrame:
 
 @dataclass
 class LidarScan:
-    points: np.ndarray       # Nx4 (x, y, z, intensity)
+    points: np.ndarray       # Nx4 (x, y, z, intensity), sensor frame: x forward, y right, z up
     timestamp: float = field(default_factory=time.time)
+    frames: int = 1          # CARLA deliveries merged into this scan (1 = a single per-frame wedge)
+    span_s: float = 0.0      # simulation seconds those deliveries cover (about 0.1 = one rotation)
 
 
 @dataclass
@@ -63,10 +78,16 @@ class CarlaSensorAdapter:
     and packages the data for the rest of the system.
     """
 
-    def __init__(self, world, vehicle):
+    def __init__(self, world, vehicle, full_sweep: Optional[bool] = None):
         self.world = world
         self.vehicle = vehicle
         self.sensors = []
+
+        # Perception fix 1: whole LiDAR sweeps instead of per-frame wedges.
+        self.lidar_full_sweep = lidar_full_sweep_enabled() if full_sweep is None else bool(full_sweep)
+        self._sweep = LidarSweepAccumulator(rotation_hz=LIDAR_ROTATION_HZ) if self.lidar_full_sweep else None
+        self.lidar_sweep_errors = 0
+        self._lidar_enabled = True
 
         # Latest data (thread-safe via GIL for simple reads)
         self.latest_camera: Optional[CameraFrame] = None
@@ -92,6 +113,17 @@ class CarlaSensorAdapter:
         self.lidar_enabled = True
         self.gnss_enabled = True
         self.imu_enabled = True
+
+    @property
+    def lidar_enabled(self) -> bool:
+        return self._lidar_enabled
+
+    @lidar_enabled.setter
+    def lidar_enabled(self, value) -> None:
+        value = bool(value)
+        if value and not self._lidar_enabled and self._sweep is not None:
+            self._sweep.reset()        # after a fault-injection drop, start a fresh sweep
+        self._lidar_enabled = value
 
     def setup_sensors(self):
         """Attach all sensors to the vehicle."""
@@ -139,12 +171,15 @@ class CarlaSensorAdapter:
         lidar_bp.set_attribute('channels', '32')
         lidar_bp.set_attribute('points_per_second', '150000')
         lidar_bp.set_attribute('range', '50.0')
-        lidar_bp.set_attribute('rotation_frequency', '10')
-        lidar_bp.set_attribute('sensor_tick', '0.1')
+        lidar_bp.set_attribute('rotation_frequency', str(int(LIDAR_ROTATION_HZ)))
+        # Full-sweep mode needs EVERY frame's wedge (sensor_tick 0.0); the
+        # accumulator glues them. sensor_tick 0.1 kept one wedge in ten.
+        lidar_bp.set_attribute('sensor_tick', '0.0' if self.lidar_full_sweep else '0.1')
         lidar_transform = carla.Transform(carla.Location(x=0.0, z=2.5))
         lidar = self.world.spawn_actor(lidar_bp, lidar_transform, attach_to=self.vehicle)
         lidar.listen(self._on_lidar)
         self.sensors.append(lidar)
+        print(f"[CarlaSensorAdapter] LiDAR: {'full 360-degree sweeps (accumulated)' if self.lidar_full_sweep else 'raw per-frame deliveries (WARP_LIDAR_SWEEP=0)'}")
 
         # --- GNSS (GPS) ---
         gnss_bp = bp_lib.find('sensor.other.gnss')
@@ -192,7 +227,19 @@ class CarlaSensorAdapter:
             return
         points = np.frombuffer(scan.raw_data, dtype=np.float32)
         points = points.reshape((-1, 4))  # x, y, z, intensity
-        self.latest_lidar = LidarScan(points=points, timestamp=time.time())
+        frames, span = 1, 0.0
+        if self._sweep is not None:
+            try:
+                points = self._sweep.add(points, scan.transform.get_matrix(), float(scan.timestamp))
+                frames, span = self._sweep.frames_in_sweep, self._sweep.span_s
+            except Exception as e:          # never lose the raw delivery over a bookkeeping error
+                self.lidar_sweep_errors += 1
+                points = points.copy()
+                if self.lidar_sweep_errors in (1, 10, 100, 1000):
+                    print(f"[CarlaSensorAdapter] LiDAR sweep accumulation failed ({self.lidar_sweep_errors}x): {e}")
+        else:
+            points = points.copy()          # our own memory, not CARLA's reusable receive buffer
+        self.latest_lidar = LidarScan(points=points, timestamp=time.time(), frames=frames, span_s=span)
         self._last_lidar_time = time.time()
         for cb in self._lidar_callbacks:
             cb(self.latest_lidar)

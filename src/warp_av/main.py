@@ -796,7 +796,8 @@ class WarpAV:
                 "lidar": {
                     "healthy": self.sensor_adapter.is_lidar_healthy(),
                     "enabled": self.sensor_adapter.lidar_enabled,
-                    "label": "LiDAR"
+                    "label": "LiDAR",
+                    **self._lidar_sweep_telemetry(),
                 },
 
                 "gps": {
@@ -857,6 +858,19 @@ class WarpAV:
             "localization": {"confidence": round(pose.confidence, 2), "quality": pose.quality.value, "healthy": pose.healthy},
             "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
                             if self.mission_manager.current_mission else None),
+        }
+
+    def _lidar_sweep_telemetry(self) -> dict:
+        """Perception fix 1: is the LiDAR handing over whole sweeps? One read
+        of the latest scan so every field describes the same scan."""
+        scan = getattr(self.sensor_adapter, "latest_lidar", None)
+        pts = getattr(scan, "points", None)
+        return {
+            "full_sweep": bool(getattr(self.sensor_adapter, "lidar_full_sweep", False)),
+            "frames_per_scan": int(getattr(scan, "frames", 0) or 0),
+            "span_s": round(float(getattr(scan, "span_s", 0.0) or 0.0), 3),
+            "points_per_scan": int(len(pts)) if pts is not None else 0,
+            "sweep_errors": int(getattr(self.sensor_adapter, "lidar_sweep_errors", 0) or 0),
         }
 
     def run(self, tick_rate=10):
