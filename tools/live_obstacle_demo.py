@@ -25,10 +25,146 @@ OBJECTS = {"barrel": ("static.prop.barrel", 0.05), "cone": ("static.prop.traffic
            "car": ("vehicle.tesla.model3", 0.3), "person": ("walker.pedestrian.0001", 1.0)}
 
 
+def fetch_route(api):
+    route = []
+    for _ in range(30):
+        try:
+            route = requests.get(api + "/api/route", timeout=2).json()
+        except Exception:
+            route = []
+        if len(route) >= 2:
+            break
+        time.sleep(0.1)
+    return route
+
+
+class RouteLine:
+    """Arc-length bookkeeping along the planned route."""
+
+    def __init__(self, route):
+        self.xs = [p["x"] for p in route]
+        self.ys = [p["y"] for p in route]
+        self.seg = [math.hypot(self.xs[i + 1] - self.xs[i], self.ys[i + 1] - self.ys[i]) for i in range(len(self.xs) - 1)]
+        self.cum = [0.0]
+        for d in self.seg:
+            self.cum.append(self.cum[-1] + d)
+        self.total = self.cum[-1]
+
+    def at(self, arc):
+        arc = max(0.0, min(self.total - 0.01, arc))
+        for i in range(len(self.seg)):
+            if self.cum[i + 1] >= arc:
+                t = (arc - self.cum[i]) / self.seg[i] if self.seg[i] > 0 else 0.0
+                x = self.xs[i] + t * (self.xs[i + 1] - self.xs[i])
+                y = self.ys[i] + t * (self.ys[i + 1] - self.ys[i])
+                return x, y, math.degrees(math.atan2(self.ys[i + 1] - self.ys[i], self.xs[i + 1] - self.xs[i]))
+        return self.xs[-1], self.ys[-1], 0.0
+
+    def progress(self, x, y):
+        """Arc length of the route point nearest to (x, y)."""
+        best, best_arc = float("inf"), 0.0
+        for i in range(len(self.seg)):
+            ax, ay, bx, by = self.xs[i], self.ys[i], self.xs[i + 1], self.ys[i + 1]
+            dx, dy = bx - ax, by - ay
+            L2 = dx * dx + dy * dy
+            t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / L2))
+            cx, cy = ax + t * dx, ay + t * dy
+            d = (x - cx) ** 2 + (y - cy) ** 2
+            if d < best:
+                best, best_arc = d, self.cum[i] + t * math.sqrt(L2)
+        return best_arc
+
+
+def run_sequence(a, world, cmap, van, placed, chase, t0):
+    """Drop the objects one after another while the van drives."""
+    route = fetch_route(a.api)
+    if len(route) < 2:
+        print("no route from the stack")
+        return
+    line = RouteLine(route)
+    names = [n.strip() for n in a.sequence.split(",") if n.strip()]
+    print(f"route is {line.total:.0f} m; sequence: {', '.join(names)}; each dropped {a.drop_ahead:.0f} m ahead", flush=True)
+    bl = world.get_blueprint_library()
+    for name in names:
+        vloc = van.get_location()
+        arc = line.progress(vloc.x, vloc.y) + a.drop_ahead
+        if arc >= line.total - 8.0:
+            print(f"route nearly over ({arc:.0f} of {line.total:.0f} m): stopping the sequence", flush=True)
+            break
+        x, y, yaw_deg = line.at(arc)
+        bp_id, z_up = OBJECTS[name]
+        z = cmap.get_waypoint(carla.Location(x=x, y=y, z=vloc.z)).transform.location.z
+        actor = world.try_spawn_actor(bl.find(bp_id), carla.Transform(carla.Location(x=x, y=y, z=z + z_up),
+                                                                      carla.Rotation(yaw=yaw_deg)))
+        if actor is None:
+            actor = world.try_spawn_actor(bl.find(bp_id), carla.Transform(carla.Location(x=x, y=y, z=z + z_up + 0.5),
+                                                                          carla.Rotation(yaw=yaw_deg)))
+        if actor is None:
+            print(f"{name}: spawn failed, skipping", flush=True)
+            continue
+        try:
+            actor.set_simulate_physics(False)
+            bb = actor.bounding_box
+            bottom = bb.location.z - bb.extent.z
+            if bottom < -0.03:
+                actor.set_transform(carla.Transform(carla.Location(x=x, y=y, z=z + z_up - bottom), carla.Rotation(yaw=yaw_deg)))
+        except Exception:
+            pass
+        placed.append((name, actor))
+        print(f"\n>>> {name} dropped {a.drop_ahead:.0f} m ahead at ({x:.1f}, {y:.1f})  [t={time.time() - t0:.0f}s]", flush=True)
+        ext = actor.bounding_box.extent
+        reach = max(1.5, math.hypot(ext.x, ext.y) + 0.5)
+        t_drop = time.time()
+        seen_since = None
+        last_print = 0.0
+        while time.time() - t_drop < a.max_wait:
+            chase()
+            if time.time() - last_print >= 1.0:
+                last_print = time.time()
+                try:
+                    st = requests.get(a.api + "/api/state", timeout=2).json()
+                except Exception:
+                    time.sleep(0.05)
+                    continue
+                loc = actor.get_location()
+                d = loc.distance(van.get_location())
+                objs = st.get("perception", {}).get("objects", [])
+                near = [o for o in objs if math.hypot(o["x"] - loc.x, o["y"] - loc.y) <= reach]
+                speed = st.get("pose", {}).get("speed", 0.0)
+                seen = bool(near)
+                if seen and seen_since is None:
+                    seen_since = time.time()
+                    print(f"    seen at {d:.1f} m as '{near[0]['type']}'  [t={time.time() - t0:.0f}s]", flush=True)
+                if not seen:
+                    seen_since = None
+                print(f"t={time.time() - t0:4.0f}s  speed {speed:4.1f}  {name} {d:5.1f} m: "
+                      f"{near[0]['type'] if near else 'not seen'}  |  {st.get('behavior')}: {(st.get('behavior_reason') or '')[:46]}",
+                      flush=True)
+                if seen_since is not None and time.time() - seen_since >= 1.5 and speed < 0.3:
+                    print(f"    van stopped for the {name} at {d:.1f} m: removing it  [t={time.time() - t0:.0f}s]", flush=True)
+                    break
+                if st.get("mission", {}).get("state") == "completed":
+                    print("mission completed", flush=True)
+                    return
+            time.sleep(0.05)
+        else:
+            print(f"    {a.max_wait:.0f} s passed: removing the {name}", flush=True)
+        actor.destroy()
+        placed.remove((name, actor))
+        time.sleep(2.5)
+    print("sequence finished", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--object", default="barrel", choices=sorted(OBJECTS))
     ap.add_argument("--objects", default=None, help="several: name@ahead[:right],... overrides --object/--ahead")
+    ap.add_argument("--sequence", default=None,
+                    help="drop these objects one after another WHILE driving, e.g. cone,planter,trolley,bench,barrel: "
+                         "each is dropped --drop-ahead metres ahead on the route; once the van has seen it and "
+                         "stopped (or --max-wait s passed) it is removed and the next one is dropped")
+    ap.add_argument("--drop-ahead", type=float, default=18.0)
+    ap.add_argument("--max-wait", type=float, default=30.0)
     ap.add_argument("--at-route-fraction", type=float, default=None,
                     help="place the objects on the PLANNED route at this fraction of the trip (0.5 = halfway); "
                          "'ahead' in --objects is then metres beyond that point")
@@ -152,6 +288,9 @@ def main():
     t0 = time.time()
     last_print = 0.0
     try:
+        if a.sequence:
+            run_sequence(a, world, cmap, van, placed, chase, t0)
+            return
         while time.time() - t0 < a.follow:
             chase()
             if time.time() - last_print >= 2.0:
