@@ -37,6 +37,8 @@ import cv2
 import numpy as np
 
 from .tracking import cluster_points, ObjectTracker
+from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
+                            remove_road_edge_points, DEFAULT_LIDAR_HEIGHT_M)
 
 from .perception import (
     DetectedObject,
@@ -640,6 +642,16 @@ class CameraLidarPerception:
         self.tracker = ObjectTracker()
         self.last_track_count = 0
 
+        # Perception fix 2: road removal by local patches instead of the flat
+        # 35 cm line above. WARP_GROUND_FILTER=flat restores the old line.
+        self.ground_filter_mode = ground_filter_mode_from_env()
+        self.ground_filter = GroundFilter(lidar_height_m=DEFAULT_LIDAR_HEIGHT_M)
+        self.last_ground_ms = 0.0
+        self.last_ground_tiles = 0
+        self.last_borrowed_tiles = 0
+        self.last_road_edges_dropped = 0
+        self.last_points_kept = 0
+
         print(
             "[CameraLidar] Camera + LiDAR "
             "perception ready"
@@ -684,9 +696,30 @@ class CameraLidarPerception:
 
             # ---- LiDAR -> 2D clusters (sensor frame: x fwd, y right) ----
             pts = lidar.points
-            mask = (pts[:, 2] > self.minimum_lidar_z) & (pts[:, 2] < self.maximum_lidar_z)
-            xy = pts[mask][::3, :2]          # downsample 3x: plenty for van-sized objects
-            clusters = cluster_points(xy.tolist())
+            # road removal (fix 2): local patches, or the old flat line for A/B
+            if self.ground_filter_mode == "patches":
+                ground = self.ground_filter.apply(pts)
+            else:
+                ground = flat_cut(pts, lidar_height_m=DEFAULT_LIDAR_HEIGHT_M,
+                                  min_above_m=self.minimum_lidar_z + DEFAULT_LIDAR_HEIGHT_M,
+                                  ceiling_above_road_m=self.maximum_lidar_z + DEFAULT_LIDAR_HEIGHT_M)
+            mask = ground.keep
+            self.last_ground_ms = ground.ms
+            self.last_ground_tiles = ground.ground_tiles
+            self.last_borrowed_tiles = ground.borrowed_tiles
+            self.last_points_kept = int(mask.sum())
+            sel = pts[mask][::3]             # downsample 3x: plenty for van-sized objects (fix 3 revisits this)
+            heights = ground.above[mask][::3]
+            # Pass 1 (fix 2): kerbs and road edges. Cluster the LOW points on
+            # their own; a long, low blob clear of the lane is a road edge and
+            # its POINTS are removed now, before the main clustering, so a
+            # kerb strip can never glue itself to a lamp post, a bin or a
+            # pedestrian standing on the pavement and drag their centroid.
+            sel, heights, edges_dropped = remove_road_edge_points(sel, heights, cluster_points)
+            # Pass 2: everything that is left
+            xy = sel[:, :2]
+            clusters = cluster_points(xy.tolist(), heights=heights.tolist())
+            self.last_road_edges_dropped = edges_dropped
             self.last_clusters = clusters     # sensor frame (x fwd, y right): the learned parker's feelers read these
 
             # ---- classify clusters by projecting into the image ----

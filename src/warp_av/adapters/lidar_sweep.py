@@ -74,8 +74,10 @@ class LidarSweepAccumulator:
     # ---- geometry -------------------------------------------------------
     @staticmethod
     def _apply(matrix: np.ndarray, pts: np.ndarray) -> np.ndarray:
-        """Rigid 4x4 transform applied to the xyz of an Nx4 array; intensity kept."""
-        out = np.empty((pts.shape[0], 4), dtype=np.float32)
+        """Rigid 4x4 transform applied to the xyz of an NxK array (K >= 4);
+        every column after xyz (intensity, and any extra such as a label)
+        is carried along unchanged."""
+        out = np.empty((pts.shape[0], pts.shape[1]), dtype=np.float32)
         if pts.shape[0] == 0:
             return out
         xyz1 = np.empty((pts.shape[0], 4), dtype=np.float64)
@@ -83,7 +85,7 @@ class LidarSweepAccumulator:
         xyz1[:, 3] = 1.0
         moved = xyz1 @ matrix.T
         out[:, :3] = moved[:, :3]
-        out[:, 3] = pts[:, 3]
+        out[:, 3:] = pts[:, 3:]
         return out
 
     @staticmethod
@@ -119,7 +121,8 @@ class LidarSweepAccumulator:
         the sensor's transform at capture (Transform.get_matrix()).
         `sim_time`: the delivery's simulation timestamp in seconds.
         Returns the sweep (Nx4, float32) in THIS delivery's sensor frame."""
-        pts = np.asarray(points, dtype=np.float32).reshape(-1, 4)
+        pts = np.asarray(points, dtype=np.float32)
+        pts = pts.reshape(-1, 4) if pts.ndim != 2 or pts.shape[1] < 4 else pts
         M = np.asarray(sensor_to_world, dtype=np.float64).reshape(4, 4)
         if not np.isfinite(M).all():
             raise ValueError("non-finite sensor pose")

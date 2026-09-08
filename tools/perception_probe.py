@@ -160,10 +160,13 @@ def measure(perc, adapter, vehicle, actor, api, frames):
         pts = adapter.latest_lidar.points
         scan_cover = azimuth_coverage_bins(pts)
 
-        # stage 1: raw points on the object
+        # stage 1: raw points on the object; the road cut exactly as the pipeline does it
         horiz = np.hypot(pts[:, 0] - ox, pts[:, 1] - oy) <= r_obj + 0.35
         raw_n = int(horiz.sum())
-        hmask = (pts[:, 2] > perc.minimum_lidar_z) & (pts[:, 2] < perc.maximum_lidar_z)
+        if perc.ground_filter_mode == "patches":
+            hmask = perc.ground_filter.apply(pts).keep
+        else:
+            hmask = (pts[:, 2] > perc.minimum_lidar_z) & (pts[:, 2] < perc.maximum_lidar_z)
         masked_n = int((horiz & hmask).sum())
         # the pipeline keeps every 3rd height-masked point: count what survives on the object
         idx = np.where(hmask)[0][::3]
@@ -262,6 +265,8 @@ def main():
                          "off: one raw wedge per scan like the stack before fix 1")
     ap.add_argument("--sensor-tick", default=None,
                     help="LiDAR sensor_tick override (default: 0.0 with --sweep on, 0.1 with off)")
+    ap.add_argument("--ground", choices=["patches", "flat"], default="patches",
+                    help="road removal: patches (fix 2) or flat (the old 35 cm line)")
     ap.add_argument("--no-stack", action="store_true", help="skip the live-stack cross-check")
     a = ap.parse_args()
     if a.no_stack:
@@ -297,6 +302,8 @@ def main():
         while adapter.latest_camera is None or adapter.latest_lidar is None:
             time.sleep(0.05)
         perc = CameraLidarPerception(adapter)
+        perc.ground_filter_mode = a.ground
+        print(f"road removal: {a.ground}")
         dists = [float(d) for d in a.distances.split(",")]
         for name in a.objects.split(","):
             bp_id, z_up = OBJECTS[name]
@@ -359,7 +366,8 @@ def main():
         wr.writerows(results)
     (out_dir / f"perception_probe_{stamp}.json").write_text(json.dumps(
         {"map": cmap.name, "van": [tf0.location.x, tf0.location.y, tf0.rotation.yaw],
-         "lateral_m": a.lateral, "sweep": a.sweep, "sensor_tick": a.sensor_tick, "results": results}, indent=1))
+         "lateral_m": a.lateral, "sweep": a.sweep, "sensor_tick": a.sensor_tick, "ground": a.ground,
+         "results": results}, indent=1))
     print(f"\nwrote {csv_path}")
 
 

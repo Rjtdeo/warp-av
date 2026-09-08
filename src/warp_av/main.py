@@ -778,7 +778,14 @@ class WarpAV:
                         0.0
                     ),
                     1
-                )
+                ),
+                # perception fix 2: road removal by local patches
+                "ground_filter": getattr(self.camera_lidar_perception, "ground_filter_mode", "n/a"),
+                "ground_filter_ms": round(float(getattr(self.camera_lidar_perception, "last_ground_ms", 0.0) or 0.0), 1),
+                "ground_tiles": int(getattr(self.camera_lidar_perception, "last_ground_tiles", 0) or 0),
+                "borrowed_tiles": int(getattr(self.camera_lidar_perception, "last_borrowed_tiles", 0) or 0),
+                "points_kept": int(getattr(self.camera_lidar_perception, "last_points_kept", 0) or 0),
+                "road_edges_dropped": int(getattr(self.camera_lidar_perception, "last_road_edges_dropped", 0) or 0),
             },
 
             "mission": self.mission_manager.get_status(),
@@ -2141,6 +2148,12 @@ class WarpAV:
         if self.perception_mode == "camera_lidar":
             for c in (getattr(self.perception, "last_clusters", None) or []):
                 if c["distance"] > reach_m:
+                    continue
+                # perception fix 2 makes low things visible (kerb fragments,
+                # planters); the brain was trained on car outlines, so keep
+                # its feelers to blobs at least 0.30 m tall
+                h = c.get("height")
+                if h is not None and h < 0.30:
                     continue
                 e = min(float(c["extent"]), 3.0)
                 x, y = float(c["x"]), float(c["y"])

@@ -21,23 +21,32 @@ from typing import Dict, List, Optional, Tuple
 # ----------------------------------------------------------------------
 
 def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
-                   ego_half_len=3.2, ego_half_wid=1.3, max_clusters=60):
+                   ego_half_len=3.2, ego_half_wid=1.3, max_clusters=60, heights=None,
+                   return_members=False):
     """Group 2D sensor-frame points into object clusters.
 
     `points` is an iterable of (x, y) — pre-filtered for height by the
     caller. Grid-hash + 8-neighbour flood fill: fast, dependency-free,
     good enough for van-sized objects at 10 Hz.
 
-    Returns clusters sorted by range: [{x, y, distance, n, extent}, ...]
+    `heights` (optional): one value per point, the point's height above the
+    local road (perception fix 2). When given, every cluster also reports
+    'height' (its tallest point) and 'length' (2 x extent), which the
+    road-edge rule reads. `return_members=True` adds 'members', the indices
+    (into `points`) of the points in each cluster.
+
+    Returns clusters sorted by range: [{x, y, distance, n, extent, height, length}, ...]
     """
-    cells: Dict[Tuple[int, int], List[Tuple[float, float]]] = {}
-    for x, y in points:
+    cells: Dict[Tuple[int, int], List[Tuple[float, float, float]]] = {}
+    hs = None if heights is None else list(heights)
+    for i, (x, y) in enumerate(points):
         if abs(x) < ego_half_len and abs(y) < ego_half_wid:
             continue                      # our own body / mount returns
         if x * x + y * y > max_range * max_range:
             continue
+        h = hs[i] if hs is not None else None
         cells.setdefault((int(math.floor(x / cell)),
-                          int(math.floor(y / cell))), []).append((x, y))
+                          int(math.floor(y / cell))), []).append((x, y, h, i))
 
     seen = set()
     clusters = []
@@ -62,9 +71,17 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
         mx = sum(p[0] for p in pts) / len(pts)
         my = sum(p[1] for p in pts) / len(pts)
         extent = max(math.hypot(p[0] - mx, p[1] - my) for p in pts)
-        clusters.append({"x": mx, "y": my,
-                         "distance": math.hypot(mx, my),
-                         "n": len(pts), "extent": extent})
+        height = None
+        if hs is not None:
+            hv = [p[2] for p in pts if p[2] is not None and p[2] == p[2]]
+            height = max(hv) if hv else None
+        c = {"x": mx, "y": my,
+             "distance": math.hypot(mx, my),
+             "n": len(pts), "extent": extent,
+             "height": height, "length": 2.0 * extent}
+        if return_members:
+            c["members"] = [p[3] for p in pts]
+        clusters.append(c)
     clusters.sort(key=lambda c: c["distance"])
     return clusters[:max_clusters]
 
