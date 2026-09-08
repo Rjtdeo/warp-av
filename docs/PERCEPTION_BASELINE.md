@@ -1229,3 +1229,73 @@ unattended bicycle called a cyclist is wrong but safe: it earns more room and
 right of way, not less.
 
 471 tests pass.
+
+# Perception V2, day 8: when an eye goes blind (2026-09-08)
+
+Measured first, on the live van, changing nothing. Each sense was switched off
+in turn while the van drove:
+
+| switched off | what the van did | what it said |
+|---|---|---|
+| the camera | full stop in 2 s | "Safety supervisor commanded stop" |
+| the LiDAR | full stop in 2 s | "Safety supervisor commanded stop" |
+| the GPS | **nothing at all**, carried on at 4 m/s | nothing |
+
+Three problems in that. The van could not say which eye had gone dark. A lost
+camera stopped it dead, although the LiDAR still finds everything solid and
+what a camera loses is the name on a thing, not the thing. And a sense the
+safety supervisor had never been told about could fail in silence.
+
+## What replaced it
+
+`src/warp_av/sensor_health.py` gathers every sense into one report and states
+what losing each one means:
+
+| sense | losing it means |
+|---|---|
+| LiDAR, position, controller, the van itself | **stop**: it cannot drive without them |
+| camera, object detection, motion sensing | **slow**: crawl at 2 m/s, and stop if it lasts more than 10 s |
+| GPS | **note**: report it; the position check above covers a lost fix |
+
+The report goes to the safety supervisor, which gained a `degraded` state and a
+speed cap. The cap can only ever slow the van down, never speed it up, and a
+cap of zero is a stop. The behaviour layer honours it and says so in its
+reason. The whole report is published at `/api/state` under `sensors`.
+
+The pipeline itself changed to make "slow" honest: a missing or stale camera no
+longer makes the whole of perception unhealthy. The van runs on the laser
+alone, names nothing, and marks the tick `degraded`. Without the LiDAR it still
+reports unhealthy and stops.
+
+## Two faults my own first attempt had, both found live
+
+* **A switched-off sensor was treated as deliberately off, not broken.** That
+  is exactly how a fault is injected in this stack, so a switched-off LiDAR
+  came out as "all senses working" while the van drove on. A van that cannot
+  see does not care why. Not working is now not working.
+* **The van was told it was crawling while it was actually frozen**, because
+  perception still reported unhealthy underneath. That is what led to the
+  laser-only path above.
+
+## The same test, after
+
+| switched off | what the van does | what it says |
+|---|---|---|
+| the camera | keeps driving, held to 1.7–2.1 m/s | "camera not working — driving slowly" |
+| the LiDAR | stops within 1 s | "lidar not working — stopping" |
+| the GPS | carries on; position is still good | "gps not working" |
+
+And the whole cycle, live: driving at 3.4 m/s, the laser fails, the van stops
+within a second and the mission pauses, the laser comes back and the senses
+read healthy again, the mission **stays paused** until the operator presses
+resume, and then the van drives on. A safety stop waiting for a human is the
+existing design and is worth keeping; day 8 only made sure the van says why it
+stopped and gets going again cleanly afterwards.
+
+493 tests pass, 22 of them new.
+
+## Still open
+
+* A degraded crawl is a fixed 2 m/s for 10 s. A real van would pull over
+  rather than stop in a live lane, which is planning work, not perception.
+* The far-field ghosts and the invisible planter beyond 20 m are unchanged.
