@@ -77,6 +77,30 @@ def test_positions_are_close(path, results):
 
 @needs_fixtures
 @pytest.mark.parametrize("path", FIXTURES, ids=[p.name for p in FIXTURES])
+def test_blobs_do_not_glue_two_objects_together(path, results):
+    r, exp = results[path.name], _expected(path)
+    per_update = r.merged / max(1, r.updates - rp.WARMUP_UPDATES - r.unhealthy)
+    assert per_update <= exp.get("max_merged_per_update", 0.5), \
+        f"{per_update:.2f} blobs per update cover two placed objects at once"
+
+
+@needs_fixtures
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.name for p in FIXTURES])
+def test_measured_height_matches_the_answer_key(path, results):
+    """Day 4: the van reports how tall a thing is. Width and length are lower bounds (it
+    sees one face), but height is measured against the road and should be close."""
+    r = results[path.name]
+    for o in r.objects:
+        # only for things the van actually holds: a single sighting of a rarely seen object
+        # can be a blob shared with a taller neighbour, and the track keeps the biggest view
+        if not o.visible or o.labelled_points < 8 or o.median_height_m is None or o.recall < 0.5:
+            continue
+        assert abs(o.median_height_m - o.true_height_m) <= 0.4, \
+            f"{path.name}: {o.name} measured {o.median_height_m:.2f} m tall, answer key {o.true_height_m:.2f} m"
+
+
+@needs_fixtures
+@pytest.mark.parametrize("path", FIXTURES, ids=[p.name for p in FIXTURES])
 def test_phantoms_do_not_grow(path, results):
     r, exp = results[path.name], _expected(path)
     assert r.phantoms_in_lane <= exp["max_phantoms_in_lane"], "a ground leftover or ghost inside the lane"
@@ -142,10 +166,21 @@ def test_labels_are_the_answer_key():
     assert g["road_deleted"] > 0.9, "the ground filter should delete nearly all road points of the labelled sweep"
 
 
+def test_box_distance():
+    # a 4 m long, 2 m wide box pointing straight ahead, centred 10 m in front
+    assert rp.box_distance(10.0, 0.0, 10.0, 0.0, 0.0, 4.0, 2.0) == 0.0
+    assert rp.box_distance(12.5, 0.0, 10.0, 0.0, 0.0, 4.0, 2.0) == pytest.approx(0.5)
+    assert rp.box_distance(10.0, 2.0, 10.0, 0.0, 0.0, 4.0, 2.0) == pytest.approx(1.0)
+    # turned 90 degrees, the long side now runs across
+    assert rp.box_distance(12.5, 0.0, 10.0, 0.0, 90.0, 4.0, 2.0) == pytest.approx(1.5)
+
+
 def test_one_report_is_credited_once():
     """A long planter's wide reach must not be credited with the bin's report next to it."""
-    binn = rp.ObjectScore("bin", 12.0, -1.6, 12.1, 1.5, size_m=0.5)
-    planter = rp.ObjectScore("planter", 13.0, 0.6, 13.0, 3.0, size_m=2.5)
+    binn = rp.ObjectScore("bin", 12.0, -1.6, 12.1, 1.5, size_m=0.5,
+                          true_length_m=0.65, true_width_m=0.53, true_yaw_deg=0.0)
+    planter = rp.ObjectScore("planter", 13.0, 0.6, 13.0, 3.0, size_m=2.5,
+                             true_length_m=4.95, true_width_m=0.86, true_yaw_deg=90.0)
     got = rp.assign([binn, planter], [(11.8, -1.6)])
     assert 0 in got and 1 not in got, "the bin's report was credited to the planter as well"
     got = rp.assign([binn, planter], [(11.8, -1.6), (13.1, 0.5)])

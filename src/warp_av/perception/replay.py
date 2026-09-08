@@ -44,6 +44,7 @@ from ..adapters.carla_sensor_adapter import CameraFrame, LidarScan
 from ..adapters.lidar_sweep import LidarSweepAccumulator, azimuth_coverage_bins
 from .camera_lidar_perception import CameraLidarPerception
 from .ground_filter import GroundFilter, flat_cut
+from .tracking import cluster_points
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "perception"
 MIN_ADVANCE_S = 0.08              # the van's own rule: re-run the tracker when the sweep has moved on
@@ -51,6 +52,8 @@ WARMUP_UPDATES = 3                # the tracker needs two sightings; ignore the 
 GROUND_TAGS = {0, 1, 2, 10, 24, 25}   # unlabeled, road, sidewalk, terrain, road line, ground
 OBJECT_TAGS = (12, 13, 14, 15, 16, 18, 19, 20, 21)   # people, vehicles, props
 MIN_VISIBLE_POINTS = 3
+MATCH_SLACK_M = 1.0               # how far outside its real footprint a report still counts
+GRAB_RADIUS_M = 2.0               # labelled points this far from a placed object belong to it
 BANDS = ((0.0, 10.0), (10.0, 20.0), (20.0, 35.0))
 
 
@@ -151,9 +154,58 @@ def object_label(blueprint: str) -> str:
     return "walker" if parts[0] == "walker" else parts[-1]
 
 
+def oriented_box(xy: np.ndarray) -> Tuple[float, float, float]:
+    """Long side, short side and the heading of the long side for a patch of points.
+    The same method the pipeline uses on its own clusters, so the two are comparable."""
+    if len(xy) < 2:
+        return 0.0, 0.0, 0.0
+    c = xy.mean(axis=0)
+    d = xy - c
+    sxx, syy, sxy = float((d[:, 0] ** 2).sum()), float((d[:, 1] ** 2).sum()), float((d[:, 0] * d[:, 1]).sum())
+    th = 0.5 * math.atan2(2.0 * sxy, sxx - syy)
+    along = d[:, 0] * math.cos(th) + d[:, 1] * math.sin(th)
+    across = -d[:, 0] * math.sin(th) + d[:, 1] * math.cos(th)
+    length, width = float(along.max() - along.min()), float(across.max() - across.min())
+    if width > length:
+        length, width = width, length
+        th += math.pi / 2
+    return length, width, fold_angle(math.degrees(th))
+
+
+def carla_footprint(o: dict, van: dict) -> Tuple[float, float, float, float]:
+    """The box CARLA reported when the object was placed. Trustworthy for vehicles and
+    walkers; for static props CARLA gives a world-axis-aligned box, so the same barrel
+    measures differently at every heading. Used only as a fallback."""
+    ex, ey, ez = (o.get("extent") or [0.5, 0.5, 0.5])[:3]
+    length, width = (2.0 * ex, 2.0 * ey) if ex >= ey else (2.0 * ey, 2.0 * ex)
+    yaw = float(o.get("yaw_deg", 0.0)) - float(van.get("yaw_deg", 0.0))
+    if ey > ex:
+        yaw += 90.0
+    return length, width, 2.0 * ez, fold_angle(yaw)
+
+
+def fold_angle(deg: float) -> float:
+    """A footprint's long side has no front or back: fold any angle into -90..90."""
+    a = (float(deg) + 90.0) % 180.0 - 90.0
+    return a
+
+
 def object_reach(o: dict) -> float:
     ext = o.get("extent", [0.5, 0.5, 0.5])
     return max(1.5, math.hypot(ext[0], ext[1]) + 0.5)
+
+
+def box_distance(px: float, py: float, cx: float, cy: float, yaw_deg: float,
+                 length_m: float, width_m: float) -> float:
+    """How far a point lies outside an object's footprint (0 = on or inside it).
+
+    Distance to the centre is not good enough: a 5 m planter's centre is 2.4 m from the bin
+    beside it, so a circle around the centre credits the planter with the bin's report."""
+    a = math.radians(yaw_deg)
+    dx, dy = px - cx, py - cy
+    along = abs(dx * math.cos(a) + dy * math.sin(a)) - length_m / 2.0
+    across = abs(-dx * math.sin(a) + dy * math.cos(a)) - width_m / 2.0
+    return math.hypot(max(0.0, along), max(0.0, across))
 
 
 # ---------------------------------------------------------------- replay
@@ -166,12 +218,30 @@ class ObjectScore:
     distance: float
     reach: float
     size_m: float = 0.5           # half-diagonal of the object's footprint
+    true_length_m: float = 0.0    # from objects.json: the real box the recorder placed
+    true_width_m: float = 0.0
+    true_height_m: float = 0.0
+    true_yaw_deg: float = 0.0     # heading of its long side in the van's frame
+    box_x: Optional[float] = None  # centre of the outline the labelled scan shows (the visible face)
+    box_y: Optional[float] = None
     labelled_points: int = -1     # points the labelled LiDAR (no drop-off) returned from it: -1 = no answer key
     updates: int = 0
     hits: int = 0
     cluster_hits: int = 0
     errors_m: List[float] = field(default_factory=list)
     types: Dict[str, int] = field(default_factory=dict)
+    seen_length_m: List[float] = field(default_factory=list)     # the footprint the van measured
+    seen_width_m: List[float] = field(default_factory=list)
+    seen_height_m: List[float] = field(default_factory=list)
+    seen_yaw_err_deg: List[float] = field(default_factory=list)
+
+    def box_distance(self, px: float, py: float) -> float:
+        """How far a point lies outside this object's real footprint (0 = on it)."""
+        if self.true_length_m <= 0.0:
+            return max(0.0, math.hypot(px - self.x, py - self.y) - 0.5)
+        cx = self.x if self.box_x is None else self.box_x
+        cy = self.y if self.box_y is None else self.box_y
+        return box_distance(px, py, cx, cy, self.true_yaw_deg, self.true_length_m, self.true_width_m)
 
     @property
     def visible(self) -> bool:
@@ -190,6 +260,25 @@ class ObjectScore:
     def median_error_m(self) -> Optional[float]:
         return float(np.median(self.errors_m)) if self.errors_m else None
 
+    def _median(self, values) -> Optional[float]:
+        return float(np.median(values)) if values else None
+
+    @property
+    def median_length_m(self) -> Optional[float]:
+        return self._median(self.seen_length_m)
+
+    @property
+    def median_width_m(self) -> Optional[float]:
+        return self._median(self.seen_width_m)
+
+    @property
+    def median_height_m(self) -> Optional[float]:
+        return self._median(self.seen_height_m)
+
+    @property
+    def median_yaw_err_deg(self) -> Optional[float]:
+        return self._median(self.seen_yaw_err_deg)
+
 
 @dataclass
 class ReplayResult:
@@ -204,9 +293,21 @@ class ReplayResult:
     phantoms: int = 0                   # reports with nothing but road/terrain/nothing near them: ground leftovers, ghosts
     phantoms_in_lane: int = 0           # ... of which inside the lane corridor ahead, within 20 m
     phantoms_near: int = 0              # ... of which within 20 m anywhere
+    merged: int = 0                     # clusters that cover two placed objects at once
     ground: Dict[str, float] = field(default_factory=dict)
     update_ms: List[float] = field(default_factory=list)
     settings: Dict[str, object] = field(default_factory=dict)
+
+    def footprint_rows(self) -> List[dict]:
+        rows = []
+        for o in self.objects:
+            if o.median_length_m is None:
+                continue
+            rows.append({"object": o.name, "distance_m": round(o.distance, 1),
+                         "true_lwh": [round(o.true_length_m, 2), round(o.true_width_m, 2), round(o.true_height_m, 2)],
+                         "seen_lwh": [round(o.median_length_m, 2), round(o.median_width_m, 2), round(o.median_height_m, 2)],
+                         "yaw_err_deg": round(o.median_yaw_err_deg, 1)})
+        return rows
 
     def as_rows(self) -> List[dict]:
         return [{"fixture": self.fixture, "object": o.name, "distance_m": round(o.distance, 1), "size_m": round(o.size_m, 2),
@@ -216,7 +317,52 @@ class ReplayResult:
                  "types": dict(o.types)} for o in self.objects]
 
 
-def _labelled_sweep(fx: Fixture) -> Optional[np.ndarray]:
+def measure_targets(targets: List["ObjectScore"], lab: Optional[np.ndarray]) -> None:
+    """Replace each object's size with what the dense labelled LiDAR actually shows of it.
+
+    CARLA's own box is unusable for props (world-aligned, so it changes with heading), and in
+    any case the fair question is how much of the *visible* object the pipeline recovered.
+    Points are gathered around the placed position, kept if they carry an object tag, and
+    measured with the same oriented box the pipeline computes."""
+    if lab is None or not len(targets):
+        return
+    tags = lab[:, 5].astype(np.int64)
+    obj = lab[np.isin(tags, list(OBJECT_TAGS))]
+    road_z = float(np.median(lab[tags == 1, 2])) if (tags == 1).any() else float(np.median(lab[:, 2]))
+    if not len(obj):
+        return
+    # the labelled object points are grouped into connected patches, and each placed object
+    # takes the patch nearest to it: a radius grab would pull in the bin 2.4 m away, or a
+    # piece of street furniture standing beside the barrel
+    patches = cluster_points([(p[0], p[1]) for p in obj], cell=0.5, min_points=1,
+                             max_range=80.0, max_clusters=4000, return_members=True)
+    # each patch belongs to the object it sits closest to, and to no other: otherwise the
+    # planter, which returns 5 points of its own, claims the bin's 19-point patch nearby
+    claim: Dict[int, List[Tuple[float, int]]] = {}
+    for pi, c in enumerate(patches):
+        cand = []
+        for i, t in enumerate(targets):
+            # a big object's visible face sits well off its centre (a car's rear is 2.4 m from
+            # the middle), so how far to look depends on how big the thing is
+            grab = max(GRAB_RADIUS_M, 0.6 * math.hypot(t.true_length_m, t.true_width_m))
+            d = math.hypot(c["x"] - t.x, c["y"] - t.y)
+            if d <= grab:
+                cand.append((d, i))
+        if cand:
+            _, i = min(cand)
+            claim.setdefault(i, []).append((len(c["members"]), pi))
+    for i, tgt in enumerate(targets):
+        mine = claim.get(i, [])
+        tgt.labelled_points = max((n for n, _ in mine), default=0)
+        if tgt.labelled_points >= MIN_VISIBLE_POINTS:
+            pi = max(mine)[1]                      # the fullest patch that chose this object
+            pts = obj[np.asarray(patches[pi]["members"], dtype=int)]
+            tgt.true_length_m, tgt.true_width_m, tgt.true_yaw_deg = oriented_box(pts[:, :2])
+            tgt.true_height_m = float(pts[:, 2].max() - road_z)
+            tgt.box_x, tgt.box_y = float(pts[:, 0].mean()), float(pts[:, 1].mean())
+
+
+def lab_sweep(fx: Fixture) -> Optional[np.ndarray]:
     """One whole labelled sweep (the answer key), in the labelled sensor's frame."""
     if fx.labels is None:
         return None
@@ -229,15 +375,19 @@ def _labelled_sweep(fx: Fixture) -> Optional[np.ndarray]:
     return sweep
 
 
-def ground_metrics(fx: Fixture, ground_mode: str = "patches", sweep: Optional[np.ndarray] = None) -> Dict[str, float]:
+def ground_metrics(fx: Fixture, ground_mode: str = "patches", sweep: Optional[np.ndarray] = None,
+                   keep_above_m: Optional[float] = None) -> Dict[str, float]:
     """Road removal scored on the labelled sweep, like tools/ground_filter_score.py."""
     if sweep is None:
-        sweep = _labelled_sweep(fx)
+        sweep = lab_sweep(fx)
     if sweep is None:
         return {}
     pts = sweep[:, :4]
     tags = sweep[:, 5].astype(np.int64)
-    keep = GroundFilter().apply(pts).keep if ground_mode == "patches" else flat_cut(pts).keep
+    gf = GroundFilter()
+    if keep_above_m:
+        gf.keep_above_m = float(keep_above_m)
+    keep = gf.apply(pts).keep if ground_mode == "patches" else flat_cut(pts).keep
     road = np.isin(tags, [1, 24, 25])
     obj = np.isin(tags, list(OBJECT_TAGS))
     dist = np.hypot(pts[:, 0], pts[:, 1])
@@ -250,20 +400,30 @@ def ground_metrics(fx: Fixture, ground_mode: str = "patches", sweep: Optional[np
     return out
 
 
-def assign(targets: List["ObjectScore"], xy: List[Tuple[float, float]]) -> Dict[int, Tuple[int, float]]:
+def assign(targets: List["ObjectScore"], xy: List[Tuple[float, float]],
+           slack_m: float = MATCH_SLACK_M) -> Dict[int, Tuple[int, float]]:
     """Give each placed object at most one of the pipeline's outputs, and each output to at
-    most one object: smallest reach first, nearest free output. Without this a long planter's
-    3 m reach is credited with the bin's report standing 2.4 m away."""
+    most one object.
+
+    A report belongs to the object whose real footprint it sits closest to, and must land
+    within `slack_m` of it. Both halves matter: distance to an object's centre credits a 5 m
+    planter with the bin standing beside it, and without the "closest object wins" rule one
+    report is counted for two objects at once. The value kept is the report's distance to the
+    object's centre, so the error column stays comparable with day 3."""
+    # step 1: every report belongs to the object whose footprint it sits closest to
+    candidates: Dict[int, List[Tuple[float, int]]] = {}
+    for k, (px, py) in enumerate(xy):
+        dists = [(t.box_distance(px, py), i) for i, t in enumerate(targets)]
+        if not dists:
+            break
+        bd, i = min(dists)
+        if bd <= slack_m:
+            candidates.setdefault(i, []).append((bd, k))
+    # step 2: each object keeps the nearest report that chose it
     out: Dict[int, Tuple[int, float]] = {}
-    free = set(range(len(xy)))
-    for i in sorted(range(len(targets)), key=lambda i: targets[i].reach):
-        tgt = targets[i]
-        near = [(math.hypot(xy[k][0] - tgt.x, xy[k][1] - tgt.y), k) for k in free]
-        near = [n for n in near if n[0] <= tgt.reach]
-        if near:
-            d, k = min(near)
-            out[i] = (k, d)
-            free.discard(k)
+    for i, cands in candidates.items():
+        _, k = min(cands)
+        out[i] = (k, math.hypot(xy[k][0] - targets[i].x, xy[k][1] - targets[i].y))
     return out
 
 
@@ -279,7 +439,8 @@ def classify_report(x: float, y: float, solid_xy: np.ndarray, walk_xy: Optional[
 
 
 def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=None,
-           use_camera_frames: bool = True) -> ReplayResult:
+           use_camera_frames: bool = True, cluster_cell_m: Optional[float] = None,
+           keep_above_m: Optional[float] = None, far_range_m: Optional[float] = None) -> ReplayResult:
     van = fx.meta["van"]
     adapter = ReplayAdapter(van)
     perc = CameraLidarPerception(adapter, detector=detector or StubDetector())
@@ -287,6 +448,12 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
     perc.inference_interval = 0.0
     perc.ground_filter_mode = ground_mode
     perc.thin_step = thin
+    if cluster_cell_m:
+        perc.cluster_cell_m = float(cluster_cell_m)
+    if keep_above_m:
+        perc.ground_filter.keep_above_m = float(keep_above_m)
+    if far_range_m:
+        perc.far_range_m = float(far_range_m)
 
     # the tracker's clock: the van hands it the wall clock; here consecutive sweeps are
     # milliseconds apart in wall time but 0.1 s apart in simulation time, so feed it the
@@ -306,6 +473,9 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
             frame_imgs[path] = _load_frame(path)
         return frame_imgs[path]
 
+    # the labelled scan says what is really there: it sizes each placed object, and tells
+    # solid things (not ground) from sidewalk (kerb tops)
+    lab = lab_sweep(fx)
     targets = []
     for o in fx.objects:
         ox, oy = ego_frame(van, o["x"], o["y"])
@@ -313,20 +483,17 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
         label = object_label(o["blueprint"])
         if any(t.name == label for t in targets):
             label = f"{label}_{sum(t.name.startswith(label) for t in targets) + 1}"
+        tl, tw, th, tyaw = carla_footprint(o, van)
         targets.append(ObjectScore(label, ox, oy, math.hypot(ox, oy), object_reach(o),
-                                   size_m=max(0.5, math.hypot(ext[0], ext[1]))))
+                                   size_m=max(0.5, math.hypot(ext[0], ext[1])),
+                                   true_length_m=tl, true_width_m=tw, true_height_m=th, true_yaw_deg=tyaw))
+    measure_targets(targets, lab)
 
-    # the labelled scan says what is really there: solid things (not ground), and sidewalk (kerb tops)
-    lab = _labelled_sweep(fx)
     solid_xy = walk_xy = None
     if lab is not None:
         tags = lab[:, 5].astype(np.int64)
         solid_xy = lab[~np.isin(tags, list(GROUND_TAGS))][:, :2]
         walk_xy = lab[tags == 2][:, :2]
-        obj_xy = lab[np.isin(tags, list(OBJECT_TAGS))][:, :2]
-        for tgt in targets:      # how much of each placed thing the sensor could see at all
-            d2 = (obj_xy[:, 0] - tgt.x) ** 2 + (obj_xy[:, 1] - tgt.y) ** 2
-            tgt.labelled_points = int((d2 <= tgt.reach ** 2).sum())
 
     acc = LidarSweepAccumulator()
     result = ReplayResult(fx.name, 0, targets, settings={"ground": ground_mode, "thin": thin})
@@ -360,6 +527,15 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
         result.reports_total += len(out.objects)
         by_report = assign(targets, [(ob.x, ob.y) for ob in out.objects])
         by_cluster = assign(targets, [(c["x"], c["y"]) for c in clusters])
+        # two placed objects whose nearest blob is the same blob: the cell glued them together
+        owners: Dict[int, int] = {}
+        for t in targets:
+            if not t.visible or not clusters:
+                continue
+            k = min(range(len(clusters)), key=lambda k: t.box_distance(clusters[k]["x"], clusters[k]["y"]))
+            if t.box_distance(clusters[k]["x"], clusters[k]["y"]) <= MATCH_SLACK_M:
+                owners[k] = owners.get(k, 0) + 1
+        result.merged += sum(1 for v in owners.values() if v >= 2)
         for i, tgt in enumerate(targets):
             tgt.updates += 1
             if i in by_report:
@@ -368,6 +544,11 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
                 tgt.hits += 1
                 tgt.errors_m.append(d)
                 tgt.types[ob.object_type.value] = tgt.types.get(ob.object_type.value, 0) + 1
+                if getattr(ob, "length_m", 0.0):
+                    tgt.seen_length_m.append(float(ob.length_m))
+                    tgt.seen_width_m.append(float(ob.width_m))
+                    tgt.seen_height_m.append(float(ob.height_m))
+                    tgt.seen_yaw_err_deg.append(abs(fold_angle(float(ob.yaw_deg) - tgt.true_yaw_deg)))
             if i in by_cluster:
                 tgt.cluster_hits += 1
         matched = {k for k, _ in by_report.values()}
@@ -387,7 +568,7 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
                     if ob.x > 0 and abs(ob.y) < 1.75:
                         result.phantoms_in_lane += 1
     result.updates = n_updates
-    result.ground = ground_metrics(fx, ground_mode, sweep=lab)
+    result.ground = ground_metrics(fx, ground_mode, sweep=lab, keep_above_m=keep_above_m)
     try:
         perc.close()
     except Exception:
@@ -406,6 +587,7 @@ def format_report(results: List[ReplayResult]) -> str:
                      f"{r.reports_total / scored:.1f} reports = placed objects + {r.solid_reports / scored:.1f} solid things "
                      f"+ {r.kerb_reports / scored:.1f} kerb + {r.phantoms / scored:.1f} phantoms "
                      f"({r.phantoms_near / scored:.1f} within 20 m, {r.phantoms_in_lane / scored:.1f} in lane); "
+                     f"merged blobs {r.merged / scored:.1f}; "
                      f"road deleted {100 * g.get('road_deleted', 0):.1f} %, object points kept {100 * g.get('object_kept', 0):.1f} %"
                      + "".join(f", {int(lo)}-{int(hi)} m {100 * g[f'object_kept_{int(lo)}_{int(hi)}']:.0f} %"
                                for lo, hi in BANDS if f'object_kept_{int(lo)}_{int(hi)}' in g))
@@ -415,6 +597,14 @@ def format_report(results: List[ReplayResult]) -> str:
             pts = "?" if o.labelled_points < 0 else str(o.labelled_points)
             note = "" if o.visible else "   (hidden from the sensor: not scored)"
             lines.append(f"   {o.name:14s} {o.distance:5.1f} {o.size_m:5.1f} {pts:>9s} {o.recall:7.2f} {o.cluster_recall:8.2f} {err:>6s}  {o.types}{note}")
+        rows = r.footprint_rows()
+        if rows:
+            lines.append(f"   footprint (long x short x tall, metres){'':6s} true{'':18s} measured      heading err")
+            for row in rows:
+                t, m = row["true_lwh"], row["seen_lwh"]
+                lines.append(f"   {row['object']:14s} {row['distance_m']:5.1f}       "
+                             f"{t[0]:5.2f} x {t[1]:4.2f} x {t[2]:4.2f}      "
+                             f"{m[0]:5.2f} x {m[1]:4.2f} x {m[2]:4.2f}      {row['yaw_err_deg']:5.1f} deg")
     return "\n".join(lines)
 
 

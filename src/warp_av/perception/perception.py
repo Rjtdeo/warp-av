@@ -41,6 +41,13 @@ class DetectedObject:
     id: int = 0
     vx_world: float = 0.0       # world-frame velocity (prediction feeds on this)
     vy_world: float = 0.0
+    # the footprint the LiDAR has measured: the long side, the short side, the top, and the
+    # heading of the long side in the van's frame. 0.0 means "not measured" (camera-only or
+    # ground-truth modes). The sensor sees one face of a thing, so these are lower bounds.
+    length_m: float = 0.0
+    width_m: float = 0.0
+    height_m: float = 0.0
+    yaw_deg: float = 0.0
     timestamp: float = field(default_factory=time.time)
 
 

@@ -91,6 +91,16 @@ VEHICLE_CLASSES = {
 # CAMERA DETECTION RESULT
 # ============================================================
 
+
+# How close two points must be to belong to the same object. At 1.0 m a barrel and the
+# planter beside it became one 4.4 m blob; 0.8 m separates them and cuts the measured-size
+# error nearly in half, at about 1 ms per update (Perception V2 day 4).
+DEFAULT_CLUSTER_CELL_M = 0.8
+# How high above the road a point must be to count as an object. The old 12 cm threw away
+# most of a 12.5 cm planter; 8 cm keeps 90 % of object points instead of 85 %, and adds no
+# false object inside the lane on any recorded fixture (day 4).
+DEFAULT_KEEP_ABOVE_M = 0.08
+
 class CameraDetection:
     def __init__(
         self,
@@ -647,6 +657,12 @@ class CameraLidarPerception:
         # at 10 Hz two ticks can see the same LiDAR rotation; the tracker only
         # runs when the sweep has advanced, otherwise the last output is reused
         self.min_sweep_advance_s = 0.08
+        # how close two points must be to count as the same object. 1 m glues a barrel to the
+        # planter beside it; the replay harness measures what a smaller cell costs and buys
+        self.cluster_cell_m = DEFAULT_CLUSTER_CELL_M
+        # beyond this range a two-point blob is allowed to be an object: nearer than it,
+        # three points are required
+        self.far_range_m = FAR_RANGE_M
         self._last_tracked_sim_time = None
         self._last_output = None
 
@@ -676,7 +692,8 @@ class CameraLidarPerception:
         # Perception fix 3: keep every point the road filter leaves (the old
         # code kept one in three). WARP_LIDAR_THIN=3 restores the old thinning.
         self.thin_step = lidar_thin_step_from_env()
-        self.ground_filter = GroundFilter(lidar_height_m=DEFAULT_LIDAR_HEIGHT_M)
+        self.ground_filter = GroundFilter(lidar_height_m=DEFAULT_LIDAR_HEIGHT_M,
+                                          keep_above_m=DEFAULT_KEEP_ABOVE_M)
         self.last_ground_ms = 0.0
         self.last_ground_tiles = 0
         self.last_borrowed_tiles = 0
@@ -776,8 +793,8 @@ class CameraLidarPerception:
             sel, heights, edges_dropped = remove_road_edge_points(sel, heights, cluster_points)
             # Pass 2: everything that is left
             xy = sel[:, :2]
-            clusters = cluster_points(xy.tolist(), heights=heights.tolist(),
-                                      min_points_far=MIN_POINTS_FAR, far_range_m=FAR_RANGE_M)
+            clusters = cluster_points(xy.tolist(), heights=heights.tolist(), cell=self.cluster_cell_m,
+                                      min_points_far=MIN_POINTS_FAR, far_range_m=self.far_range_m)
             self.last_clusters_before_cap = _tracking.LAST_CLUSTER_TOTAL
             # a 2-point blob that is low and beside the lane is a kerb crumb, not an object
             clusters = [c for c in clusters
@@ -837,6 +854,10 @@ class CameraLidarPerception:
                     "cls": c["cls"],
                     "confidence": c["conf"],
                     "weak": bool(c.get("weak", False)),   # a 2-point far blob: three sightings before it counts
+                    "length_m": c.get("length_m", 0.0),
+                    "width_m": c.get("width_m", 0.0),
+                    "height_m": c.get("height") or 0.0,
+                    "yaw_deg": c.get("yaw_deg", 0.0),
                 })
             tracks = self.tracker.update(observations, now)
 
@@ -858,6 +879,8 @@ class CameraLidarPerception:
                     vx_world=tr.vx, vy_world=tr.vy,
                     # a track built only from 2-point far sightings is reported, but with low confidence
                     confidence=(tr.confidence if tr.cls else 0.65) if not getattr(tr, "weak_only", False) else 0.35,
+                    length_m=getattr(tr, "length_m", 0.0), width_m=getattr(tr, "width_m", 0.0),
+                    height_m=getattr(tr, "height_m", 0.0), yaw_deg=getattr(tr, "yaw_deg", 0.0),
                     id=tr.tid, timestamp=now))
 
             # ---- simple forward in-path summary (route corridor refines) ----

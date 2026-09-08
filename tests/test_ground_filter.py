@@ -342,8 +342,9 @@ def test_mode_from_env_and_perception_wiring():
     assert 'if self.ground_filter_mode == "patches":' in src
     assert "ground = self.ground_filter.apply(pts)" in src
     assert "flat_cut(pts" in src
-    assert "cluster_points(xy.tolist(), heights=heights.tolist(),\n" in src
-    assert "min_points_far=MIN_POINTS_FAR, far_range_m=FAR_RANGE_M)" in src
+    assert "cluster_points(xy.tolist(), heights=heights.tolist()," in src
+    assert "min_points_far=MIN_POINTS_FAR, far_range_m=self.far_range_m)" in src
+    assert "cell=self.cluster_cell_m" in src
     assert "remove_road_edge_points(sel, heights, cluster_points)" in src
     # fix 3: every point is kept unless WARP_LIDAR_THIN says otherwise
     assert "sel = pts[mask][::step]" in src and "self.thin_step = lidar_thin_step_from_env()" in src

@@ -110,12 +110,25 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
         sxx = sum((p[0] - mx) ** 2 for p in pts)
         syy = sum((p[1] - my) ** 2 for p in pts)
         sxy = sum((p[0] - mx) * (p[1] - my) for p in pts)
-        axis_deg = abs(math.degrees(0.5 * math.atan2(2.0 * sxy, sxx - syy))) if len(pts) > 1 else 0.0
+        theta = 0.5 * math.atan2(2.0 * sxy, sxx - syy) if len(pts) > 1 else 0.0
+        axis_deg = abs(math.degrees(theta))
+        # the blob's footprint: how long it is along that axis and how wide across it.
+        # The LiDAR only ever sees the near face of a thing, so both are lower bounds.
+        ct, st = math.cos(theta), math.sin(theta)
+        along = [(p[0] - mx) * ct + (p[1] - my) * st for p in pts]
+        across = [-(p[0] - mx) * st + (p[1] - my) * ct for p in pts]
+        length_m = max(along) - min(along)
+        width_m = max(across) - min(across)
+        if width_m > length_m:                       # keep 'length' the longer side
+            length_m, width_m = width_m, length_m
+            theta += math.pi / 2
         c = {"x": mx, "y": my,
              "distance": math.hypot(mx, my),
              "n": len(pts), "extent": extent,
              "height": height, "length": 2.0 * extent,
              "axis_deg": axis_deg,
+             "length_m": length_m, "width_m": width_m,
+             "yaw_deg": math.degrees(math.atan2(math.sin(theta), math.cos(theta))),
              "weak": len(pts) < min_points}
         if return_members:
             c["members"] = [p[3] for p in pts]
@@ -139,7 +152,8 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
 
 class Track:
     __slots__ = ("tid", "wx", "wy", "vx", "vy", "cls", "confidence",
-                 "last_seen", "hits", "strong_hits")
+                 "last_seen", "hits", "strong_hits",
+                 "length_m", "width_m", "height_m", "yaw_deg")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -152,6 +166,12 @@ class Track:
         self.last_seen = t
         self.hits = 1              # strong sightings count 1, weak ones WEAK_HIT
         self.strong_hits = 1       # sightings with a full-strength blob (0 for a weak-only track)
+        # the footprint the van has seen so far: the biggest sighting of each side, since
+        # the LiDAR only ever catches part of a thing and a bigger view is the truer one
+        self.length_m = 0.0
+        self.width_m = 0.0
+        self.height_m = 0.0
+        self.yaw_deg = 0.0         # heading of the long side, degrees, van frame at the sighting
 
     @property
     def weak_only(self) -> bool:
@@ -160,6 +180,16 @@ class Track:
     @property
     def speed(self):
         return math.hypot(self.vx, self.vy)
+
+
+def _grow_size(tr: Track, o: dict) -> None:
+    """Keep the largest footprint seen so far, and the heading that came with it."""
+    lm, wm = float(o.get("length_m", 0.0) or 0.0), float(o.get("width_m", 0.0) or 0.0)
+    if lm > tr.length_m:
+        tr.length_m = lm
+        tr.yaw_deg = float(o.get("yaw_deg", 0.0) or 0.0)
+    tr.width_m = max(tr.width_m, wm)
+    tr.height_m = max(tr.height_m, float(o.get("height_m", 0.0) or 0.0))
 
 
 class ObjectTracker:
@@ -220,6 +250,7 @@ class ObjectTracker:
             if o.get("cls"):
                 tr.cls = o["cls"]
                 tr.confidence = max(tr.confidence, o.get("confidence", 0.5))
+            _grow_size(tr, o)
 
         for j in unmatched:
             o = observations[j]
@@ -230,6 +261,7 @@ class ObjectTracker:
             if o.get("cls"):
                 tr.cls = o["cls"]
                 tr.confidence = o.get("confidence", 0.5)
+            _grow_size(tr, o)
             self._next_id += 1
             self._tracks.append(tr)
 

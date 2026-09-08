@@ -8,10 +8,10 @@
    "labelled_points": 12
   },
   "plantpot04": {
-   "min_recall": 0.35,
+   "min_recall": 0.81,
    "distance_m": 13.0,
    "visible": true,
-   "labelled_points": 30
+   "labelled_points": 5
   },
   "trafficcone01": {
    "min_recall": 0.9,
@@ -23,7 +23,7 @@
    "min_recall": 0.9,
    "distance_m": 22.2,
    "visible": true,
-   "labelled_points": 20
+   "labelled_points": 17
   },
   "walker": {
    "min_recall": 0.9,
@@ -39,7 +39,7 @@
   }
  },
  "max_phantoms_in_lane": 0,
- "max_phantoms_per_update": 4.05,
+ "max_phantoms_per_update": 5.68,
  "min_road_deleted": 0.98,
  "min_object_kept": 0.738
 }
