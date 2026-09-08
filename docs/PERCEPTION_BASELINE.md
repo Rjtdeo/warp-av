@@ -388,3 +388,64 @@ revisiting when the catalog is next touched.
   2-3 m/s if they were phantoms; on flat roads the road filter leaves no
   such points (score: 0 of 153k at 10-35 m), on grades this is unmeasured.
 * The loop is still bound by YOLOX in the main thread (fix 5).
+
+
+---
+
+# Perception V2, day 1 (fix 5): detector off the loop, loop paced (2026-09-07 late, commit 0e1f902)
+
+What changed: YOLOX runs in its own thread (`perception/detection_worker.py`)
+on the newest camera frame, at most every 0.25 s; the loop reads the newest
+finished result and treats one older than 1 s as none. `run()` sleeps only
+the remainder of the 100 ms period. Review fixes folded in: camera frames
+are now copies (they were views into CARLA's reusable buffer, read from a
+second thread); the worker stops on a switch to ground truth and at
+shutdown; three consecutive detector errors or a stalled first result make
+perception unhealthy (an inline error did the same before); the tracker
+runs only when the LiDAR sweep has advanced (`LidarScan.sim_time`), so a
+10 Hz loop cannot observe one rotation twice. Switch: `WARP_YOLO_INLINE=1`.
+
+## The number that had to move
+
+| | before | after |
+|---|---|---|
+| decisions per second (30 s average, idle in camera mode) | 3.56 | 9.16 (EMA 9.5) |
+| work per tick | not measured | 35 ms |
+| YOLOX per inference | 120-150 ms | 104-108 ms, in the background |
+| detector result age seen by the loop | up to 250 ms + inference | 60-90 ms |
+
+## The numbers that had to stay
+
+Probe, standard set, straight road (`docs/perception_baseline/probe_2026-09-07_day1_std.csv`),
+cluster fraction / live-stack fraction:
+
+| Object | 20 m | 15 m | 12 m | 10 m | 8 m | 6 m |
+|---|---|---|---|---|---|---|
+| barrel | 0.15 / 1.00 | 0.50 / 1.00 | 0.85 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+| cone | 0.75 / 0.95 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+| planter | 0 / 0 | 0.45 / 1.00 | 0.85 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+| car | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+| person | 0.95 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 | 1.00 / 1.00 |
+
+The live stack, now sampling its tracker at 9 Hz, reports every object in
+every frame from 15 m in, and the barrel from 20 m: the tracker's memory
+(1.2 s) now spans ~11 ticks instead of 4, so a blob missing from one sweep
+no longer drops out of the object list.
+
+## Drive test: WAV-0294, barrel in the lane
+
+| | fix 1+2+3 (3.7 Hz) | day 1 (9 Hz) |
+|---|---|---|
+| contacts | 0 | 0 |
+| first report of the barrel | 15.0 m | 16.4 m |
+| closest approach | 7.57 m | 7.71 m |
+| runner verdict | FAIL (stop-timing rule, 8.5 s) | FAIL (same rule, 8.55 s) |
+
+## Carried forward
+
+* The controller's per-tick constants (steering low-pass, slew limits) now
+  act at their design rate, 10 Hz, instead of 3.7-5 Hz: the van pulls away
+  and steers more briskly. The parking brain and the sensor tests must be
+  re-run before their old results are trusted (planned).
+* Camera boxes still lag the sweep they are matched to by up to ~0.5 s
+  (was ~0.37 s); harmless at 4 m/s, and second-order to the match bug (fix 4).
