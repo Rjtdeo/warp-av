@@ -116,7 +116,8 @@ class BehaviorSystem:
         park_heading_ok: bool = True,
         park_position_ok: bool = True,
         white_line_m: Optional[float] = None,
-        predicted_conflict: Optional[dict] = None
+        predicted_conflict: Optional[dict] = None,
+        world=None,                      # the day-7 world model, when the caller has one
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -352,7 +353,7 @@ class BehaviorSystem:
             if self._junction_wait_started is None:
                 self._junction_wait_started = now
             waited = now - self._junction_wait_started
-            conflict = self._junction_conflict(perception)
+            conflict = self._junction_conflict(perception, world)
             if waited >= self.junction_wait_timeout_s:
                 self._junction_done = True
                 self._junction_wait_started = None
@@ -447,10 +448,18 @@ class BehaviorSystem:
             should_stop=stop
         )
 
-    def _junction_conflict(self, perception: PerceptionOutput):
+    def _junction_conflict(self, perception: PerceptionOutput, world=None):
         """Distance of the nearest moving vehicle that could cross our turn,
         or None. Vehicles directly ahead in our own lane are the car-following
-        problem, not a junction conflict; far/parked/behind vehicles ignored."""
+        problem, not a junction conflict; far/parked/behind vehicles ignored.
+
+        Asked of the world model (Perception V2 day 7) when one is supplied; the
+        answer is identical either way, and the loop below stays for callers that
+        still hand over a bare PerceptionOutput.
+        """
+        if world is not None:
+            crossing = world.crossing_vehicles(self.junction_conflict_radius_m)
+            return crossing[0].distance_m if crossing else None
         nearest = None
         for obj in perception.objects:
             if obj.object_type != ObjectType.VEHICLE:

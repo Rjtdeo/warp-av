@@ -54,6 +54,8 @@ from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer
 from .perception.bay_finder import why_no_kerb
 
 
+from .world_model import build_world_model
+
 class WarpAV:
     """The complete autonomy system."""
 
@@ -399,6 +401,13 @@ class WarpAV:
             )
 
         self._last_perception = perception      # the learned parker's stop-override rule reads this
+        # One sheet saying what the van knows, built once and read by everyone else
+        # (Perception V2 day 7). It is a view of the numbers above, never a second opinion.
+        try:
+            self._world = build_world_model(perception, pose, source=self.perception_mode)
+        except Exception as e:
+            self._world = None
+            self._world_error = repr(e)
         if self.footprint_debug.enabled and self._route:
             # Visualisation only: draws what the swept-path rule sees and what
             # the planner decided. Any failure is counted, never raised.
@@ -529,6 +538,7 @@ class WarpAV:
 
         behavior_output = self.behavior.update(
             perception=perception,
+            world=self._world,                 # day 7: the one sheet of what the van knows
             pose=pose,
             destination_distance=dest_dist,
             safety_ok=safety_output.driving_allowed,
@@ -734,7 +744,11 @@ class WarpAV:
 
                 # Objects shown on the operator map.
                 # These come from our current CARLA ground-truth perception.
-                "objects": [] if not pose.healthy else [
+                # from the world model (day 7) when it is available, so the page and any
+                # other reader see exactly what the rest of the stack sees
+                "objects": ([o.as_dict() for o in self._world.objects]
+                            if (pose.healthy and getattr(self, "_world", None) is not None)
+                            else [] if not pose.healthy else [
                     {
                         "id": obj.id,
                         "type": obj.object_type.value,
@@ -765,7 +779,7 @@ class WarpAV:
                         "speed": round(getattr(obj, "speed", 0.0), 2),
                     }
                     for obj in perception.objects
-                ],
+                ]),
             },
             "perception_mode": self.perception_mode,
             "parking_source": self.parking_source,
@@ -3060,6 +3074,16 @@ def estop():
 def clear_estop():
     av_system.api_clear_estop()
     return jsonify({"success": True})
+
+@app.route('/api/world')
+def api_world():
+    """What the van knows right now, in one sheet (Perception V2 day 7)."""
+    wm = getattr(av_system, "_world", None)
+    if wm is None:
+        return jsonify({"available": False,
+                        "reason": getattr(av_system, "_world_error", None) or "not built yet"}), 503
+    return jsonify(wm.as_dict())
+
 
 @app.route('/api/history')
 def get_history():
