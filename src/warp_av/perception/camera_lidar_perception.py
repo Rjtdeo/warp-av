@@ -117,6 +117,9 @@ CYCLIST_TRAVEL_M = 3.0      # ... and they must have actually got somewhere, so 
 # planter beside it became one 4.4 m blob; 0.8 m separates them and cuts the measured-size
 # error nearly in half, at about 1 ms per update (Perception V2 day 4).
 # A chip of kerb is no taller than a kerb and sits on the kerb line the van already fitted.
+MAX_CARRY_M = 5.0   # move further than this between sweeps and the old map is not worth
+                    # sliding along -- that is a teleport or a long stall, so start afresh
+
 KERB_CRUMB_MAX_HEIGHT_M = 0.30    # the same ceiling the ground filter's kerb rule uses
 KERB_CRUMB_TOLERANCE_M = 0.50     # how close to the fitted line it must sit, at its own distance
 
@@ -758,6 +761,7 @@ class CameraLidarPerception:
         self.last_borrowed_tiles = 0
         self.last_road_edges_dropped = 0
         self.last_kerb_crumbs_dropped = 0
+        self._last_pose = None            # day 12: where the van was at the previous sweep
         self.last_points_kept = 0
         self.last_clusters_before_cap = 0
 
@@ -840,6 +844,12 @@ class CameraLidarPerception:
                     and 0.0 <= sim_time - self._last_tracked_sim_time < self.min_sweep_advance_s):
                 return dataclasses.replace(self._last_output, timestamp=now)
 
+            # Where the van is, taken once and used twice: to carry the free-space map
+            # forward with it (day 12), and to place the blobs on the map further down.
+            tf = self.sensor_adapter.vehicle.get_transform()
+            moved = self._moved_since(tf)
+            self._last_pose = (tf.location.x, tf.location.y, tf.rotation.yaw)
+
             # ---- LiDAR -> 2D clusters (sensor frame: x fwd, y right) ----
             pts = lidar.points
             # road removal (fix 2): local patches, or the old flat line for A/B
@@ -891,7 +901,7 @@ class CameraLidarPerception:
             # same sweep and the same road decision, so it can never disagree with them.
             try:
                 t_grid = time.perf_counter()
-                self.grid.update(pts[:, :2], mask)
+                self.grid.update(pts[:, :2], mask, moved=moved, now=now)
                 # (the kerb lines were fitted above, before the rule that reads them)
                 self.last_grid_ms = (time.perf_counter() - t_grid) * 1000.0
             except Exception as grid_error:
@@ -992,8 +1002,7 @@ class CameraLidarPerception:
                     c["cls_from"] = "shape"
                     c["conf"] = 0.45 if not seen_by_camera else 0.40
 
-            # ---- ego -> world, then track ----
-            tf = self.sensor_adapter.vehicle.get_transform()
+            # ---- ego -> world, then track ---- (tf was taken at the top of this update)
             yaw = math.radians(tf.rotation.yaw)
             cy, sy = math.cos(yaw), math.sin(yaw)
             ex0, ey0 = tf.location.x, tf.location.y
@@ -1313,6 +1322,26 @@ class CameraLidarPerception:
         w, h = self.camera_model.width, self.camera_model.height
         return CameraFrame(image=_np.zeros((h, w, 4), dtype=_np.uint8), width=w, height=h,
                            fov=self.camera_model.fov_deg, timestamp=time.time())
+
+    def _moved_since(self, tf):
+        """(forward, right, turned) since the last sweep, in the van's frame back then.
+
+        None on the very first sweep, or after any gap long enough that carrying the old map
+        forward would be guesswork -- then the map is simply rebuilt, as it always was.
+        """
+        last = getattr(self, "_last_pose", None)
+        if last is None:
+            return None
+        lx, ly, lyaw = last
+        dx, dy = tf.location.x - lx, tf.location.y - ly
+        if not (abs(dx) < MAX_CARRY_M and abs(dy) < MAX_CARRY_M):
+            return None                      # teleported, or a long stall: start again
+        a = math.radians(lyaw)
+        ca, sa = math.cos(a), math.sin(a)
+        forward = dx * ca + dy * sa
+        right = -dx * sa + dy * ca
+        turned = (tf.rotation.yaw - lyaw + 180.0) % 360.0 - 180.0
+        return (forward, right, turned)
 
     def _sits_on_the_kerb(self, cluster) -> bool:
         """Is this low blob just a chip of the kerb the van has already found?
