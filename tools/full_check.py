@@ -246,22 +246,38 @@ def check_motion(scene, report):
     scene.spawned.append(car)
     car.set_simulate_physics(True)
     fwd = t.get_forward_vector()
-    best = None
-    for _ in range(14):
+    # Two questions, not one: how quickly does the van notice, and how good is the number
+    # once it has settled? Reading the speed at the first moving frame answers neither
+    # fairly: a track only two sightings old has taken its speed from those two positions
+    # and it can be half as much again out.
+    first = None
+    readings = []
+    started = time.time()
+    for _ in range(16):
         car.set_target_velocity(carla.Vector3D(x=-fwd.x * 6.0, y=-fwd.y * 6.0, z=0.0))
         time.sleep(0.8)
         v = car.get_velocity()
         truth = math.hypot(v.x, v.y)
         o = scene.reported_near(car, reach=3.0)
-        if o is not None and truth > 4.0 and not o["stationary"]:
-            best = (truth, o["speed"])
+        if o is None or truth < 4.0:
+            continue
+        if not o["stationary"]:
+            if first is None:
+                first = (time.time() - started, truth, o["speed"])
+            readings.append((truth, o["speed"]))
+        if len(readings) >= 4:
             break
-    if best is None:
+    if first is None:
         report.add("motion", "a moving car is seen to move", False, "never reported as moving")
-    else:
-        truth, said = best
-        report.add("motion", "a moving car is seen to move", abs(said - truth) <= 1.5,
-                   f"really {truth:.1f} m/s, van says {said:.1f} m/s")
+        return
+    delay, truth0, said0 = first
+    report.add("motion", "a moving car is noticed quickly", delay <= 4.0,
+               f"called moving {delay:.1f} s in, first guess {said0:.1f} m/s against {truth0:.1f}")
+    settled = readings[-1]
+    report.add("motion", "and its speed settles on the right number",
+               abs(settled[1] - settled[0]) <= 1.5,
+               f"really {settled[0]:.1f} m/s, van says {settled[1]:.1f} m/s "
+               f"after {len(readings)} readings")
     car.set_target_velocity(carla.Vector3D())      # stop driving it before checking the barrel
     time.sleep(1.5)
     if barrel is not None:
