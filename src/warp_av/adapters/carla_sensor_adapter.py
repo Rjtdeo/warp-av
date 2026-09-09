@@ -197,6 +197,7 @@ class CarlaSensorAdapter:
         self.camera_covered = False
         self.camera_blanked = False
         self.camera_frozen = False
+        self.camera_drops = 0
         self._frozen_frame = None
         self.lidar_dead_beams = 0
         self._last_lidar_time = 0.0
@@ -318,6 +319,13 @@ class CarlaSensorAdapter:
             array[:] = 0
         elif self.camera_blanked:
             array[:] = 200
+        elif self.camera_drops:
+            # rain on the glass: patches stuck in place, the rest of the picture fine
+            h, w_ = array.shape[0], array.shape[1]
+            for k in range(int(self.camera_drops)):
+                y = int(h * (0.15 + 0.22 * (k % 3)))
+                x = int(w_ * (0.12 + 0.19 * (k % 4)))
+                array[y:y + h // 5, x:x + w_ // 6] = 100 + 7 * k
         elif self.camera_frozen and self._frozen_frame is not None:
             array = self._frozen_frame
         elif self.camera_frozen:

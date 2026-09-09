@@ -6,7 +6,7 @@ and used by the scenario runner.  Every injection is logged as an event so the
 mission log shows exactly when a fault was introduced.
 
 Supported (component → actions):
-    camera              disable enable drop(duration_s) cover blank freeze clear
+    camera              disable enable drop(duration_s) cover blank freeze drops(drops) clear
     lidar               disable enable drop(duration_s) kill_beams(beams) clear
     perception          disable enable freeze stale(age_s) latency(latency_s) crash
     localization        disable enable freeze stale(age_s) low_confidence(value, ramp_s)
@@ -95,10 +95,11 @@ class FaultInjector:
             return True
         # day 14: break the SENSE while the data keeps arriving -- the failure the old
         # "is it still arriving?" check could never see
-        if name == "camera" and action in ("cover", "blank", "freeze", "clear"):
+        if name == "camera" and action in ("cover", "blank", "freeze", "drops", "clear"):
             sa.camera_covered = action == "cover"
             sa.camera_blanked = action == "blank"
             sa.camera_frozen = action == "freeze"
+            sa.camera_drops = int(p.get("drops", 5)) if action == "drops" else 0
             if action != "freeze":
                 sa._frozen_frame = None
             return True
