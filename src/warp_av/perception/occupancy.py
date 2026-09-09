@@ -59,9 +59,13 @@ DEFAULT_LANE_HALF_M = 1.75        # the van's own corridor, as the planner draws
 DEFAULT_BLIND_REACH_M = 1.5       # unseen space this close to the lane edge is a pocket that
                                   # matters: whatever steps out of it is beside us at once
 DEFAULT_BLIND_LOOK_M = 15.0       # further ahead than this and there is time to see it first
-FREE_MEMORY_S = 0.5       # a square seen empty is believed this long. Short on purpose: half a
-                          # second ago it was empty, two seconds ago somebody may be standing there.
-BLOCKED_MEMORY_S = 1.5    # blocked is the careful answer, so it is allowed to last longer.
+# Counted in sweeps, at about 9 a second on the live van.
+FREE_MEMORY_TICKS = 5     # a square seen empty is believed for about half a second. Short on
+                          # purpose: half a second ago it was empty, two seconds ago somebody
+                          # may be standing in it.
+BLOCKED_MEMORY_TICKS = 14  # blocked is the careful answer, so it is allowed to last longer.
+NEVER_SEEN = 255          # the age of a square no sweep has ever touched
+MAX_CARRY_TURN_DEG = 1.0  # turn faster than this between sweeps and the map is rebuilt instead
 
 POCKET_SIDE_M = 0.75              # a pocket has to be big enough for a person to be standing in.
                                   # One stray unseen square is not a hiding place, it is a gap
@@ -127,14 +131,10 @@ class OccupancyGrid:
         self.spread_slices = int(spread_slices)
         self.n = int(round(2.0 * self.range_m / self.cell_m))
         self.cells = np.full((self.n, self.n), UNKNOWN, dtype=np.uint8)
-        # when each square was last actually SEEN, so memory can be aged (day 12 part two)
-        self.last_seen = np.full((self.n, self.n), -np.inf, dtype=np.float64)
-        self._now = 0.0
-        # the van-frame centre of every square, worked out once: carrying the map forward
-        # needs them on every sweep and they never change
-        rows = np.arange(self.n, dtype=np.float32)
-        self._centre_x = ((rows[:, None] + 0.5) * self.cell_m - self.range_m) * np.ones((1, self.n), np.float32)
-        self._centre_y = ((rows[None, :] + 0.5) * self.cell_m - self.range_m) * np.ones((self.n, 1), np.float32)
+        # how many sweeps ago each square was last actually SEEN, so memory can be aged.
+        # Counted in sweeps rather than seconds, and held in one byte: the map has 57,600
+        # squares and every extra byte on each of them is paid for on every sweep.
+        self.age = np.full((self.n, self.n), NEVER_SEEN, dtype=np.uint8)
         #: squares the laser hit road surface in. Sparse near the van, sparser far away.
         self.road = np.full((self.n, self.n), NOT_ROAD, dtype=np.uint8)
         self.bearings = int(round(360.0 / self.bearing_step_deg))
@@ -163,41 +163,47 @@ class OccupancyGrid:
         return int(self.cells[r, c]) if self.inside(r, c) else UNKNOWN
 
     # ---- filling it in ----------------------------------------------------------
-    def _carry_forward(self, moved, now: float) -> None:
-        """Slide what the van already knew along with the van, and let it go stale.
+    def _carry_forward(self, moved) -> bool:
+        """Slide what the van already knew along with the van. True if it was carried.
 
         The map is drawn around the van, so remembering anything means moving the whole map
-        as the van moves. `moved` is (forward_m, right_m, turned_deg) since the last sweep,
-        in the van's own frame at that time. Everything older than its memory span goes back
-        to unseen.
+        as the van moves. `moved` is (forward_m, right_m, turned_deg) since the last sweep.
 
-        Free is remembered for a much shorter time than blocked, on purpose. A square that
-        was empty half a second ago is probably still empty; a square that was empty two
-        seconds ago may have somebody standing in it. Blocked is the conservative answer and
-        is allowed to last longer. Neither ever outlives what the laser says NOW: the new
-        sweep is painted on top of all of this.
+        It is done by shifting whole squares, which is a handful of array copies. The first
+        version worked out, for all 57,600 squares, where each had been a moment ago and
+        gathered them from there. That is the general answer and it cost 34 ms a sweep on
+        the van's own machine -- the loop fell from 8.2 Hz to 6.0 Hz, and 2.2 decisions a
+        second is far too much to pay for a tidier map. Rounding the slide to whole squares
+        loses at most half a square, 12 cm, which is less than the map's own resolution.
+
+        Turning more than a degree between sweeps is not a slide at all, so the map is
+        simply rebuilt from this sweep -- which is what always used to happen anyway.
         """
         fwd, right, turn = moved
-        cosd, sind = math.cos(math.radians(turn)), math.sin(math.radians(turn))
-        xs, ys = self._centre_x, self._centre_y
-        x_old = cosd * xs - sind * ys + fwd
-        y_old = sind * xs + cosd * ys + right
-        r = np.asarray((x_old + self.range_m) / self.cell_m, dtype=np.int32)
-        c = np.asarray((y_old + self.range_m) / self.cell_m, dtype=np.int32)
-        inside = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
-        r = np.clip(r, 0, self.n - 1)
-        c = np.clip(c, 0, self.n - 1)
-        cells = np.where(inside, self.cells[r, c], UNKNOWN)
-        road = np.where(inside, self.road[r, c], NOT_ROAD)
-        seen = np.where(inside, self.last_seen[r, c], -np.inf)
-        age = now - seen
-        stale = ((cells == FREE) & (age > FREE_MEMORY_S)) | ((cells == OCCUPIED) & (age > BLOCKED_MEMORY_S))
-        cells = np.where(stale, UNKNOWN, cells)
-        road = np.where(stale, NOT_ROAD, road)
-        seen = np.where(stale, -np.inf, seen)
-        self.cells[:] = cells
-        self.road[:] = road
-        self.last_seen[:] = seen
+        if abs(turn) > MAX_CARRY_TURN_DEG:
+            return False
+        dr = int(round(fwd / self.cell_m))       # rows grow forward
+        dc = int(round(right / self.cell_m))     # columns grow right
+        if abs(dr) >= self.n or abs(dc) >= self.n:
+            return False
+        # everything the van knew is now that many squares nearer / further across
+        for arr, empty in ((self.cells, UNKNOWN), (self.road, NOT_ROAD), (self.age, NEVER_SEEN)):
+            if dr or dc:
+                src_r = slice(max(0, dr), self.n + min(0, dr))
+                dst_r = slice(max(0, -dr), self.n + min(0, -dr))
+                src_c = slice(max(0, dc), self.n + min(0, dc))
+                dst_c = slice(max(0, -dc), self.n + min(0, -dc))
+                moved_block = arr[src_r, src_c].copy()
+                arr[:] = empty
+                arr[dst_r, dst_c] = moved_block
+        np.minimum(self.age, NEVER_SEEN - 1, out=self.age)
+        self.age += 1
+        stale = ((self.cells == FREE) & (self.age > FREE_MEMORY_TICKS)) | \
+                ((self.cells == OCCUPIED) & (self.age > BLOCKED_MEMORY_TICKS))
+        self.cells[stale] = UNKNOWN
+        self.road[stale] = NOT_ROAD
+        self.age[stale] = NEVER_SEEN
+        return True
 
     def update(self, points_xy: np.ndarray, occupied: np.ndarray,
                moved=None, now: Optional[float] = None) -> "OccupancyGrid":
@@ -209,14 +215,10 @@ class OccupancyGrid:
         stops a gap between two laser rings from reading as a wall. Left out, the map is
         rebuilt from this sweep alone, exactly as before.
         """
-        now = time.time() if now is None else float(now)
-        if moved is None:
+        if moved is None or not self._carry_forward(moved):
             self.cells[:] = UNKNOWN
             self.road[:] = NOT_ROAD
-            self.last_seen[:] = -np.inf
-        else:
-            self._carry_forward(moved, now)
-        self._now = now
+            self.age[:] = NEVER_SEEN
         self.wall_range[:] = np.inf
         self.updated = True
         pts = np.asarray(points_xy, dtype=np.float32)
@@ -272,7 +274,7 @@ class OccupancyGrid:
                 r, c = self.to_cell(xs, ys)
                 ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
                 self.cells[r[ok], c[ok]] = FREE
-                self.last_seen[r[ok], c[ok]] = self._now
+                self.age[r[ok], c[ok]] = 0
 
         # Flat ground: where a beam actually landed on a surface the van could roll on,
         # as opposed to free space it merely passed through. Marking only the squares the
@@ -303,7 +305,7 @@ class OccupancyGrid:
             r, c = self.to_cell(pts[solid, 0], pts[solid, 1])
             ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
             self.cells[r[ok], c[ok]] = OCCUPIED
-            self.last_seen[r[ok], c[ok]] = self._now
+            self.age[r[ok], c[ok]] = 0
         return self
 
     # ---- reading it -------------------------------------------------------------
