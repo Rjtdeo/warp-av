@@ -99,6 +99,19 @@ class CameraModel:
         f = self.focal_px
         return self.width / 2.0 + f * (cy / cx), self.height / 2.0 - f * (cz / cx)
 
+    def could_see(self, x: float, y: float, slack_deg: float = 8.0) -> bool:
+        """A cheap first question: is this roughly in front of this camera at all?
+
+        Just the bearing, no projection. Working out where every blob lands in every one of
+        the van's four pictures is a few hundred sums a sweep, and it cost 1.3 decisions a
+        second when the side cameras came in (9.1 Hz -> 7.8 Hz, caught by the battery). Nearly
+        every blob is only ever in one camera's direction, so this settles it first and the
+        real geometry runs once instead of four times.
+        """
+        bearing = math.degrees(math.atan2(y, x))
+        off = (bearing - self.yaw_deg + 180.0) % 360.0 - 180.0
+        return abs(off) <= self.fov_deg / 2.0 + slack_deg
+
     def in_view(self, x: float, y: float, z: float, margin_px: float = 0.0) -> bool:
         uv = self.project(x, y, z)
         if uv is None:

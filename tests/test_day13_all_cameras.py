@@ -125,3 +125,15 @@ def test_one_camera_still_works_exactly_as_before():
     wk.stop()
     assert wk.latest(9.0)[0] == ["box"]
     assert wk.latest_by_view(9.0) == {}
+
+
+def test_the_cheap_bearing_test_agrees_with_the_real_geometry():
+    """could_see is a shortcut. It must never say no when the camera really can see."""
+    for name, cam in camera_models().items():
+        for x in range(-20, 21, 2):
+            for y in range(-20, 21, 2):
+                if x == 0 and y == 0:
+                    continue
+                if cam.in_view(float(x), float(y), -1.0):
+                    assert cam.could_see(float(x), float(y)), \
+                        f"{name} can see ({x}, {y}) but the shortcut said no"

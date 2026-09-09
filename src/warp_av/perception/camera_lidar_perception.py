@@ -958,7 +958,9 @@ class CameraLidarPerception:
             # which cameras can even SEE each blob: the shape rule below needs to know
             for c in clusters:
                 here = cluster_point(c, DEFAULT_LIDAR_HEIGHT_M)
-                c["views"] = [n for n, mdl, _d in lookers if mdl.in_view(*here)]
+                # bearing first (cheap), full geometry only for the camera it points at
+                c["views"] = [n for n, mdl, _d in lookers
+                              if mdl.could_see(here[0], here[1]) and mdl.in_view(*here)]
             matched_boxes = sum(self._name_with_camera(clusters, mdl, dets)
                                 for _n, mdl, dets in lookers)
             self.last_view_detections = {n: len(d) for n, _m, d in lookers}
@@ -1321,7 +1323,11 @@ class CameraLidarPerception:
         if not detections:
             return 0
         for c in clusters:
-            c["uv"] = cam.project(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M))
+            here = cluster_point(c, DEFAULT_LIDAR_HEIGHT_M)
+            if not cam.could_see(here[0], here[1]):
+                c["uv"] = c["uv_foot"] = None      # not this camera's business
+                continue
+            c["uv"] = cam.project(*here)
             c["uv_foot"] = cam.project(*ground_point(c, DEFAULT_LIDAR_HEIGHT_M))
         matched = 0
         ridden = [d for d in detections if d.class_id in RIDDEN_CLASSES]
