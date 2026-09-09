@@ -213,14 +213,21 @@ def test_the_other_checks_would_have_missed_it():
     assert a.camera_change > CAMERA_MIN_CHANGE
 
 
-def test_a_parked_van_is_never_accused_of_a_dirty_lens():
-    """Standing still the whole picture is nearly frozen, so every patch looks stuck.
-    The check must hold its tongue rather than stop the van in a queue."""
+def test_a_perfectly_still_picture_gets_no_opinion():
+    """If NOTHING at all is moving, every patch looks stuck and the answer would be
+    nonsense, so the check says nothing.
+
+    Note what this does and does not mean. On the real van, PARKED, it turns out there is
+    still enough going on -- passing traffic, changing light, sensor noise -- that the check
+    does judge, and judges correctly: blocking the lens while parked was caught, and thirty
+    seconds parked with a CLEAN lens gave 0 false alarms in 15 readings (measured live,
+    2026-09-09). So this guard is for the truly frozen case, not for "the van is stopped".
+    """
     a = bare()
     still = moving_scene(1)
     for _ in range(CAMERA_BAD_FRAMES + 4):
         a._check_the_picture(still + np.uint8(0))
-    assert a.camera_blocked_tiles == 0, "must not judge the lens while nothing is going past"
+    assert a.camera_blocked_tiles == 0, "a completely frozen picture deserves no opinion"
 
 
 def test_a_single_raindrop_does_not_hold_the_van_to_walking_pace():
