@@ -98,6 +98,11 @@ RIDDEN_CLASSES = {
     3,   # motorcycle
 }
 RIDER_OVERLAP = 0.35        # share of the person's box that must sit over the bike
+RIDDEN_CONFIDENCE_THRESHOLD = 0.15   # how sure the camera must be that it saw a bicycle,
+                                     # when the answer is only used to tell a rider from a
+                                     # walker. Both are people the van stops for.
+CYCLIST_SPEED_MPS = 4.0     # nobody walks this fast. A person moving at cycling pace is on
+                            # something with wheels, whether or not the camera saw them.
 
 
 # ============================================================
@@ -208,6 +213,11 @@ class YoloXDetector:
 
         self.nms_threshold = (
             nms_threshold
+        )
+
+        # bicycles and motorbikes are kept down to this, for the rider test only
+        self.ridden_confidence_threshold = (
+            RIDDEN_CONFIDENCE_THRESHOLD
         )
 
         self.strides = [8, 16, 32]
@@ -428,9 +438,16 @@ class YoloXDetector:
             axis=1,
         )
 
-        candidate_mask = (
-            max_scores
-            >= self.confidence_threshold
+        # A bicycle is kept at a lower bar than everything else. It is never reported as an
+        # object on its own: it is used only to tell a person who is riding from a person
+        # who is walking, and both of those are things the van stops for. So a hesitant
+        # bicycle can only move a label between two vulnerable classes, never invent one.
+        best_class = np.argmax(scores, axis=1)
+        ridden = np.isin(best_class, list(RIDDEN_CLASSES))
+        candidate_mask = np.where(
+            ridden,
+            max_scores >= self.ridden_confidence_threshold,
+            max_scores >= self.confidence_threshold,
         )
 
         if not np.any(
@@ -977,9 +994,13 @@ class CameraLidarPerception:
                 dist = math.hypot(dx, dy)
                 if dist > self.detection_range:
                     continue
-                otype = (ObjectType.PEDESTRIAN if tr.cls == "pedestrian"
-                         else ObjectType.CYCLIST if tr.cls == "cyclist"
-                         else ObjectType.VEHICLE if tr.cls == "vehicle"
+                kind = tr.cls
+                if (kind == "pedestrian" and not getattr(tr, "stationary", True)
+                        and self.tracker.reported_speed(tr) >= CYCLIST_SPEED_MPS):
+                    kind = "cyclist"     # nobody walks at cycling pace
+                otype = (ObjectType.PEDESTRIAN if kind == "pedestrian"
+                         else ObjectType.CYCLIST if kind == "cyclist"
+                         else ObjectType.VEHICLE if kind == "vehicle"
                          else ObjectType.OBSTACLE)
                 objects.append(DetectedObject(
                     object_type=otype, x=ex, y=ey, distance=dist,

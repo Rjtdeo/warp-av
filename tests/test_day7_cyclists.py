@@ -100,3 +100,39 @@ def test_the_rider_claims_the_blob_before_a_person_standing_beside_the_bike():
     overlaps.sort(reverse=True)
     assert overlaps[0][1] == "rider", "the rider overlaps the bike far more"
     assert overlaps[0][0] >= 0.35 > overlaps[1][0], "and only the rider passes the test"
+
+
+# ---------------------------------------------------------------------------
+# Shown live: a bicycle with a rider, a bare bicycle and a motorbike with a
+# rider were all called pedestrians. The camera reports a bicycle only some of
+# the time in this simulator, and the laser sees the rider, not the frame, so a
+# cyclist measures the same as someone standing. Two signals the old rule threw
+# away: a bicycle the camera saw but was unsure about, and speed.
+# ---------------------------------------------------------------------------
+
+def test_a_hesitant_bicycle_still_counts_for_the_rider_test():
+    """A bicycle is never reported as an object of its own. It only ever decides whether a
+    person is riding, and a rider and a walker are both people the van stops for. So a
+    low-confidence bicycle can move a label between two vulnerable classes and can never
+    invent an object."""
+    from warp_av.perception.camera_lidar_perception import (RIDDEN_CONFIDENCE_THRESHOLD,
+                                                            RIDDEN_CLASSES, VEHICLE_CLASSES)
+    assert RIDDEN_CONFIDENCE_THRESHOLD < 0.40, "lower than the bar for everything else"
+    assert 1 in RIDDEN_CLASSES, "the bicycle class"
+    assert 1 not in VEHICLE_CLASSES, "and it never becomes a vehicle on its own"
+
+
+def test_a_person_at_cycling_pace_is_a_cyclist():
+    """Nobody walks at 4 m/s. If the camera missed the bicycle, the speed still says so."""
+    from warp_av.perception.camera_lidar_perception import CYCLIST_SPEED_MPS
+    assert 2.5 < CYCLIST_SPEED_MPS < 6.0, "faster than running, slower than traffic"
+
+
+def test_the_speed_rule_only_moves_a_pedestrian_to_a_cyclist():
+    """It must never touch a vehicle's name, and never fire on someone standing still."""
+    import inspect
+    from warp_av.perception import camera_lidar_perception as clp
+    src = inspect.getsource(clp.CameraLidarPerception.update)
+    assert 'kind == "pedestrian"' in src
+    assert 'not getattr(tr, "stationary", True)' in src, "a parked thing is never a cyclist"
+    assert 'kind = "cyclist"' in src
