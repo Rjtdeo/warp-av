@@ -156,39 +156,62 @@ def check_world_sheet(scene, report):
                f"free ahead {(wm.get('free_space') or {}).get('free_ahead_m')} m")
 
 
+def free_ahead(samples=3, gap_s=1.0):
+    """The best of a few readings. Town03 has traffic, and a car crossing in front for one
+    tick takes the free distance to nothing; a single reading calls that the state of the
+    road."""
+    seen = []
+    for i in range(samples):
+        if i:
+            time.sleep(gap_s)
+        seen.append(get("/api/grid?span_m=8")["free_ahead_m"])
+    return max(seen), seen
+
+
 def check_free_space(scene, report):
     scene.clear()
     time.sleep(2.0)
-    clear_ahead = get("/api/grid?span_m=8")["free_ahead_m"]
+    clear_ahead, samples = free_ahead()
     if clear_ahead < 8.0:
         # the van is parked somewhere hemmed in; that is a fact about the spot, not a fault
         report.add("free space", "the van is parked with room to test in", None,
-                   f"only {clear_ahead:.1f} m ahead here, so the rest of this group is skipped")
+                   f"only {clear_ahead:.1f} m ahead here ({samples}), so the rest is skipped")
         return
-    report.add("free space", "a clear road reads as clear", True, f"{clear_ahead:.1f} m ahead")
+    report.add("free space", "a clear road reads as clear", True,
+               f"{clear_ahead:.1f} m ahead (readings {', '.join(f'{v:.1f}' for v in samples)})")
     car = scene.place("vehicle.tesla.model3", ahead_m=10.0, lift=0.3)
     if car is None:
         report.add("free space", "something in the way shortens it", None, "could not place a car")
         return
     time.sleep(3.0)
-    blocked = get("/api/grid?span_m=8")["free_ahead_m"]
+    blocked, _ = free_ahead(samples=2, gap_s=0.8)
     report.add("free space", "something in the way shortens it", blocked < clear_ahead - 1.0,
                f"{clear_ahead:.1f} m -> {blocked:.1f} m with a car at 10 m")
     scene.clear()
 
 
 def check_road_edge(scene, report):
-    g = get("/api/grid?span_m=8")
-    kerbs = g.get("kerbs") or {}
-    found = [s for s in ("left", "right") if (kerbs.get(s) or {}).get("confident")]
-    if not found:
+    # a passing car hides the kerb for a tick, so look more than once
+    best = None
+    tries = 0
+    for i in range(4):
+        if i:
+            time.sleep(1.0)
+        kerbs = (get("/api/grid?span_m=8").get("kerbs") or {})
+        for side in ("left", "right"):
+            e = kerbs.get(side) or {}
+            if e.get("confident"):
+                tries += 1
+                if best is None or e["length_m"] > best[1]["length_m"]:
+                    best = (side, e)
+    if best is None:
         report.add("road edge", "a kerb is found where there is one", None,
-                   "no kerb within reach at this spot")
+                   "no kerb within reach in four looks at this spot")
         return
-    side = found[0]
-    e = kerbs[side]
+    side, e = best
     report.add("road edge", "a kerb is found where there is one", abs(e["offset_m"]) < 8.0,
-               f"{side} at {e['offset_m']:+.2f} m, {e['heading_deg']:+.1f} deg, over {e['length_m']:.0f} m")
+               f"{side} at {e['offset_m']:+.2f} m, {e['heading_deg']:+.1f} deg, over "
+               f"{e['length_m']:.0f} m (seen in {tries} of four looks)")
 
 
 def check_naming(scene, report):
