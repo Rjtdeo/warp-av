@@ -93,3 +93,63 @@ def test_height_alone_decides_the_common_case():
     assert vehicle_shaped(car_ish) is True
     tall = dict(car_ish, height=3.9)
     assert vehicle_shaped(tall) is False
+
+
+# ---------------------------------------------------------------------------
+# Found live, after the shape rule was fixed: the van was still calling 3.9 m
+# tall things vehicles. The rule was right; the name was stuck. A track took a
+# name once and kept it for the rest of its life, so one frame in which a blob
+# looked car-shaped labelled that thing a vehicle for ever.
+# ---------------------------------------------------------------------------
+
+def test_a_name_from_the_shape_is_dropped_when_the_shape_stops_agreeing():
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    named = {"wx": 10.0, "wy": 0.0, "distance": 10.0, "cls": "vehicle",
+             "cls_source": "shape", "confidence": 0.45}
+    plain = {"wx": 10.0, "wy": 0.0, "distance": 10.0}
+    for _ in range(3):
+        t += 0.1
+        tr.update([named], t)
+    assert tr._tracks[0].cls == "vehicle"
+    for _ in range(4):
+        t += 0.1
+        tr.update([plain], t)
+    assert tr._tracks[0].cls is None, "the shape stopped agreeing, so the name must go"
+
+
+def test_a_name_from_the_camera_survives_a_few_missed_frames():
+    """A detector missing one frame is ordinary. A shape that stops matching is not."""
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    seen = {"wx": 8.0, "wy": 0.0, "distance": 8.0, "cls": "pedestrian",
+            "cls_source": "camera", "confidence": 0.9}
+    plain = {"wx": 8.0, "wy": 0.0, "distance": 8.0}
+    for _ in range(3):
+        t += 0.1
+        tr.update([seen], t)
+    for _ in range(5):
+        t += 0.1
+        tr.update([plain], t)
+    assert tr._tracks[0].cls == "pedestrian", "five missed frames is not proof it left"
+
+
+def test_a_name_comes_straight_back_when_it_is_confirmed_again():
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    named = {"wx": 10.0, "wy": 0.0, "distance": 10.0, "cls": "vehicle",
+             "cls_source": "shape", "confidence": 0.45}
+    plain = {"wx": 10.0, "wy": 0.0, "distance": 10.0}
+    for _ in range(2):
+        t += 0.1
+        tr.update([named], t)
+    for _ in range(4):
+        t += 0.1
+        tr.update([plain], t)
+    assert tr._tracks[0].cls is None
+    t += 0.1
+    tr.update([named], t)
+    assert tr._tracks[0].cls == "vehicle"

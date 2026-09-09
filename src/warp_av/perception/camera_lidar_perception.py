@@ -909,6 +909,7 @@ class CameraLidarPerception:
                         best, best_score = c, score
                 if best is not None:
                     best["cls"] = cls
+                    best["cls_from"] = "camera"
                     best["conf"] = float(det.confidence)
                     matched_boxes += 1
             self.last_camera_labels = matched_boxes
@@ -935,6 +936,7 @@ class CameraLidarPerception:
                     ok = vehicle_shaped(c, min_points=base_points)
                 if ok:
                     c["cls"] = "vehicle"
+                    c["cls_from"] = "shape"
                     c["conf"] = 0.45 if not seen_by_camera else 0.40
 
             # ---- ego -> world, then track ----
@@ -948,6 +950,7 @@ class CameraLidarPerception:
                     "wx": ex0 + c["x"] * cy - c["y"] * sy,
                     "wy": ey0 + c["x"] * sy + c["y"] * cy,
                     "cls": c["cls"],
+                    "cls_source": c.get("cls_from"),
                     "confidence": c["conf"],
                     "weak": bool(c.get("weak", False)),   # a 2-point far blob: three sightings before it counts
                     "distance": c["distance"],            # how much to trust this sighting (day 6)

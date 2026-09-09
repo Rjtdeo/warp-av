@@ -270,7 +270,8 @@ class Track:
     __slots__ = ("tid", "x", "P", "cls", "confidence",
                  "last_seen", "hits", "strong_hits",
                  "length_m", "width_m", "height_m", "yaw_deg",
-                 "_history", "_still", "range_m", "_sizes", "size_uncertain")
+                 "_history", "_still", "range_m", "_sizes", "size_uncertain",
+                 "cls_source", "_unnamed")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -280,7 +281,13 @@ class Track:
                   [0.0, 0.5, 0.0, 0.0],
                   [0.0, 0.0, 4.0, 0.0],
                   [0.0, 0.0, 0.0, 4.0]]
-        self.cls = None            # 'vehicle' | 'pedestrian' | None (unknown)
+        self.cls = None            # 'vehicle' | 'pedestrian' | 'cyclist' | None (unknown)
+        # where that name came from, and how many sightings in a row have offered none.
+        # A name used to be set once and kept for ever, so a blob that looked car-shaped in
+        # a single frame stayed a "vehicle" for the life of the track, however tall it grew
+        # (found live, Perception V2 day 10 follow-up).
+        self.cls_source = None
+        self._unnamed = 0
         self.confidence = 0.5
         self.last_seen = t
         self.hits = 1              # strong sightings count 1, weak ones WEAK_HIT
@@ -444,6 +451,24 @@ def measurement_noise_m(o: dict) -> float:
     return sigma
 
 
+#: how many sightings in a row may offer no name before an old one is dropped. A name that
+#: came from the camera is kept longer, because a detector missing one frame is ordinary; a
+#: name that came from the blob's shape is dropped quickly, because the shape is measured
+#: fresh every time and its silence means the thing does not look like that any more.
+FORGET_NAME_AFTER = {"shape": 3, "camera": 15}
+
+
+def _forget_name(tr: "Track") -> None:
+    if tr.cls is None:
+        return
+    tr._unnamed += 1
+    if tr._unnamed >= FORGET_NAME_AFTER.get(tr.cls_source or "shape", 3):
+        tr.cls = None
+        tr.cls_source = None
+        tr.confidence = 0.5
+        tr._unnamed = 0
+
+
 def _median(values):
     vs = sorted(values)
     n = len(vs)
@@ -569,7 +594,11 @@ class ObjectTracker:
                 tr.strong_hits += 1
             if o.get("cls"):
                 tr.cls = o["cls"]
+                tr.cls_source = o.get("cls_source", "shape")
                 tr.confidence = max(tr.confidence, o.get("confidence", 0.5))
+                tr._unnamed = 0
+            else:
+                _forget_name(tr)
             _note_size(tr, o)
 
         for j in unmatched:
@@ -582,6 +611,7 @@ class ObjectTracker:
                 tr.strong_hits = 0
             if o.get("cls"):
                 tr.cls = o["cls"]
+                tr.cls_source = o.get("cls_source", "shape")
                 tr.confidence = o.get("confidence", 0.5)
             _note_size(tr, o)
             self._next_id += 1
