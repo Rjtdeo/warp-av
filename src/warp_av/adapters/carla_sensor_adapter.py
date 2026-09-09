@@ -58,6 +58,23 @@ CAMERA_MIN_CONTRAST = 6.0       # flatter than this is a wall or a bag over the 
 CAMERA_MIN_CHANGE = 0.05        # less than this between frames and the picture is frozen
 CAMERA_BAD_FRAMES = 5           # ... and it must hold this many frames running, so one odd
                                 # frame can never slow the van down
+# Something STUCK TO THE GLASS -- a raindrop, a splash of mud, a dead fly. This is the most
+# common camera failure there is and none of the checks above can see it: the picture is
+# bright, has plenty of contrast, and is still changing everywhere except behind the drop.
+# What gives it away is that its patch does not change AT ALL while the world slides past.
+# Measured on the van's own footage while driving, 2026-09-09, splitting the picture into
+# 192 tiles: a clean lens had 0 tiles frozen and its quietest tile still moved by 0.41.
+# One droplet froze 4 tiles solid at 0.00, four droplets froze 6.
+TILE_ROWS, TILE_COLS = 12, 16
+TILE_DEAD_SHARE = 0.15          # a tile changing less than this share of the typical tile
+MAX_DEAD_TILES = 5              # ... and more than this many of them is something on the glass.
+                                # Measured: a clean lens froze 0 tiles, ONE droplet froze 4, four
+                                # droplets froze 6. Set above one droplet on purpose -- a single
+                                # raindrop is not a reason to hold a van to walking pace, and the
+                                # consequence of crying wolf here is a van that crawls in drizzle.
+SCENE_MOVING_FLOOR = 0.25       # only ask while the world is actually going past: parked, the
+                                # whole picture is still and every tile looks frozen
+
 LIDAR_MIN_BEAMS = 24            # of 32. Losing a quarter of them is a broken laser
 LIDAR_POINT_COLLAPSE = 0.4      # fewer than this share of its recent normal is a fault
 LIDAR_BAD_SCANS = 5
@@ -169,6 +186,7 @@ class CarlaSensorAdapter:
         self.camera_brightness = None
         self.camera_contrast = None
         self.camera_change = None
+        self.camera_blocked_tiles = 0
         # day 14: is the laser really returning what it should?
         self._lidar_bad = 0
         self._lidar_bad_why = ""
@@ -419,10 +437,14 @@ class CarlaSensorAdapter:
         thumb = array[::8, ::8, :3].astype(np.int16)
         bright = float(thumb.mean())
         contrast = float(thumb.std())
-        change = (float(np.abs(thumb - self._last_thumb).mean())
-                  if self._last_thumb is not None and self._last_thumb.shape == thumb.shape
-                  else None)
+        change = None
+        blocked_tiles = 0
+        if self._last_thumb is not None and self._last_thumb.shape == thumb.shape:
+            diff = np.abs(thumb - self._last_thumb).mean(axis=2)
+            change = float(diff.mean())
+            blocked_tiles = self._count_stuck_tiles(diff)
         self._last_thumb = thumb
+        self.camera_blocked_tiles = blocked_tiles
         why = ""
         if bright < CAMERA_MIN_BRIGHTNESS:
             why = f"the picture is black ({bright:.0f} of 255) — lens covered?"
@@ -430,6 +452,8 @@ class CarlaSensorAdapter:
             why = f"the picture is blank ({contrast:.0f} of 255) — lens blocked?"
         elif change is not None and change < CAMERA_MIN_CHANGE:
             why = "the picture is not changing — camera frozen?"
+        elif blocked_tiles > MAX_DEAD_TILES:
+            why = f"{blocked_tiles} patches are not changing — something on the lens?"
         if why:
             self._camera_bad += 1
             self._camera_bad_why = why
@@ -438,6 +462,23 @@ class CarlaSensorAdapter:
             self._camera_bad_why = ""
         self.camera_brightness, self.camera_contrast = bright, contrast
         self.camera_change = change
+
+    def _count_stuck_tiles(self, diff) -> int:
+        """How many patches of the picture are not changing while the rest of it is?
+
+        Only asked while the world is actually going past. Parked, the whole picture is
+        still and every patch would look stuck, so the answer would be nonsense.
+        """
+        h = diff.shape[0] // TILE_ROWS
+        w = diff.shape[1] // TILE_COLS
+        if h < 1 or w < 1:
+            return 0
+        tiles = diff[:h * TILE_ROWS, :w * TILE_COLS].reshape(TILE_ROWS, h, TILE_COLS, w)
+        per_tile = tiles.mean(axis=(1, 3))
+        typical = float(np.median(per_tile))
+        if typical < SCENE_MOVING_FLOOR:
+            return 0                      # parked, or nothing going past: no opinion
+        return int((per_tile < TILE_DEAD_SHARE * typical).sum())
 
     def camera_fault(self) -> str:
         """What is wrong with the picture, in words, or "" when it is fine."""

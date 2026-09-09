@@ -85,8 +85,12 @@ def test_it_clears_the_moment_the_picture_comes_back():
 
 
 @pytest.mark.parametrize("weather,brightness,contrast", [
-    ("bright noon", 121, 50), ("overcast", 95, 41), ("heavy rain", 105, 32),
-    ("thick fog", 136, 34), ("dusk", 39, 30), ("night", 27, 31),
+    ("bright noon", 121, 48), ("overcast", 92, 37), ("heavy rain", 107, 28),
+    ("thick fog", 140, 34), ("dusk", 34, 24), ("night", 19, 21),
+    # the worst the camera can be while still working, all pushed together
+    ("night + storm", 22, 16),
+    ("night + storm + fog", 22, 14),
+    ("no moon, thickest fog", 22, 13),
 ])
 def test_real_bad_weather_never_trips_it(weather, brightness, contrast):
     """The actual figures measured on the van. None of these is a fault."""
@@ -96,11 +100,17 @@ def test_real_bad_weather_never_trips_it(weather, brightness, contrast):
     assert feed(a, [picture(brightness, contrast, seed=i) for i in range(12)]) == "", weather
 
 
-def test_the_darkest_healthy_night_has_room_to_spare():
-    """Night measured 27. The limit must sit well under it, not just under it."""
-    assert CAMERA_MIN_BRIGHTNESS <= 27 / 2.0
-    assert CAMERA_MIN_CONTRAST <= 30 / 2.0
-    assert CAMERA_MIN_CHANGE <= 0.49 / 2.0
+def test_the_worst_weather_has_room_to_spare():
+    """The real worst figures, measured with no moon, 100 % rain and thickest fog together.
+
+    An earlier version of this test used 27 and 30, which came from testing night and rain
+    SEPARATELY. Pushed together the camera goes darker and flatter than either alone --
+    contrast falls to 13.9, not 30 -- so the earlier margins were overstated.
+    """
+    WORST_BRIGHTNESS, WORST_CONTRAST, WORST_CHANGE = 19.5, 13.9, 0.48
+    assert CAMERA_MIN_BRIGHTNESS <= WORST_BRIGHTNESS / 2.0
+    assert CAMERA_MIN_CONTRAST <= WORST_CONTRAST / 2.0
+    assert CAMERA_MIN_CHANGE <= WORST_CHANGE / 2.0
 
 
 # ---------------------------------------------------------------- the laser
@@ -148,3 +158,75 @@ def test_it_says_nothing_until_it_knows_what_normal_is():
     """A cold start must not report a collapse on its first few turns."""
     a = bare()
     assert feed_lidar(a, [scan(500) for _ in range(4)]) == ""
+
+
+# ---------------------------------------------------------------- something on the glass
+
+from warp_av.adapters.carla_sensor_adapter import (TILE_ROWS, TILE_COLS, MAX_DEAD_TILES,
+                                                   SCENE_MOVING_FLOOR)
+
+
+def moving_scene(seed):
+    """A picture of a world going past: every part of it changes frame to frame."""
+    rng = np.random.default_rng(seed)
+    return np.clip(rng.normal(120, 45, size=(600, 800, 4)), 0, 255).astype(np.uint8)
+
+
+def with_droplets(img, n):
+    """Patches STUCK to the glass: the same grey every frame, whatever is behind them."""
+    out = img.copy()
+    spots = [(60, 100), (300, 420), (420, 60), (60, 620), (300, 60), (420, 420)]
+    for k in range(n):
+        y, x = spots[k % len(spots)]
+        # about 140 px across, the size the live test used -- a 60 px speck covers less
+        # than one tile and rightly does not count
+        out[y:y + 140, x:x + 140] = 100 + k      # fixed, so it never changes
+    return out
+
+
+def test_a_clean_lens_reports_nothing_on_it():
+    a = bare()
+    for i in range(12):
+        a._check_the_picture(moving_scene(i))
+    assert a.camera_blocked_tiles == 0
+    assert a.camera_fault() == ""
+
+
+def test_drops_stuck_to_the_lens_are_noticed():
+    """The rain case: drops build up, block patches, and every other check still passes."""
+    a = bare()
+    for i in range(CAMERA_BAD_FRAMES + 4):
+        a._check_the_picture(with_droplets(moving_scene(i), 5))
+    assert a.camera_blocked_tiles > MAX_DEAD_TILES
+    assert "on the lens" in a.camera_fault()
+
+
+def test_the_other_checks_would_have_missed_it():
+    """Proof that this check earns its place: a drop-covered picture is bright, has
+    contrast, and is still changing. All three earlier checks pass it."""
+    a = bare()
+    img = with_droplets(moving_scene(3), 5)
+    a._check_the_picture(with_droplets(moving_scene(2), 5))
+    a._check_the_picture(img)
+    assert a.camera_brightness > CAMERA_MIN_BRIGHTNESS
+    assert a.camera_contrast > CAMERA_MIN_CONTRAST
+    assert a.camera_change > CAMERA_MIN_CHANGE
+
+
+def test_a_parked_van_is_never_accused_of_a_dirty_lens():
+    """Standing still the whole picture is nearly frozen, so every patch looks stuck.
+    The check must hold its tongue rather than stop the van in a queue."""
+    a = bare()
+    still = moving_scene(1)
+    for _ in range(CAMERA_BAD_FRAMES + 4):
+        a._check_the_picture(still + np.uint8(0))
+    assert a.camera_blocked_tiles == 0, "must not judge the lens while nothing is going past"
+
+
+def test_a_single_raindrop_does_not_hold_the_van_to_walking_pace():
+    """Measured: one droplet freezes about 4 tiles, four droplets about 6. The bar sits
+    above one on purpose -- crying wolf here means a van that crawls in drizzle."""
+    a = bare()
+    for i in range(12):
+        a._check_the_picture(with_droplets(moving_scene(i), 1))
+    assert a.camera_fault() == ""
