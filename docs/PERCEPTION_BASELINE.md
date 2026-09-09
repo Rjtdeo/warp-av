@@ -1526,7 +1526,7 @@ everything back afterwards, including any sensor it switches off.
 python tools/full_check.py --at=-6.5,-79.1
 ```
 
-**27 checks, 27 passed, nothing failed or skipped**
+**28 checks, 28 passed, nothing failed or skipped**
 (`docs/perception_baseline/day10_full_check.txt`):
 
 | group | what it proves | result |
@@ -1538,7 +1538,7 @@ python tools/full_check.py --at=-6.5,-79.1
 | naming | person, car and barrel each named right | pedestrian, vehicle, obstacle |
 | sizes | each measured about the right height, with sensible room | 1.60 m, 1.68 m, 0.79 m; 0.6, 1.2, 0.4 m |
 | phantoms | nothing tall is called a vehicle | 31 things over 3 m, none called a vehicle |
-| motion | a moving car reads as moving, a parked barrel as parked | really 6.1 m/s, van says 6.5; barrel 0.0 |
+| motion | a moving car is noticed, its speed settles, a barrel stays parked | noticed in 2.4 s; really 6.0 m/s, van says 6.2; barrel 0.0 |
 | faults | camera loss slows, laser loss stops, both named, both recover | degraded at 2 m/s, then intervention |
 | driving | the oldest test: a barrel in the lane | PASS, 0 contacts, stopped 7.61 m short |
 
@@ -1588,3 +1588,28 @@ system:
   directly with its threshold dropped to 0.05, the model reports no bicycle at
   all. A motorbike rider it does see, at 0.12 to 0.23.
 * Nothing steers by the free-space map yet. That is the planner's to use.
+
+## Five flaws in the check, none in the van
+
+Running the battery repeatedly found five ways the measurement lied, and it is
+worth listing them because the same traps catch anyone measuring this system:
+
+1. **one loop reading** catches whatever the van happened to be doing. Now the
+   middle of five readings a second apart: 9.6 Hz where a single sample said
+   7.5.
+2. **"only 3 m of free road ahead"** was a fact about where the van was parked,
+   not a fault. The battery says so and skips, or takes `--at`.
+3. **a "parked" barrel at 6.3 m/s** was the check matching the car that had
+   just been driven past it. The car is stopped first, and the barrel matched
+   more tightly.
+4. **a moving car's speed read at the first moving frame** is worked out from
+   two positions and can be half as much again out. The check now asks two
+   separate questions: how fast the van notices (0.8 to 2.4 s), and what the
+   number settles to (within 0.2 m/s).
+5. **the free distance and the kerb read once** catch a passing car or a short
+   sweep. Both now take the best of several looks and print every reading.
+
+That last one exposed something real and small: sampled twenty-four times in a
+row, the free distance ahead reads between 10.5 and 17.8 m, except once, where
+it drops to 3.0. One reading in twenty-four, on an unchanged scene. A planner
+using this map should smooth it rather than trust a single tick.
