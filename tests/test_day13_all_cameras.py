@@ -137,3 +137,17 @@ def test_the_cheap_bearing_test_agrees_with_the_real_geometry():
                 if cam.in_view(float(x), float(y), -1.0):
                     assert cam.could_see(float(x), float(y)), \
                         f"{name} can see ({x}, {y}) but the shortcut said no"
+
+
+def test_the_same_picture_is_never_looked_at_twice():
+    """Taking turns broke the 'nothing new yet' check at first, so a camera whose picture
+    had not changed was detected over and over, burning the time the van needs to think."""
+    runs = []
+    frozen = FakeFrame("rear")            # one frame, never updated
+    wk = DetectionWorker(lambda img: runs.append(1) or ["box"],
+                         lambda: frozen, interval_s=0.0,
+                         views={"rear": (lambda: frozen)})
+    wk.start()
+    time.sleep(0.6)
+    wk.stop()
+    assert len(runs) == 1, f"looked at the same picture {len(runs)} times"

@@ -56,6 +56,7 @@ class DetectionWorker:
         self._lock = threading.Lock()
         self._result: Tuple[list, Optional[float], float] = ([], None, 0.0)   # detections, frame ts, published (monotonic)
         self._by_view = {}                  # view -> (detections, frame ts, published)
+        self._last_ts = {}                  # view -> the frame time last looked at
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_inference_ms = 0.0
@@ -100,8 +101,14 @@ class DetectionWorker:
             else:
                 frame = self._frame()
             ts = getattr(frame, "timestamp", None) if frame is not None else None
-            if frame is None or (view is None and ts == last_frame_ts):
-                self._stop.wait(0.01)                 # nothing new yet
+            # Nothing new on THIS camera: move on rather than looking at the same picture
+            # twice. Taking the cameras in turn broke this at first -- the check only covered
+            # the single-camera case, so a view whose picture had not changed was detected
+            # over and over, burning the very time the van needs to think.
+            stale = (ts is not None and ts == (last_frame_ts if view is None
+                                               else self._last_ts.get(view)))
+            if frame is None or stale:
+                self._stop.wait(0.005)
                 continue
             t0 = time.perf_counter()
             try:
@@ -125,6 +132,8 @@ class DetectionWorker:
                 self.last_inference_ms = ms
                 self.runs += 1
             last_frame_ts = ts
+            if view is not None:
+                self._last_ts[view] = ts
             next_run = now + self.interval_s
 
     def latest_by_view(self, max_age_s: float = 1.0):
