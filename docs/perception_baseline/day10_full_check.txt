@@ -1,0 +1,48 @@
+
+checking the van at (-6.5, -79.1)
+
+-- health
+  [pass] the van thinks at least 8 times a second     8.9 Hz (from 8.8 to 9.4 over five seconds)
+  [pass] every sense is working                       all senses working
+  [pass] the van is seeing things                     49 things around it
+-- world
+  [pass] the world sheet answers                      49 things, 0.13 s old
+  [pass] it carries free space                        free ahead 11.8 m
+-- free space
+  [pass] a clear road reads as clear                  15.5 m ahead
+  [pass] something in the way shortens it             15.5 m -> 7.5 m with a car at 10 m
+-- road edge
+  [pass] a kerb is found where there is one           right at +3.91 m, +0.7 deg, over 20 m
+-- naming
+  [pass] a person is named a pedestrian               called 'pedestrian', 0.3 x 0.1 x 1.6 m
+  [pass] a person is measured about the right height  1.60 m (expected 1.2 to 2.1)
+  [pass] a person gets sensible room to leave         0.60 m
+  [pass] a car is named a vehicle                     called 'vehicle', 1.8 x 1.3 x 1.7 m
+  [pass] a car is measured about the right height     1.68 m (expected 1.2 to 2.1)
+  [pass] a car gets sensible room to leave            1.20 m
+  [pass] a barrel is named a obstacle                 called 'obstacle', 0.3 x 0.0 x 0.8 m
+  [pass] a barrel is measured about the right height  0.79 m (expected 0.5 to 1.1)
+  [pass] a barrel gets sensible room to leave         0.40 m
+-- phantoms
+  [pass] nothing tall is called a vehicle             31 things over 3 m, 0 of them called 
+vehicles
+  [pass] an empty road holds few vehicle labels       0 vehicles among 51 things
+-- motion
+  [pass] a moving car is seen to move                 really 6.1 m/s, van says 6.5 m/s
+  [pass] a parked barrel is seen as parked            parked=True, speed 0.0 m/s
+-- faults
+  [pass] losing the camera slows the van, it does not freeze it degraded, cap 2.0 m/s: 
+object_detection, camera not working — driving slowly
+  [pass] the report names the camera                  object_detection, camera not working — 
+driving slowly
+  [pass] losing the laser stops the van               intervention: lidar not working — stopping
+  [pass] the report names the laser                   lidar not working — stopping
+  [pass] everything comes back afterwards             all senses working
+-- driving
+  [pass] it stops for a barrel in its lane            PASS, 0 contacts, stopped 7.61 m short
+
+==============================================================================
+  27 passed, 0 failed, 0 skipped
+
+
+

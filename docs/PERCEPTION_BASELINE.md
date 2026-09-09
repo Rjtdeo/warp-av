@@ -1514,3 +1514,77 @@ on day 9, which is treating a surface as a surface instead of chopping it into
 objects.
 
 531 tests pass, 11 of them new.
+
+# Perception V2: the whole thing, checked in one run (2026-09-08)
+
+`tools/full_check.py` exercises everything perception learned, on the live
+simulator. Each check places something real or breaks something real and reads
+the answer back through the van's own interfaces. Nothing is mocked. It puts
+everything back afterwards, including any sensor it switches off.
+
+```
+python tools/full_check.py --at=-6.5,-79.1
+```
+
+**27 checks, 27 passed, nothing failed or skipped**
+(`docs/perception_baseline/day10_full_check.txt`):
+
+| group | what it proves | result |
+|---|---|---|
+| health | the loop holds its rate | 8.9 Hz, 8.8 to 9.4 over five seconds |
+| world | the one sheet answers, with free space on it | 49 things, 0.13 s old |
+| free space | a clear road reads clear, a car shortens it | 15.5 m, then 7.5 m with a car at 10 m |
+| road edge | a kerb is found where there is one | right side, +3.91 m, 0.7° , over 20 m |
+| naming | person, car and barrel each named right | pedestrian, vehicle, obstacle |
+| sizes | each measured about the right height, with sensible room | 1.60 m, 1.68 m, 0.79 m; 0.6, 1.2, 0.4 m |
+| phantoms | nothing tall is called a vehicle | 31 things over 3 m, none called a vehicle |
+| motion | a moving car reads as moving, a parked barrel as parked | really 6.1 m/s, van says 6.5; barrel 0.0 |
+| faults | camera loss slows, laser loss stops, both named, both recover | degraded at 2 m/s, then intervention |
+| driving | the oldest test: a barrel in the lane | PASS, 0 contacts, stopped 7.61 m short |
+
+## The offline card, same day, four recordings
+
+| | | from |
+|---|---|---|
+| things found, of those the sensor could see | 90 % | day 3 |
+| named correctly, with a working camera | 100 % | day 5 |
+| size error against the dense scan | 0.06 m | days 4, 7 |
+| parked things wrongly called moving | 0.6 % | day 6 |
+| ghost objects per update, in the lane | 0.00 | day 3 |
+| ghost objects per update, anywhere | 6.2 | day 3 |
+| road called free on the space map | 95 % | day 9 |
+| solid things called blocked | 70 % | day 9 |
+| solid things wrongly called free | 2.7 % | day 9 |
+| the laser turn stitched, of 36 sectors | 35 | fix 1 |
+| time per update, offline | 15 ms | day 1 |
+| time to build the space map | 4.0 ms | day 9 |
+
+555 tests pass on both machines.
+
+## Three faults the first run of the checker found, all in the checker
+
+The first attempt reported four failures. Every one was the check, not the van,
+and each is worth recording because the same traps catch anyone measuring this
+system:
+
+* **one loop reading** catches whatever the van happened to be doing at that
+  instant. The rate is now the middle of five readings a second apart, and it
+  reads 8.9 Hz where a single sample had said 7.5;
+* **"only 3 m of free road ahead"** was a fact about where the van happened to
+  be parked, not a fault. The battery now says so and skips that group, or can
+  be pointed at a spot with room using `--at`;
+* **a "parked" barrel reading 6.3 m/s** was the check matching the car that had
+  just been driven past it. The car is stopped first and the barrel matched
+  more tightly.
+
+## What is still open after ten days
+
+* Ghost objects: about six per update, none in the van's lane, almost all
+  beyond 25 m where a wall's blob wanders.
+* The flat planter is invisible beyond 20 m.
+* The van cannot separate carriageway from pavement here, because this town's
+  pavement is often level with the road.
+* A pedal cyclist cannot be named from the camera in this simulator: asked
+  directly with its threshold dropped to 0.05, the model reports no bicycle at
+  all. A motorbike rider it does see, at 0.12 to 0.23.
+* Nothing steers by the free-space map yet. That is the planner's to use.
