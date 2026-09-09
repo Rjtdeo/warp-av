@@ -184,11 +184,21 @@ def read_sensors(sensor_adapter, perception_healthy: bool, perception_reason: st
     ]
     if sensor_adapter is not None:
         # note: `enabled` is reported for the operator, never used to excuse a fault
+        # day 14: when a sense is broken rather than merely missing, say HOW
+        cam_why = ""
+        lid_why = ""
+        try:
+            cam_why = sensor_adapter.camera_fault() or ""
+            lid_why = sensor_adapter.lidar_fault() or ""
+        except Exception:
+            pass
         out += [
             SensorState("lidar", healthy=ask(sensor_adapter.is_lidar_healthy),
-                        enabled=enabled("lidar_enabled"), detail="the laser that finds obstacles"),
+                        enabled=enabled("lidar_enabled"),
+                        detail=lid_why or "the laser that finds obstacles"),
             SensorState("camera", healthy=ask(sensor_adapter.is_camera_healthy),
-                        enabled=enabled("camera_enabled"), detail="the picture that names them"),
+                        enabled=enabled("camera_enabled"),
+                        detail=cam_why or "the picture that names them"),
             SensorState("gps", healthy=ask(sensor_adapter.is_gnss_healthy),
                         enabled=enabled("gnss_enabled"), detail="satellite fix"),
             SensorState("imu", healthy=ask(sensor_adapter.is_imu_healthy),
