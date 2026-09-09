@@ -289,28 +289,35 @@ class OccupancyGrid:
         question is quiet when there is nothing to worry about, which is what makes it
         worth asking every tick.
         """
+        # The band is a plain rectangle in this grid -- rows are distance ahead, columns are
+        # distance across -- so take it as one slice and let numpy find the patch. Walking it
+        # a step at a time in Python cost three decisions a second: the loop fell from 9.0 Hz
+        # to 6.0 Hz and the acceptance battery caught it (2026-09-09).
         limit = lane_half_m + reach_m
-        ys = np.arange(-limit, limit + 1e-9, self.cell_m, dtype=np.float32)
         need = max(1, int(round(POCKET_SIDE_M / self.cell_m)))
-        max_m = min(max_m, self.range_m)
-        d = max(self.cell_m * 0.5, float(start_m))
-        while d + POCKET_SIDE_M <= max_m:
-            depths = [d + k * self.cell_m for k in range(need)]
-            rows = []
-            for dd in depths:
-                r, c = self.to_cell(np.full(ys.shape, dd, dtype=np.float32), ys)
-                ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
-                if not ok.any():
-                    rows = []
-                    break
-                rows.append(self.cells[r[ok], c[ok]] == UNKNOWN)
-            if rows and len(rows) == need:
-                # unseen at every depth of the patch, and wide enough at all of them
-                block = np.logical_and.reduce(rows)
-                if _longest_run(block) >= need:
-                    return float(d)
-            d += self.cell_m
-        return None
+        near = max(self.cell_m * 0.5, float(start_m))
+        far = min(max_m, self.range_m)
+        if far - near < POCKET_SIDE_M:
+            return None
+        r0, c0 = self.to_cell(np.float32(near), np.float32(-limit))
+        r1, c1 = self.to_cell(np.float32(far), np.float32(limit))
+        r0, c0 = max(0, int(r0)), max(0, int(c0))
+        r1, c1 = min(self.n, int(r1) + 1), min(self.n, int(c1) + 1)
+        if r1 - r0 < need or c1 - c0 < need:
+            return None
+        unseen = self.cells[r0:r1, c0:c1] == UNKNOWN
+        # rows i..i+need-1 all unseen, then columns j..j+need-1 as well: a need x need patch
+        deep = unseen
+        for k in range(1, need):
+            deep = deep[:-1] & unseen[k:]
+        patch = deep
+        for k in range(1, need):
+            patch = patch[:, :-1] & deep[:, k:]
+        rows = np.flatnonzero(patch.any(axis=1))
+        if rows.size == 0:
+            return None
+        x, _ = self.to_metres(r0 + int(rows[0]), c0)
+        return float(x)
 
     def road_edge(self, x_m: float, side: str, max_m: float = 12.0,
                   gap_m: float = 1.5) -> Optional[float]:

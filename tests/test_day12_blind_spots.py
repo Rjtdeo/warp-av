@@ -178,3 +178,18 @@ def test_no_cap_can_ever_speed_the_van_up():
 def test_no_cap_can_turn_a_stop_into_driving():
     out = decide(speed=0.0, stop=True, blind=12.0)
     assert out.should_stop is True and out.desired_speed_mps == 0.0
+
+
+def test_asking_is_cheap_enough_to_ask_every_tick():
+    """It is asked ~9 times a second on the live van. The first version walked the band a
+    step at a time in Python and cost three decisions a second -- 9.0 Hz down to 6.0 Hz,
+    caught by the acceptance battery, not by any test here. Hence this one."""
+    import time
+    g = all_seen()
+    unseen_at(g, 9.0, 2.0)
+    g.blind_spot_ahead()                       # warm
+    t0 = time.perf_counter()
+    for _ in range(200):
+        g.blind_spot_ahead()
+    per_call_ms = (time.perf_counter() - t0) / 200 * 1000.0
+    assert per_call_ms < 1.0, f"{per_call_ms:.2f} ms per call is too dear to ask every tick"
