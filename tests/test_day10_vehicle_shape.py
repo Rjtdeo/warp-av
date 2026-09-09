@@ -217,3 +217,11 @@ def test_a_camera_name_is_left_alone_by_the_recheck():
              "confidence": 0.9}
         tr.update([o], t)
     assert tr._tracks[0].cls == "pedestrian"
+
+
+def test_a_box_lorry_is_a_vehicle():
+    """Live, a CARLA box lorry measured 2.7 m tall and the limit was 2.6, so it came out as
+    an obstacle. Allowing 3.0 m costs four extra wrong labels across the recordings; 3.4 m
+    costs seventy-three, which is where the buildings start."""
+    assert vehicle_shaped(blob(4.0, 2.0, 2.7, n=60)) is True
+    assert vehicle_shaped(blob(4.0, 2.0, 3.9, n=60)) is False, "and a building still is not"

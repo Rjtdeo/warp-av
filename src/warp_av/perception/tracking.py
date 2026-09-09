@@ -36,10 +36,12 @@ VEHICLE_MIN_HEIGHT_M = 0.5  # ... and taller than this (a planter or a bench is 
 VEHICLE_MAX_LENGTH_M = 14.0   # a bus or an articulated lorry; a building face is longer
 VEHICLE_MIN_WIDTH_M = 0.9     # a pole, a post or a fence is thinner
 VEHICLE_MAX_WIDTH_M = 4.0
-VEHICLE_MAX_HEIGHT_M = 2.6    # a car or a van, which is what this rule is for. Measured on
+VEHICLE_MAX_HEIGHT_M = 3.0    # a car, a van or a small lorry. Measured on
                               # the recordings: the things wrongly called vehicles stand 3.8 to
-                              # 4.0 m tall (buildings and walls) and the real car 1.5 m. A lorry
-                              # is taller than this and will be named by the camera instead.
+                              # 4.0 m tall (buildings and walls) and the real car 1.5 m. A CARLA
+                              # box lorry measures 2.7 m, so 2.6 turned it into an obstacle;
+                              # allowing 3.0 costs four extra wrong labels and 3.4 costs
+                              # seventy-three, which is where the buildings start.
 WIDTH_TEST_FROM_M = 5.0       # only things this long are judged on being too thin
 WIDTH_TEST_WITHIN_M = 25.0    # ... and near enough that the measurement means something
 VEHICLE_MIN_LENGTH_M = 2.0    # shorter than this, near the van, is a bin or a post
@@ -694,9 +696,14 @@ class ObjectTracker:
                 tr.hits += 1
                 tr.strong_hits += 1
             if o.get("cls"):
-                tr.cls = o["cls"]
-                tr.cls_source = o.get("cls_source", "shape")
-                tr.confidence = max(tr.confidence, o.get("confidence", 0.5))
+                # A rider stays a rider. The camera sees the bicycle only in some frames,
+                # and in the others it reports the person alone; without this, every such
+                # frame demoted a cyclist back to a pedestrian and the name flickered.
+                demotion = tr.cls == "cyclist" and o["cls"] == "pedestrian"
+                if not demotion:
+                    tr.cls = o["cls"]
+                    tr.cls_source = o.get("cls_source", "shape")
+                    tr.confidence = max(tr.confidence, o.get("confidence", 0.5))
                 tr._unnamed = 0
             else:
                 _forget_name(tr)

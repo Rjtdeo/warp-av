@@ -136,3 +136,47 @@ def test_the_speed_rule_only_moves_a_pedestrian_to_a_cyclist():
     assert 'kind == "pedestrian"' in src
     assert 'not getattr(tr, "stationary", True)' in src, "a parked thing is never a cyclist"
     assert 'kind = "cyclist"' in src
+
+
+def test_a_rider_is_not_demoted_by_a_frame_that_missed_the_bicycle():
+    """Live, a cyclist flickered between cyclist and pedestrian. The camera sees the bicycle
+    in some frames and only the person in others, and every such frame was overwriting the
+    name. A rider stays a rider until the name expires for want of any sighting at all."""
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    def feed(cls):
+        nonlocal t
+        t += 0.1
+        tr.update([{"wx": 10.0, "wy": 0.0, "distance": 10.0, "cls": cls,
+                    "cls_source": "camera", "confidence": 0.9}], t)
+    feed("pedestrian")
+    feed("cyclist")
+    assert tr._tracks[0].cls == "cyclist"
+    for _ in range(5):
+        feed("pedestrian")            # the camera keeps missing the bike
+    assert tr._tracks[0].cls == "cyclist", "it is still the same person on the same bicycle"
+
+
+def test_a_pedestrian_can_still_become_a_cyclist_but_not_the_other_way_round():
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    for cls in ("pedestrian", "pedestrian", "cyclist"):
+        t += 0.1
+        tr.update([{"wx": 9.0, "wy": 0.0, "distance": 9.0, "cls": cls,
+                    "cls_source": "camera", "confidence": 0.9}], t)
+    assert tr._tracks[0].cls == "cyclist"
+
+
+def test_a_vehicle_is_not_protected_by_the_rider_rule():
+    """Only the pedestrian-over-cyclist case is held. A camera calling something a vehicle
+    must still be able to correct a cyclist."""
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    for cls in ("cyclist", "vehicle"):
+        t += 0.1
+        tr.update([{"wx": 9.0, "wy": 0.0, "distance": 9.0, "cls": cls,
+                    "cls_source": "camera", "confidence": 0.9}], t)
+    assert tr._tracks[0].cls == "vehicle"
