@@ -849,6 +849,8 @@ class WarpAV:
                 # perception fix 2: road removal by local patches
                 "ground_filter": getattr(self.camera_lidar_perception, "ground_filter_mode", "n/a"),
                 "ground_filter_ms": round(float(getattr(self.camera_lidar_perception, "last_ground_ms", 0.0) or 0.0), 1),
+                # the free-space map's own cost, so a slow tick can be pinned on the right part
+                "grid_ms": round(float(getattr(self.camera_lidar_perception, "last_grid_ms", 0.0) or 0.0), 1),
                 "ground_tiles": int(getattr(self.camera_lidar_perception, "last_ground_tiles", 0) or 0),
                 "borrowed_tiles": int(getattr(self.camera_lidar_perception, "last_borrowed_tiles", 0) or 0),
                 "points_kept": int(getattr(self.camera_lidar_perception, "last_points_kept", 0) or 0),
