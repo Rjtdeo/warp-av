@@ -153,3 +153,18 @@ def test_a_name_comes_straight_back_when_it_is_confirmed_again():
     t += 0.1
     tr.update([named], t)
     assert tr._tracks[0].cls == "vehicle"
+
+
+def test_a_rail_far_away_is_not_a_vehicle():
+    """Found live at 37.8 m: 1.9 m long and 0.2 m wide, called a vehicle. The width test
+    was switched off beyond 25 m, because a distant car shows only its thin near face.
+    The bar drops out there; it does not disappear."""
+    from warp_av.perception.tracking import VEHICLE_MIN_WIDTH_FAR_M
+    assert vehicle_shaped(blob(1.9, 0.2, 2.3, n=20, distance=37.8)) is False
+    assert VEHICLE_MIN_WIDTH_FAR_M < VEHICLE_MIN_WIDTH_M, "the far bar is lower, not absent"
+
+
+def test_a_real_car_far_away_still_passes():
+    assert vehicle_shaped(blob(2.6, 1.1, 1.5, n=14, distance=30.0)) is True
+    assert vehicle_shaped(blob(2.0, 0.5, 1.5, n=14, distance=30.0)) is True, (
+        "its near face is thin, but not rail-thin")

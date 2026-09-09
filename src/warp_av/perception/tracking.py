@@ -43,6 +43,7 @@ VEHICLE_MAX_HEIGHT_M = 2.6    # a car or a van, which is what this rule is for. 
 WIDTH_TEST_FROM_M = 5.0       # only things this long are judged on being too thin
 WIDTH_TEST_WITHIN_M = 25.0    # ... and near enough that the measurement means something
 VEHICLE_MIN_LENGTH_M = 2.0    # shorter than this, near the van, is a bin or a post
+VEHICLE_MIN_WIDTH_FAR_M = 0.4  # ... and thinner than this, at any distance, is a rail
 
 
 def vehicle_shaped(cluster, min_points=None, min_extent=None, min_height=None,
@@ -74,13 +75,17 @@ def vehicle_shaped(cluster, min_points=None, min_extent=None, min_height=None,
         return False                    # a wall or a building face
     if width is not None and width > max_width:
         return False                    # too broad for anything that drives
-    # A car has body on both sides. A pole, a fence and a kerb do not. The near face of a
-    # far car reads thin too, but a far car is also too sparse to reach the point count, so
-    # the test is only applied where the van can see enough of a thing to measure it.
-    if (length is not None and width is not None
-            and cluster.get("distance", 0.0) <= WIDTH_TEST_WITHIN_M
-            and (width < min_width or length < VEHICLE_MIN_LENGTH_M)):
-        return False
+    # A car has body on both sides. A pole, a fence and a kerb do not. Close up the van can
+    # see enough of a car to insist on a proper width; far off it only sees the near face,
+    # which reads thinner, so the bar drops. It never drops to nothing: a rail 20 cm wide is
+    # not a car at any distance (found live at 37.8 m).
+    if length is not None and width is not None:
+        near = cluster.get("distance", 0.0) <= WIDTH_TEST_WITHIN_M
+        floor = min_width if near else VEHICLE_MIN_WIDTH_FAR_M
+        if width < floor:
+            return False
+        if near and length < VEHICLE_MIN_LENGTH_M:
+            return False
     if (length is not None and width is not None
             and length >= WIDTH_TEST_FROM_M and width < min_width):
         return False                    # long and thin: a kerb, a fence, a hedge row
