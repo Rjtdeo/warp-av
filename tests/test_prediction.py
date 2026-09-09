@@ -10,12 +10,30 @@ def wps():
     return [Waypoint(x=i * 2.0, y=0.0) for i in range(40)]
 
 
-def obj(x, y, vx=0.0, vy=0.0, kind=ObjectType.VEHICLE):
+def obj(x, y, vx=0.0, vy=0.0, kind=ObjectType.VEHICLE, stationary=None):
     import math
+    speed = math.hypot(vx, vy)
+    if stationary is None:
+        stationary = speed == 0.0        # `stationary` defaults to True on DetectedObject
     return DetectedObject(object_type=kind, x=x, y=y,
                           distance=math.hypot(x, y),
-                          speed=math.hypot(vx, vy),
-                          vx_world=vx, vy_world=vy)
+                          speed=speed,
+                          vx_world=vx, vy_world=vy,
+                          stationary=stationary)
+
+
+def test_a_parked_thing_is_never_predicted_to_cross():
+    """The live fault: on an empty street, 5 of 9 predictions were on objects the van
+    itself called parked with speed 0.0, and each one cost it several m/s."""
+    wobbling = obj(15.0, 8.0, vy=-4.0, stationary=True)
+    wobbling.speed = 0.0                 # what perception reports for anything parked
+    assert predict_route_conflict([wobbling], wps(), 0, 0, 0.0, 5.0) is None
+
+
+def test_but_a_flag_alone_cannot_hide_a_real_crosser():
+    """`stationary` defaults to True, so it must never be the only thing consulted."""
+    mislabelled = obj(15.0, 8.0, vy=-4.0, stationary=True)   # speed left at 4.0
+    assert predict_route_conflict([mislabelled], wps(), 0, 0, 0.0, 5.0) is not None
 
 
 def test_side_crosser_is_predicted():

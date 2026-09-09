@@ -746,3 +746,19 @@ class ObjectTracker:
             return 0.0
         s = tr.speed
         return 0.0 if s < self.SPEED_DEADBAND else s
+
+    def reported_velocity(self, tr: Track):
+        """The velocity that AGREES with reported_speed.
+
+        These two had drifted apart. Speed was zeroed for anything the van had decided was
+        parked -- the day-6 decision, which weighs how far the thing has actually travelled
+        and how straight it went, not just one speed reading. The velocity was not: it stayed
+        the raw filter estimate, wobble and all. So the same object on the same sheet said
+        "parked, 0.0 m/s" in one field and 1.2 m/s in another, and the crossing-prediction
+        reads the second. Measured live on an EMPTY street, 2026-09-09: prediction fired 9
+        times and 5 of them were on objects the van itself called parked. Each one cost the
+        van several metres per second of speed for something that never moved.
+        """
+        if self.reported_speed(tr) == 0.0:
+            return 0.0, 0.0
+        return tr.vx, tr.vy

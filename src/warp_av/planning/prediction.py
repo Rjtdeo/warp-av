@@ -60,6 +60,17 @@ def predict_route_conflict(objects, route_wps, ego_x, ego_y, ego_yaw, ego_speed)
 
     best = None
     for obj in objects:
+        # Anything perception has decided is parked is not going to cross our path. Its
+        # velocity is now zeroed at source too, so this is belt and braces -- but this is
+        # the rule that makes the van brake, and it should not lean on another module
+        # remembering to zero a field.
+        #
+        # BOTH conditions, and deliberately so. `stationary` DEFAULTS TO TRUE on a
+        # DetectedObject, so testing it alone would silently drop any object built without
+        # setting it -- which is exactly what happened to a test the moment this went in.
+        # Something carrying a real speed is considered whatever its flag says.
+        if getattr(obj, "stationary", False) and abs(getattr(obj, "speed", 0.0)) < 1e-6:
+            continue
         vx = getattr(obj, "vx_world", 0.0)
         vy = getattr(obj, "vy_world", 0.0)
         if math.hypot(vx, vy) < MIN_SPEED:

@@ -1044,10 +1044,11 @@ class CameraLidarPerception:
                          else ObjectType.CYCLIST if kind == "cyclist"
                          else ObjectType.VEHICLE if kind == "vehicle"
                          else ObjectType.OBSTACLE)
+                vx_w, vy_w = self.tracker.reported_velocity(tr)
                 objects.append(DetectedObject(
                     object_type=otype, x=ex, y=ey, distance=dist,
                     speed=self.tracker.reported_speed(tr),
-                    vx_world=tr.vx, vy_world=tr.vy,
+                    vx_world=vx_w, vy_world=vy_w,
                     # a track built only from 2-point far sightings is reported, but with low confidence
                     confidence=(tr.confidence if tr.cls else 0.65) if not getattr(tr, "weak_only", False) else 0.35,
                     length_m=getattr(tr, "length_m", 0.0), width_m=getattr(tr, "width_m", 0.0),
