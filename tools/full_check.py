@@ -376,6 +376,7 @@ def main():
                 print(f"  (no such group: {name})")
                 continue
             print(f"-- {name}")
+            scene.chase_camera()        # keep the simulator's window on the van
             try:
                 fn(scene, report)
             except Exception as e:
