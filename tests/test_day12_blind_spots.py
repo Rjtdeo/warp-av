@@ -21,7 +21,18 @@ def all_seen():
     return g
 
 
-def unseen_at(g, x, y):
+def unseen_at(g, x, y, side_m=1.0):
+    """A patch of unseen space big enough to hide someone, centred on (x, y)."""
+    n = max(1, int(round(side_m / g.cell_m)))
+    for i in range(n):
+        for j in range(n):
+            r, c = g.to_cell(np.array([float(x) + i * g.cell_m]),
+                             np.array([float(y) + j * g.cell_m]))
+            g.cells[int(r[0]), int(c[0])] = UNKNOWN
+    return g
+
+
+def one_square_unseen_at(g, x, y):
     r, c = g.to_cell(np.array([float(x)]), np.array([float(y)]))
     g.cells[int(r[0]), int(c[0])] = UNKNOWN
     return g
@@ -62,6 +73,24 @@ def test_it_does_not_look_under_the_van():
     """The van's own returns are thrown away, so the squares beneath it are always unseen.
     Asking about them would make every answer the same tiny number."""
     g = unseen_at(all_seen(), EGO_NOSE_M - 1.0, 0.0)
+    assert g.blind_spot_ahead() is None
+
+
+def test_one_stray_square_is_not_a_hiding_place():
+    """The laser's rings leave gaps, and while driving they are everywhere. The first
+    version of this rule counted them and fired on 25 readings out of 28 on a clear road."""
+    g = one_square_unseen_at(all_seen(), 6.0, 2.0)
+    assert g.blind_spot_ahead() is None
+    for x in (5.5, 8.0, 10.0):
+        one_square_unseen_at(g, x, 1.0)
+    assert g.blind_spot_ahead() is None, "scattered single squares are still not a pocket"
+
+
+def test_a_pocket_must_be_deep_as_well_as_wide():
+    """A thin line of unseen squares across the lane is a ring gap, not a doorway."""
+    g = all_seen()
+    for j in range(8):
+        one_square_unseen_at(g, 7.0, 0.5 + j * g.cell_m)
     assert g.blind_spot_ahead() is None
 
 

@@ -58,6 +58,21 @@ DEFAULT_LANE_HALF_M = 1.75        # the van's own corridor, as the planner draws
 DEFAULT_BLIND_REACH_M = 1.5       # unseen space this close to the lane edge is a pocket that
                                   # matters: whatever steps out of it is beside us at once
 DEFAULT_BLIND_LOOK_M = 15.0       # further ahead than this and there is time to see it first
+POCKET_SIDE_M = 0.75              # a pocket has to be big enough for a person to be standing in.
+                                  # One stray unseen square is not a hiding place, it is a gap
+                                  # between two laser rings -- and driving, those are everywhere:
+                                  # on a CLEAR road the first version of this rule fired in 25
+                                  # readings out of 28 (measured live in Town10HD, 2026-09-09),
+                                  # which would have slowed the van permanently for nothing.
+
+
+def _longest_run(flags) -> int:
+    """The longest unbroken stretch of True in a 1-D boolean array."""
+    best = run = 0
+    for f in flags:
+        run = run + 1 if f else 0
+        best = max(best, run)
+    return best
 
 DEFAULT_SPREAD_SLICES = 4         # how far an object's shadow reaches sideways, in slices.
                                   # Measured on the recordings: it takes the share of real
@@ -276,13 +291,24 @@ class OccupancyGrid:
         """
         limit = lane_half_m + reach_m
         ys = np.arange(-limit, limit + 1e-9, self.cell_m, dtype=np.float32)
-        d = max(self.cell_m * 0.5, float(start_m))
+        need = max(1, int(round(POCKET_SIDE_M / self.cell_m)))
         max_m = min(max_m, self.range_m)
-        while d <= max_m:
-            r, c = self.to_cell(np.full(ys.shape, d, dtype=np.float32), ys)
-            ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
-            if ok.any() and np.any(self.cells[r[ok], c[ok]] == UNKNOWN):
-                return float(d)
+        d = max(self.cell_m * 0.5, float(start_m))
+        while d + POCKET_SIDE_M <= max_m:
+            depths = [d + k * self.cell_m for k in range(need)]
+            rows = []
+            for dd in depths:
+                r, c = self.to_cell(np.full(ys.shape, dd, dtype=np.float32), ys)
+                ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
+                if not ok.any():
+                    rows = []
+                    break
+                rows.append(self.cells[r[ok], c[ok]] == UNKNOWN)
+            if rows and len(rows) == need:
+                # unseen at every depth of the patch, and wide enough at all of them
+                block = np.logical_and.reduce(rows)
+                if _longest_run(block) >= need:
+                    return float(d)
             d += self.cell_m
         return None
 
