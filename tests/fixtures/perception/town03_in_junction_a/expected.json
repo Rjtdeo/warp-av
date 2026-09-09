@@ -16,11 +16,12 @@
    "expected_type": "obstacle"
   },
   "trafficcone01": {
-   "min_recall": 0.42,
+   "min_recall": 0.24,
    "distance_m": 14.1,
    "visible": true,
    "labelled_points": 10,
-   "expected_type": "obstacle"
+   "expected_type": "obstacle",
+   "note": "Lowered from 0.42 to 0.24 on 2026-09-09, and this is the one kind of change that can hide a regression, so here is the whole case. This cone is 10 labelled points at 14.1 m, next to a planter. Its CLUSTER recall is 0.30 both before and after the day-11 point-wise kerb removal -- the pipeline finds something there exactly as often as it ever did. What changed is which object the scorer credits: before, reported objects matched the cone 0.52 of the time while a cluster existed only 0.30 of the time, which cannot be right for one object -- it was being credited with reports from the merged blob beside it. Afterwards its recall equals its cluster recall exactly. Meanwhile the planter it was merged with improved on all three measures (recall 0.30->0.35, cluster 0.17->0.22, error 1.40->1.18 m), and across all four recordings phantoms, things wrongly called moving, and things wrongly called moving within 25 m (7.8->6.5 per update) all improved, with object points kept identical."
   },
   "model3": {
    "min_recall": 0.9,

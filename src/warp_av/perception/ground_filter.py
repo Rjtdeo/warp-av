@@ -40,6 +40,8 @@ import warnings
 from dataclasses import dataclass
 from typing import Optional
 
+import math
+
 import numpy as np
 
 DEFAULT_LIDAR_HEIGHT_M = 2.5
@@ -329,14 +331,48 @@ def is_road_edge(cluster: dict, max_height_m: float = ROAD_EDGE_MAX_HEIGHT_M,
             and abs(float(cluster.get("y", 0.0))) > min_lateral_m and along_road)
 
 
-def remove_road_edge_points(sel: np.ndarray, heights: np.ndarray, cluster_fn=None):
-    """Pass 1 of the clustering (fix 2): cluster the LOW points on their own;
-    a long, low blob clear of the lane is a kerb / road edge and its POINTS
-    (those clear of the lane) are removed before the main clustering, so a
-    kerb strip can never glue itself to a lamp post, a bin or a pedestrian
-    on the pavement and drag their centroid. Returns
-    (sel, heights, road_edges_dropped) where the count is of blobs that
-    actually lost points."""
+KERB_LINE_TOLERANCE_M = 0.40   # how close to the fitted kerb line a low point must be to count as
+                               # ON it. The kerb ribbon measured 0.55 m thick on Town10HD, so this
+                               # takes the ribbon without reaching a hand's width further into the road.
+
+
+def _kerb_line_at(edge, xs: np.ndarray) -> np.ndarray:
+    """Where the fitted kerb sits, sideways, at each of these distances ahead."""
+    return edge.offset_m + math.tan(math.radians(edge.heading_deg)) * xs
+
+
+def remove_road_edge_points(sel: np.ndarray, heights: np.ndarray, cluster_fn=None, edges=None):
+    """Pass 1 of the clustering: take the kerb's POINTS out before anything is grouped, so a
+    kerb strip can never glue itself to a lamp post, a bin or a pedestrian on the pavement
+    and drag their centroid.
+
+    There are two ways to decide which points are kerb, and which one runs depends on
+    whether the van has actually FOUND the kerb.
+
+    * **By the fitted line** (day 11 follow-up), wherever a confident kerb line exists on
+      that side. A low point is kerb if it sits on that line or BEYOND it -- beyond the kerb
+      is the pavement, which is not somewhere the van drives and not a list of objects. A low
+      point INSIDE the kerb, in the road, is kept whatever its shape.
+
+      This is the whole point of doing it point by point. The rule used to work on blobs: a
+      blob that looked like a kerb lost all its points at once. A flat planter parked beside
+      the kerb joins the kerb's blob -- measured on Town10HD, one 18 m blob of 239 points
+      where the bare kerb was 20 m of 165 -- and went with it. Deleting by distance from the
+      line instead leaves the planter's points behind, because they are not on the line, and
+      they then form their own blob and become an object.
+
+      Three earlier attempts tried to keep the blob rule and spare whole blobs that looked
+      wrong. Every one of them cost a traffic cone five metres off the road a third of its
+      recall on town03_in_junction_a: sparing a strip lets the flood fill bridge to things
+      metres away. Deleting more precisely does not have that failure, because nothing that
+      was being deleted stops being deleted.
+
+    * **By shape**, exactly as before, for any side where no confident line was fitted -- a
+      junction, where the kerbs curve and a straight fit will not take. No better information
+      means no change in behaviour.
+
+    Returns (sel, heights, road_edges_dropped).
+    """
     if cluster_fn is None:
         from .tracking import cluster_points as cluster_fn      # local import: tracking imports nothing from here
     sel = np.asarray(sel)
@@ -347,16 +383,43 @@ def remove_road_edge_points(sel: np.ndarray, heights: np.ndarray, cluster_fn=Non
     if not low.any():
         return sel, heights, 0
     low_idx = np.flatnonzero(low)
-    low_clusters = cluster_fn(sel[low_idx, :2].tolist(), heights=heights[low_idx].tolist(), return_members=True)
-    edges = [c for c in low_clusters if is_road_edge(c)]
-    if not edges:
+    xs, ys = sel[low_idx, 0], sel[low_idx, 1]
+    beside_the_lane = np.abs(ys) > ROAD_EDGE_MIN_LATERAL_M
+
+    drop_low = np.zeros(low_idx.shape[0], dtype=bool)   # low points to delete
+    by_line = np.zeros(low_idx.shape[0], dtype=bool)    # ... which a fitted line already ruled on
+    dropped = 0
+    for name in ("right", "left"):
+        edge = getattr(edges, name, None) if edges is not None else None
+        if edge is None or not getattr(edge, "confident", False):
+            continue
+        this_side = ys > 0 if name == "right" else ys < 0
+        if not this_side.any():
+            continue
+        line = _kerb_line_at(edge, xs)
+        # on the line, or past it: kerb and the pavement behind it
+        at_or_beyond = np.abs(ys) >= np.abs(line) - KERB_LINE_TOLERANCE_M
+        hit = this_side & at_or_beyond & beside_the_lane
+        drop_low |= hit
+        by_line |= this_side
+        if hit.any():
+            dropped += 1
+
+    # Anywhere no line spoke for, the old shape rule still decides.
+    if not by_line.all():
+        low_clusters = cluster_fn(sel[low_idx, :2].tolist(), heights=heights[low_idx].tolist(),
+                                  return_members=True)
+        for c in low_clusters:
+            if not is_road_edge(c):
+                continue
+            members = np.asarray(c["members"], dtype=np.int64)
+            clear = beside_the_lane[members] & ~by_line[members]
+            if clear.any():
+                drop_low[members[clear]] = True
+                dropped += 1
+
+    if not drop_low.any():
         return sel, heights, 0
     keep_pt = np.ones(sel.shape[0], dtype=bool)
-    dropped_blobs = 0
-    for c in edges:
-        members = np.asarray(c["members"], dtype=np.int64)
-        clear = np.abs(sel[low_idx[members], 1]) > ROAD_EDGE_MIN_LATERAL_M    # only the part beside the lane
-        if clear.any():
-            keep_pt[low_idx[members[clear]]] = False
-            dropped_blobs += 1
-    return sel[keep_pt], heights[keep_pt], dropped_blobs
+    keep_pt[low_idx[drop_low]] = False
+    return sel[keep_pt], heights[keep_pt], dropped

@@ -169,3 +169,75 @@ def test_the_side_matters():
     """A right-hand kerb line says nothing about something on the left."""
     p = FakePerception(kerb_line())
     assert p._sits_on_the_kerb(crumb(y=-4.4)) is False
+
+
+# ---------------------------------------------------------------- kerb points, not kerb blobs
+
+import numpy as np
+from warp_av.perception.ground_filter import (remove_road_edge_points, KERB_LINE_TOLERANCE_M,
+                                              ROAD_EDGE_MIN_LATERAL_M)
+
+
+def kerb_and_planter(planter_y):
+    """A 20 m kerb ribbon at 4.45 m, and a 5 m flat planter parked `planter_y` from the van."""
+    kerb = [(x, y) for x in np.arange(2.0, 22.0, 0.4) for y in (4.35, 4.45, 4.55)]
+    planter = [(x, planter_y + dy) for x in np.arange(10.0, 15.0, 0.4)
+               for dy in (-0.3, 0.0, 0.3)]
+    pts = np.array(kerb + planter, dtype=np.float32)
+    h = np.array([0.15] * len(kerb) + [0.17] * len(planter), dtype=np.float32)
+    return pts, h, len(kerb), len(planter)
+
+
+def test_the_kerb_goes_and_the_planter_beside_it_stays():
+    """The whole point: deleting by distance from the line, not by blob.
+
+    Under the old blob rule the planter joined the kerb's blob and went with it. Here every
+    one of its points survives while the kerb's are taken.
+    """
+    pts, h, n_kerb, n_planter = kerb_and_planter(planter_y=3.3)
+    kept, kept_h, dropped = remove_road_edge_points(pts, h, edges=kerb_line())
+    assert dropped >= 1
+    planter_kept = int((np.abs(kept[:, 1] - 3.3) <= 0.31).sum())
+    assert planter_kept == n_planter                      # all of the planter
+    assert kept.shape[0] - planter_kept <= 0.05 * n_kerb  # and almost none of the kerb
+
+
+def test_a_planter_sitting_on_the_line_mostly_goes_with_it():
+    """Stated plainly rather than hidden: parked ON the kerb, it is largely the kerb.
+
+    Only its inner edge, the part far enough inside the line, survives -- and live in
+    Town10HD that remnant was not enough to be reported. This is the limit of deciding by
+    position alone: something at the kerb's own position cannot be told from the kerb.
+    """
+    pts, h, _, n_planter = kerb_and_planter(planter_y=4.45)
+    kept, _, _ = remove_road_edge_points(pts, h, edges=kerb_line())
+    assert 0 < kept.shape[0] < n_planter / 2
+
+
+def test_the_pavement_behind_the_kerb_goes_too():
+    """Beyond the kerb is not somewhere the van drives, and not a list of objects."""
+    pav = [(x, y) for x in np.arange(3.0, 18.0, 0.5) for y in (5.4, 6.0, 6.6)]
+    pts = np.array(pav, dtype=np.float32)
+    h = np.full(len(pav), 0.16, dtype=np.float32)
+    kept, _, _ = remove_road_edge_points(pts, h, edges=kerb_line())
+    assert kept.shape[0] == 0
+
+
+def test_the_corridor_is_never_touched():
+    """However confident the line, nothing the van could hit is deleted."""
+    lane = [(x, y) for x in np.arange(8.0, 13.0, 0.4) for y in (0.0, 0.6, 1.1)]
+    pts = np.array(lane, dtype=np.float32)
+    h = np.full(len(lane), 0.16, dtype=np.float32)
+    kept, _, dropped = remove_road_edge_points(pts, h, edges=kerb_line(offset=1.2))
+    assert kept.shape[0] == len(lane) and dropped == 0
+
+
+def test_with_no_line_the_old_shape_rule_still_runs():
+    """A junction: kerbs curve, no straight fit takes, behaviour must not change."""
+    pts, h, n_kerb, n_planter = kerb_and_planter(planter_y=3.3)
+    with_line, _, _ = remove_road_edge_points(pts, h, edges=kerb_line())
+    no_line, _, dropped = remove_road_edge_points(pts, h, edges=None)
+    shaky, _, _ = remove_road_edge_points(pts, h, edges=kerb_line(points=3, length=1.0, share=0.1))
+    assert dropped >= 1
+    assert no_line.shape[0] == shaky.shape[0]          # an unconfident line is no line
+    assert no_line.shape[0] != with_line.shape[0]      # ... and the shape rule takes the planter too

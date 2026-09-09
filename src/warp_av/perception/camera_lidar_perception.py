@@ -862,7 +862,16 @@ class CameraLidarPerception:
             # its POINTS are removed now, before the main clustering, so a
             # kerb strip can never glue itself to a lamp post, a bin or a
             # pedestrian standing on the pavement and drag their centroid.
-            sel, heights, edges_dropped = remove_road_edge_points(sel, heights, cluster_points)
+            # Fit the kerb lines FIRST: the rule below deletes kerb POINTS by their distance
+            # from the line, so it needs the line before it runs (day 11 follow-up). The fit
+            # reads the full sweep and the same road decision, so moving it earlier changes
+            # nothing about the lines themselves.
+            try:
+                self.road_edges = find_road_edges(pts[:, :2], ground.above)
+            except Exception as edge_error:
+                self.last_grid_error = repr(edge_error)
+            sel, heights, edges_dropped = remove_road_edge_points(sel, heights, cluster_points,
+                                                                  edges=self.road_edges)
             # Pass 2: everything that is left
             xy = sel[:, :2]
             clusters = cluster_points(xy.tolist(), heights=heights.tolist(), cell=self.cluster_cell_m,
@@ -883,8 +892,7 @@ class CameraLidarPerception:
             try:
                 t_grid = time.perf_counter()
                 self.grid.update(pts[:, :2], mask)
-                # where the road stops, when a kerb is there to be seen (day 10)
-                self.road_edges = find_road_edges(pts[:, :2], ground.above)
+                # (the kerb lines were fitted above, before the rule that reads them)
                 self.last_grid_ms = (time.perf_counter() - t_grid) * 1000.0
             except Exception as grid_error:
                 self.last_grid_ms = 0.0

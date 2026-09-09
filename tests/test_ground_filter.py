@@ -345,7 +345,10 @@ def test_mode_from_env_and_perception_wiring():
     assert "cluster_points(xy.tolist(), heights=heights.tolist()," in src
     assert "min_points_far=MIN_POINTS_FAR, far_range_m=self.far_range_m)" in src
     assert "cell=self.cluster_cell_m" in src
-    assert "remove_road_edge_points(sel, heights, cluster_points)" in src
+    assert "remove_road_edge_points(sel, heights, cluster_points," in src
+    assert "edges=self.road_edges)" in src          # day 11: kerb points go by the fitted line
+    # and the line must be fitted BEFORE the rule that reads it
+    assert src.index("self.road_edges = find_road_edges(") < src.index("remove_road_edge_points(sel")
     # fix 3: every point is kept unless WARP_LIDAR_THIN says otherwise
     assert "sel = pts[mask][::step]" in src and "self.thin_step = lidar_thin_step_from_env()" in src
     # the old numbers are still the flat fallback, unchanged
