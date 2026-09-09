@@ -396,6 +396,7 @@ class ReplayResult:
     phantoms_in_lane: int = 0           # ... of which inside the lane corridor ahead, within 20 m
     phantoms_near: int = 0              # ... of which within 20 m anywhere
     merged: int = 0                     # clusters that cover two placed objects at once
+    split: int = 0                      # placed objects covered by two clusters or more
     # Everything in these recordings is parked, so any report called moving is wrong,
     # wherever it is in the scene. The far background (walls, hedges) is the hard part:
     # a big surface is cut differently on every turn and its middle wanders metres.
@@ -670,6 +671,13 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
             if t.box_distance(clusters[k]["x"], clusters[k]["y"]) <= MATCH_SLACK_M:
                 owners[k] = owners.get(k, 0) + 1
         result.merged += sum(1 for v in owners.values() if v >= 2)
+        # and the other way round: one thing broken into several blobs
+        for t in targets:
+            if not t.visible:
+                continue
+            covering = sum(1 for c in clusters if t.box_distance(c["x"], c["y"]) <= MATCH_SLACK_M)
+            if covering >= 2:
+                result.split += 1
         for i, tgt in enumerate(targets):
             tgt.updates += 1
             if i in by_report:
@@ -772,7 +780,7 @@ def format_report(results: List[ReplayResult]) -> str:
                      f"{r.reports_total / scored:.1f} reports = placed objects + {r.solid_reports / scored:.1f} solid things "
                      f"+ {r.kerb_reports / scored:.1f} kerb + {r.phantoms / scored:.1f} phantoms "
                      f"({r.phantoms_near / scored:.1f} within 20 m, {r.phantoms_in_lane / scored:.1f} in lane); "
-                     f"merged blobs {r.merged / scored:.1f}; "
+                     f"merged blobs {r.merged / scored:.1f}; split things {r.split / scored:.1f}; "
                      f"wrongly moving {r.moving_reports / scored:.1f} per update "
                      f"({r.moving_reports_near / scored:.1f} of them within 25 m, fastest {r.fastest_false_mps:.1f} m/s); "
                      f"road deleted {100 * g.get('road_deleted', 0):.1f} %, object points kept {100 * g.get('object_kept', 0):.1f} %"

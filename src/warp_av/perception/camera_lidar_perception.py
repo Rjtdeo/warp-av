@@ -44,8 +44,8 @@ from .camera_model import (CameraModel, box_contains, box_edges, box_foot, box_o
 from .occupancy import OccupancyGrid
 from .road_edges import RoadEdges, find_road_edges
 from .detection_worker import DetectionWorker, yolox_inline_from_env
-from .tracking import (cluster_points, clearance_radius_m, ObjectTracker, MIN_POINTS_FAR,
-                       FAR_RANGE_M, vehicle_shaped)
+from .tracking import (cluster_points, clearance_radius_m, merge_split_clusters,
+                       ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped)
 from .ground_filter import (GroundFilter, flat_cut, ground_filter_mode_from_env,
                             lidar_thin_step_from_env, remove_road_edge_points, DEFAULT_LIDAR_HEIGHT_M)
 
@@ -694,6 +694,8 @@ class CameraLidarPerception:
         # the free-space map (day 9), rebuilt from every sweep
         self.grid = OccupancyGrid()
         self.road_edges = RoadEdges()      # the kerb lines, when the laser can see them (day 10)
+        self.merge_split_blobs = True      # put a thing seen as two blobs back together
+        self.last_blobs_merged = 0
         self.last_grid_ms = 0.0
         self.last_grid_error = None
         self._last_tracked_sim_time = None
@@ -841,6 +843,11 @@ class CameraLidarPerception:
             clusters = cluster_points(xy.tolist(), heights=heights.tolist(), cell=self.cluster_cell_m,
                                       min_points_far=MIN_POINTS_FAR, far_range_m=self.far_range_m)
             self.last_clusters_before_cap = _tracking.LAST_CLUSTER_TOTAL
+            # one thing seen as two: put it back together (day 10 follow-up)
+            if self.merge_split_blobs:
+                before = len(clusters)
+                clusters = merge_split_clusters(clusters)
+                self.last_blobs_merged = before - len(clusters)
             # a 2-point blob that is low and beside the lane is a kerb crumb, not an object
             clusters = [c for c in clusters
                         if not (c.get("weak") and (c.get("height") is not None and c["height"] < 0.30)

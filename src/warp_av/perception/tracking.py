@@ -92,6 +92,77 @@ def vehicle_shaped(cluster, min_points=None, min_extent=None, min_height=None,
     return True
 
 
+# ---- putting one thing back together ------------------------------------------------
+# The grid that groups points is a fixed size, and the laser's points are not: they spread
+# apart with distance. So a car close to the van can come back as two blobs, its back and
+# its side, with a gap between them wider than the grid. Seen live: a car 11 m ahead was
+# reported twice.
+#
+# Two blobs are put back together when the space between them is small for their range,
+# they stand at the same height, and what they make together is still a plausible size.
+# Those guards matter: the whole of day 4 was about stopping a barrel merging with the
+# planter beside it, and that pair differs by 0.6 m in height.
+MERGE_GAP_BASE_M = 0.25
+MERGE_GAP_PER_M = 0.02        # ... plus this much per metre of range
+MERGE_HEIGHT_TOLERANCE_M = 0.25
+MERGE_MAX_LENGTH_M = 5.5      # a car or a van; wider than this and it is two things.
+                              # Measured: looser guards than these let a barrel join
+                              # something beside it and be called a vehicle.
+
+
+def merge_split_clusters(clusters, gap_base=None, gap_per_m=None,
+                         height_tol=None, max_length=None):
+    """Join blobs that are plainly two views of one thing. Returns a new list."""
+    # read at call time, not bound when this file loads, so the settings can be measured
+    gap_base = MERGE_GAP_BASE_M if gap_base is None else gap_base
+    gap_per_m = MERGE_GAP_PER_M if gap_per_m is None else gap_per_m
+    height_tol = MERGE_HEIGHT_TOLERANCE_M if height_tol is None else height_tol
+    max_length = MERGE_MAX_LENGTH_M if max_length is None else max_length
+    out = [dict(c) for c in clusters]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(out)):
+            for j in range(i + 1, len(out)):
+                a, b = out[i], out[j]
+                hi, hj = a.get("height"), b.get("height")
+                if hi is not None and hj is not None and abs(hi - hj) > height_tol:
+                    continue
+                centre = math.hypot(a["x"] - b["x"], a["y"] - b["y"])
+                gap = centre - a.get("extent", 0.0) - b.get("extent", 0.0)
+                allowed = gap_base + gap_per_m * min(a["distance"], b["distance"])
+                if gap > allowed:
+                    continue
+                span = centre + a.get("extent", 0.0) + b.get("extent", 0.0)
+                if span > max_length:
+                    continue                       # together they would be too big to be one thing
+                n = a["n"] + b["n"]
+                merged = {
+                    "x": (a["x"] * a["n"] + b["x"] * b["n"]) / n,
+                    "y": (a["y"] * a["n"] + b["y"] * b["n"]) / n,
+                    "n": n,
+                    "extent": span / 2.0,
+                    "height": max(h for h in (hi, hj) if h is not None) if (hi is not None or hj is not None) else None,
+                    "length": span,
+                    "length_m": max(a.get("length_m", 0.0), b.get("length_m", 0.0), span * 0.9),
+                    "width_m": max(a.get("width_m", 0.0), b.get("width_m", 0.0)),
+                    "yaw_deg": a.get("yaw_deg", 0.0) if a["n"] >= b["n"] else b.get("yaw_deg", 0.0),
+                    "axis_deg": a.get("axis_deg", 0.0) if a["n"] >= b["n"] else b.get("axis_deg", 0.0),
+                    "weak": bool(a.get("weak") and b.get("weak")),
+                }
+                merged["distance"] = math.hypot(merged["x"], merged["y"])
+                if "members" in a and "members" in b:
+                    merged["members"] = list(a["members"]) + list(b["members"])
+                out[i] = merged
+                out.pop(j)
+                changed = True
+                break
+            if changed:
+                break
+    out.sort(key=lambda c: c["distance"])
+    return out
+
+
 def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
                    ego_half_len=3.2, ego_half_wid=1.3, max_clusters=DEFAULT_MAX_CLUSTERS, heights=None,
                    return_members=False, min_points_far=None, far_range_m=FAR_RANGE_M):
