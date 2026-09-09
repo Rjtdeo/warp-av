@@ -43,6 +43,7 @@ from .camera_model import (CameraModel, box_contains, box_edges, box_foot, box_o
                            cluster_point, ground_point)
 from .occupancy import OccupancyGrid
 from .road_edges import RoadEdges, find_road_edges
+from .ground_filter import ROAD_EDGE_MIN_CENTRE_LATERAL_M
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import (cluster_points, clearance_radius_m, merge_split_clusters,
                        ObjectTracker, MIN_POINTS_FAR, FAR_RANGE_M, vehicle_shaped)
@@ -115,6 +116,10 @@ CYCLIST_TRAVEL_M = 3.0      # ... and they must have actually got somewhere, so 
 # How close two points must be to belong to the same object. At 1.0 m a barrel and the
 # planter beside it became one 4.4 m blob; 0.8 m separates them and cuts the measured-size
 # error nearly in half, at about 1 ms per update (Perception V2 day 4).
+# A chip of kerb is no taller than a kerb and sits on the kerb line the van already fitted.
+KERB_CRUMB_MAX_HEIGHT_M = 0.30    # the same ceiling the ground filter's kerb rule uses
+KERB_CRUMB_TOLERANCE_M = 0.50     # how close to the fitted line it must sit, at its own distance
+
 DEFAULT_CLUSTER_CELL_M = 0.8
 # How high above the road a point must be to count as an object. The old 12 cm threw away
 # most of a 12.5 cm planter; 8 cm keeps 90 % of object points instead of 85 %, and adds no
@@ -752,6 +757,7 @@ class CameraLidarPerception:
         self.last_ground_tiles = 0
         self.last_borrowed_tiles = 0
         self.last_road_edges_dropped = 0
+        self.last_kerb_crumbs_dropped = 0
         self.last_points_kept = 0
         self.last_clusters_before_cap = 0
 
@@ -883,6 +889,19 @@ class CameraLidarPerception:
             except Exception as grid_error:
                 self.last_grid_ms = 0.0
                 self.last_grid_error = repr(grid_error)
+            # ---- a crumb of the kerb is kerb, however short (Perception V2 day 11) ----
+            # The kerb rule in the ground filter only recognises a piece longer than 3 m,
+            # so that a short low thing IN the road -- a slab, a plank, a pallet -- is never
+            # written off. That leaves the chips: seen live in Town10HD on 2026-09-09, a
+            # 0.38 x 0.00 x 0.14 m sliver reported as an obstacle 12 m ahead, sitting at
+            # 4.4 m to the right, while the van had ALREADY fitted a confident kerb line at
+            # 4.46 m through 189 points over 27.7 m. It knew where the kerb was and did not
+            # use it. Now it does: a low blob sitting on a confident kerb line, and safely
+            # outside the corridor the van drives down, is that kerb.
+            before_kerb = len(clusters)
+            clusters = [c for c in clusters if not self._sits_on_the_kerb(c)]
+            self.last_kerb_crumbs_dropped = before_kerb - len(clusters)
+
             self.last_clusters = clusters     # sensor frame (x fwd, y right): the learned parker's feelers read these
 
             # ---- classify clusters by projecting them into the image ----
@@ -1286,6 +1305,31 @@ class CameraLidarPerception:
         w, h = self.camera_model.width, self.camera_model.height
         return CameraFrame(image=_np.zeros((h, w, 4), dtype=_np.uint8), width=w, height=h,
                            fov=self.camera_model.fov_deg, timestamp=time.time())
+
+    def _sits_on_the_kerb(self, cluster) -> bool:
+        """Is this low blob just a chip of the kerb the van has already found?
+
+        Three things must all hold, and each one is there to stop this rule eating a real
+        obstacle:
+          * it is no taller than a kerb, so nothing that stands up is ever touched;
+          * it is outside the corridor the van drives down, so nothing it could hit is
+            touched however low (the same boundary the ground filter uses);
+          * it lies on a CONFIDENT kerb line, at that blob's own distance ahead -- not
+            merely somewhere off to the side.
+        """
+        height = cluster.get("height")
+        if height is None or height >= KERB_CRUMB_MAX_HEIGHT_M:
+            return False
+        y = float(cluster.get("y", 0.0))
+        if abs(y) < ROAD_EDGE_MIN_CENTRE_LATERAL_M:
+            return False
+        edges = getattr(self, "road_edges", None)
+        if edges is None:
+            return False
+        edge = edges.right if y > 0 else edges.left
+        if edge is None or not edge.confident:
+            return False
+        return abs(y - edge.lateral_at(float(cluster.get("x", 0.0)))) <= KERB_CRUMB_TOLERANCE_M
 
     def close(self):
         """Stop the detector thread (shutdown)."""

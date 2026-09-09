@@ -24,6 +24,59 @@ from .footprint import VehicleFootprint, sweep_conflict
 DEFAULT_OBSTACLE_RADIUS_M = {"vehicle": 0.9, "pedestrian": 0.4, "obstacle": 0.5, "unknown": 0.5}
 FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary objects this far ahead
 
+VAN_HALF_WIDTH_M = 0.99               # the CARLA Sprinter, measured (planning/footprint_config.py)
+MAX_BLOCK_HALFWIDTH_M = 2.20          # nothing beyond this is looked at at all, so no band may exceed it
+
+
+def obstacle_radius_m(obj) -> float:
+    """How much room to leave around one object.
+
+    Perception measures this per object and puts it on every DetectedObject as
+    `clearance_radius_m` -- its own footprint, but never less than its kind needs. The
+    planner used to look for an attribute called `radius`, which nothing sets, and so
+    always fell back to the table below. That table is also meaner than perception:
+    it allowed a pedestrian 0.4 m where perception asks for 0.6 m.
+    """
+    measured = getattr(obj, "clearance_radius_m", None)
+    if measured is None:
+        measured = getattr(obj, "radius", None)
+    kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+    fallback = DEFAULT_OBSTACLE_RADIUS_M.get(kind, 0.5)
+    try:
+        measured = float(measured)
+    except (TypeError, ValueError):
+        return fallback
+    if measured != measured or measured <= 0.0:      # NaN or nonsense
+        return fallback
+    return max(measured, fallback)
+
+
+#: whose room is allowed to widen the band that stops the van. Only people.
+WIDENS_THE_BAND = ("pedestrian", "cyclist")
+
+
+def block_band_m(obj, floor_m: float) -> float:
+    """How far off the line an object can sit and still stop us.
+
+    For a person or someone on a bicycle: the van's own half-width plus the room
+    perception says they need. That is 1.59 m for a walker and 1.79 m for a rider, against
+    the single 1.40 m everything used to get -- and perception had been asking for 0.6 m
+    and 0.8 m of room all along while the planner allowed 0.4 m.
+
+    For everything else the band is left exactly as it was, on purpose. The 1.40 m figure
+    for vehicles is not an oversight: a car waiting at a cross-street stop line just round
+    the corner sits about 1.6 m off our line, and widening the band freezes the mission
+    every time one does. A stationary vehicle out there is already caught by the wide-body
+    rule below, which is what that rule is for. Tried it the other way first; two tests
+    that exist precisely to catch this said no.
+
+    The band can only ever grow, and never past the range the corridor looks at.
+    """
+    kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+    if kind not in WIDENS_THE_BAND:
+        return floor_m
+    return min(MAX_BLOCK_HALFWIDTH_M, max(floor_m, VAN_HALF_WIDTH_M + obstacle_radius_m(obj)))
+
 
 @dataclass
 class Waypoint:
@@ -651,7 +704,13 @@ class RoutePlanner:
                 # real lead vehicle sits at 0-0.8 m). The 1.4-1.75 m band —
                 # e.g. a car waiting at the cross-street stop line just around
                 # the corner — slows us but must not freeze the mission.
-                if dist < danger_m and lat <= block_halfwidth_m and not sweep_decides:
+                # How wide a band stops us is the object's own, not one figure for
+                # everything (Perception V2 day 11). Perception already measures how much
+                # room each thing needs -- 1.2 m for a car, 0.8 m for a cyclist, 0.6 m for
+                # a person, 0.4 m for a bin -- and until now nothing read it. The band can
+                # only ever GROW: a bin keeps today's 1.40 m, a person gains 0.19 m, and
+                # nothing anywhere gets a narrower band than it had before.
+                if dist < danger_m and lat <= block_band_m(obj, block_halfwidth_m) and not sweep_decides:
                     blocked = True
             # Physical-width conflict: centre-line thresholds ignore that the
             # van (~2.0 m) plus a parked car (~1.8 m) cannot share 2×1.75 m.
@@ -680,10 +739,7 @@ class RoutePlanner:
             # planter at 1.9 m no longer does; a body 2.4 m off the line on the
             # outside of a bend is caught when the corner sweeps over it.
             if sweep_decides and max(0.0, along) < FOOTPRINT_STATIONARY_REACH_M:
-                radius = getattr(obj, "radius", None)
-                if radius is None:
-                    radius = DEFAULT_OBSTACLE_RADIUS_M.get(
-                        getattr(getattr(obj, "object_type", None), "value", "unknown"), 0.5)
+                radius = obstacle_radius_m(obj)
                 hit = sweep_conflict(wps, (ego_x, ego_y), footprint, (wx, wy),
                                      obstacle_radius=radius,
                                      horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length)
