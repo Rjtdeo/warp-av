@@ -132,6 +132,7 @@ class WarpAV:
         self.behavior = BehaviorSystem()
 
         self._health = None               # the day-8 sensor report, rebuilt every tick
+        self._blind_spot_m = None         # the day-12 distance to the nearest unseen pocket
         self.health_monitor = HealthMonitor()
         print("[Init] Starting planner...")
         self.planner = RoutePlanner(self.vehicle_adapter.get_map())
@@ -412,10 +413,16 @@ class WarpAV:
             edges = getattr(self.perception, "road_edges", None)
             if free_space is not None and edges is not None:
                 free_space["kerbs"] = edges.as_dict()
+            # The nearest place beside our lane the van cannot see into (day 12). Perception
+            # only reports the distance; what speed that is worth is the behaviour's call.
+            self._blind_spot_m = grid.blind_spot_ahead() if (grid is not None and grid.updated) else None
+            if free_space is not None:
+                free_space["blind_spot_m"] = self._blind_spot_m
             self._world = build_world_model(perception, pose, source=self.perception_mode,
                                             free_space=free_space)
         except Exception as e:
             self._world = None
+            self._blind_spot_m = None
             self._world_error = repr(e)
         if self.footprint_debug.enabled and self._route:
             # Visualisation only: draws what the swept-path rule sees and what
@@ -560,6 +567,7 @@ class WarpAV:
             perception=perception,
             world=self._world,                 # day 7: the one sheet of what the van knows
             speed_cap_mps=safety_output.speed_cap_mps,   # day 8: slow while a sense is missing
+            blind_spot_m=getattr(self, "_blind_spot_m", None),   # day 12: how near the unseen is
             pose=pose,
             destination_distance=dest_dist,
             safety_ok=safety_output.driving_allowed,

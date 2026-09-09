@@ -54,6 +54,11 @@ DEFAULT_BEARING_STEP_DEG = 0.25   # at 30 m two neighbouring slices are then 13 
                                   # half a square, so the free space between rays joins up
 EGO_NOSE_M = 3.0                  # the grid sits on the LiDAR, at the middle of the van;
                                   # its nose is about three metres ahead of that
+DEFAULT_LANE_HALF_M = 1.75        # the van's own corridor, as the planner draws it
+DEFAULT_BLIND_REACH_M = 1.5       # unseen space this close to the lane edge is a pocket that
+                                  # matters: whatever steps out of it is beside us at once
+DEFAULT_BLIND_LOOK_M = 15.0       # further ahead than this and there is time to see it first
+
 DEFAULT_SPREAD_SLICES = 4         # how far an object's shadow reaches sideways, in slices.
                                   # Measured on the recordings: it takes the share of real
                                   # things wrongly called free from 6.8 % to 2.7 %, and costs
@@ -249,6 +254,37 @@ class OccupancyGrid:
                 return d
             d += self.cell_m
         return max_m
+
+    def blind_spot_ahead(self, lane_half_m: float = DEFAULT_LANE_HALF_M,
+                         reach_m: float = DEFAULT_BLIND_REACH_M,
+                         max_m: float = DEFAULT_BLIND_LOOK_M,
+                         start_m: float = EGO_NOSE_M) -> Optional[float]:
+        """How far ahead is the nearest place beside our lane that the van CANNOT SEE INTO?
+
+        Unknown is kept apart from free for exactly this reason. Behind a parked lorry is
+        not empty; it is a pocket, and a person can walk out of it. This walks up the lane
+        and returns the first distance at which an unseen square sits within `reach_m` of
+        the lane's own edge -- close enough that whatever is hiding there is beside the van
+        before it can be seen. None means nothing unseen that near, all the way out.
+
+        Measured on Town10HD, 2026-09-09, out to 15 m: an ordinary street answers None,
+        because the van can see the road and the kerb and the unseen part starts beyond
+        them. Park a lorry 3.0 m to the right and the answer is 5.5 m -- its shadow reaches
+        1.50 m across, which is inside our own lane. A car at 2.6 m answers 8.0 m. So the
+        question is quiet when there is nothing to worry about, which is what makes it
+        worth asking every tick.
+        """
+        limit = lane_half_m + reach_m
+        ys = np.arange(-limit, limit + 1e-9, self.cell_m, dtype=np.float32)
+        d = max(self.cell_m * 0.5, float(start_m))
+        max_m = min(max_m, self.range_m)
+        while d <= max_m:
+            r, c = self.to_cell(np.full(ys.shape, d, dtype=np.float32), ys)
+            ok = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
+            if ok.any() and np.any(self.cells[r[ok], c[ok]] == UNKNOWN):
+                return float(d)
+            d += self.cell_m
+        return None
 
     def road_edge(self, x_m: float, side: str, max_m: float = 12.0,
                   gap_m: float = 1.5) -> Optional[float]:

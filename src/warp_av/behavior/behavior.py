@@ -14,6 +14,7 @@ THIS VERSION:
     That single feature answers half the observability questions.
 """
 
+import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -42,7 +43,26 @@ class DrivingBehavior(Enum):
     NO_MISSION = "no_mission"
 
 
+BLIND_REACTION_S = 0.4      # noticing, deciding and the brakes taking hold, at ~9 decisions a second
+BLIND_DECEL_MPS2 = 3.0      # comfortable braking for a laden van, not an emergency stop
+
+
+def stopping_speed_for(distance_m: float) -> float:
+    """The fastest the van may go and still stop within `distance_m`.
+
+    Solving distance = v * reaction + v^2 / (2 * decel) for v. This is the whole rule behind
+    slowing for a blind pocket: never travel faster than you could stop in the distance to
+    the nearest place you cannot see into. It needs no threshold and no tuning table -- at
+    5.5 m it gives 4.7 m/s, at 8 m it gives 5.8 m/s, and beyond about 14 m it is above the
+    van's cruising speed and stops mattering by itself.
+    """
+    d = max(0.0, float(distance_m))
+    a, t_r = BLIND_DECEL_MPS2, BLIND_REACTION_S
+    return max(0.0, -a * t_r + math.sqrt((a * t_r) ** 2 + 2.0 * a * d))
+
+
 @dataclass
+
 class BehaviorOutput:
     """What the behavior layer decided to do and WHY."""
     behavior: DrivingBehavior = DrivingBehavior.IDLE
@@ -120,6 +140,7 @@ class BehaviorSystem:
         predicted_conflict: Optional[dict] = None,
         world=None,                      # the day-7 world model, when the caller has one
         speed_cap_mps: Optional[float] = None,   # safety's cap while a sense is missing (day 8)
+        blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
     ) -> BehaviorOutput:
         """
         One decision cycle.
@@ -134,6 +155,7 @@ class BehaviorSystem:
 
         # --- Safety override (highest priority) ---
         self._speed_cap_mps = speed_cap_mps
+        self._blind_spot_m = blind_spot_m
         if not safety_ok:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
@@ -441,14 +463,26 @@ class BehaviorSystem:
             self._block_memory = (time.time(), kind, distance)
 
     def _decide(self, behavior, reason, speed, stop) -> BehaviorOutput:
-        # Safety's cap while a sense is missing: it can only ever slow the van down, never
-        # speed it up, and it cannot turn a stop into driving (Perception V2 day 8).
-        cap = getattr(self, "_speed_cap_mps", None)
-        if cap is not None and speed > cap:
-            speed = max(0.0, cap)
-            reason = f"{reason} (held to {speed:.1f} m/s: a sensor is missing)"
-            if speed == 0.0:
-                stop = True
+        # Every cap can only ever slow the van down, never speed it up, and none of them can
+        # turn a stop into driving. The tightest one wins.
+        caps = []
+        # Safety's cap while a sense is missing (Perception V2 day 8).
+        sensor_cap = getattr(self, "_speed_cap_mps", None)
+        if sensor_cap is not None:
+            caps.append((float(sensor_cap), "a sensor is missing"))
+        # Never go faster than you could stop in the distance to the nearest place you
+        # cannot see into (Perception V2 day 12).
+        blind = getattr(self, "_blind_spot_m", None)
+        if blind is not None:
+            caps.append((stopping_speed_for(float(blind)),
+                         f"cannot see past {float(blind):.1f} m beside the lane"))
+        if caps:
+            cap, why = min(caps, key=lambda cw: cw[0])
+            if speed > cap:
+                speed = max(0.0, cap)
+                reason = f"{reason} (held to {speed:.1f} m/s: {why})"
+                if speed == 0.0:
+                    stop = True
         # Log when behavior CHANGES (important for debugging)
         if behavior != self.current_behavior:
             print(f"[Behavior] {self.current_behavior.value} → {behavior.value}: {reason}")
