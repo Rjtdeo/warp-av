@@ -610,10 +610,22 @@ def _recheck_name(tr: "Track") -> None:
     twelve, which is a better description of the thing. Seen live: something 3.7 m tall and
     something 0 cm wide were both still labelled vehicles, because each had one frame that
     happened to look car-shaped. If what the track has settled on could not be a vehicle,
-    the name goes; a name from the camera is left alone, since the camera saw the thing
-    itself and not just its outline.
+    the name goes.
+
+    A name from the camera used to be left alone, on the grounds that the camera saw the
+    thing itself and not just its outline. That held on Town03's quiet streets. In a dense
+    town it does not: at 34-48 m the camera called poles and signs "vehicle", and one of
+    them measured 3.1 m tall and another 0.6 m long (measured live in Town10HD, 2026-09-09).
+    So a camera name is now checked too, but ONLY against what is flatly impossible: too
+    tall, or too long. A minimum-length test was tried and backed out -- it stripped the
+    name off a real car at 22 m, because a car seen end-on measures under 2 m long. Width
+    is excluded for the same reason: at range it is the least reliable number there is, and
+    the camera really did see something. The thin poles the camera mislabels at 34-48 m
+    therefore still get through; the honest fix for those is trusting the camera less with
+    distance, not a size gate the laser cannot support. A track that loses its name keeps its place, its
+    size and its room to leave; it becomes an obstacle, and the van still stops for it.
     """
-    if tr.cls != "vehicle" or tr.cls_source != "shape":
+    if tr.cls != "vehicle" or tr.cls_source not in ("shape", "camera"):
         return
     if len(tr._sizes) < SIZE_MIN_FOR_MEDIAN:
         return
@@ -622,7 +634,7 @@ def _recheck_name(tr: "Track") -> None:
         tr.cls_source = None
         tr.confidence = 0.5
         return
-    if tr.width_m > 0.0 and tr.width_m < VEHICLE_MIN_WIDTH_FAR_M:
+    if tr.cls_source == "shape" and tr.width_m > 0.0 and tr.width_m < VEHICLE_MIN_WIDTH_FAR_M:
         tr.cls = None
         tr.cls_source = None
         tr.confidence = 0.5

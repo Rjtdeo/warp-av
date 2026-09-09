@@ -63,7 +63,31 @@ NEIGHBOUR_STEP_M = 0.5              # a nearest tile more than this above a poin
 
 ROAD_EDGE_MAX_HEIGHT_M = 0.30       # a blob lower than this ...
 ROAD_EDGE_MIN_EXTENT_M = 1.5        # ... and longer than 2 x this ...
-ROAD_EDGE_MIN_LATERAL_M = 1.2       # ... and centred this far off the van's axis ...
+ROAD_EDGE_MIN_LATERAL_M = 1.2       # ... and whose points, beyond this far off the van's axis,
+                                    #     are the ones actually deleted ...
+ROAD_EDGE_MIN_CENTRE_LATERAL_M = 1.8  # ... and CENTRED beyond this ...
+                                    # The centre test used to share the 1.2 m figure, which sits
+                                    # INSIDE the van's own driving corridor (path_width 3.5 m, so the
+                                    # corridor edge is at 1.75 m). A 5 m planter parked 1.6 m to the
+                                    # right matched every clause of the kerb rule and was deleted
+                                    # before anything else ran, though its near edge sat 0.2 m from
+                                    # the bodywork (measured live in Town10HD, 2026-09-09). Nothing
+                                    # centred inside the corridor the van drives down may be written
+                                    # off as a kerb, so the centre test now sits just outside it.
+                                    # The point-deletion figure is deliberately left at 1.2 m. Raising
+                                    # both together was tried and backed out: it spares a fringe of
+                                    # kerb points beside the lane, and because the blob search is a
+                                    # flood fill that fringe BRIDGES blobs that were separate, five
+                                    # metres away. On town03_in_junction_a it dropped a traffic cone
+                                    # from 0.52 recall to 0.13 and set a parked planter apparently
+                                    # moving at 19 m/s. Splitting the two thresholds spares the
+                                    # planter and leaves every real kerb deleted exactly as before.
+                                    # Length and thickness were both measured first as separators and
+                                    # neither works: real kerb blobs run 3-22 m long and 0-4.4 m
+                                    # thick, straddling the planter on both.
+                                    # Known limit: a planter centred more than 1.8 m to the side is
+                                    # still erased. It cannot touch the van in its own lane, but it
+                                    # can during a kerbside pull-in.
 ROAD_EDGE_MAX_AXIS_DEG = 40.0       # ... and running along the road (long axis within this of the van's heading)
                                     # is a kerb / road edge. A low, long thing IN our lane (a traffic island,
                                     # a slab) or lying ACROSS the road (a planter trough) stays an obstacle.
@@ -288,7 +312,7 @@ def flat_cut(points, lidar_height_m: float = DEFAULT_LIDAR_HEIGHT_M, min_above_m
 
 def is_road_edge(cluster: dict, max_height_m: float = ROAD_EDGE_MAX_HEIGHT_M,
                  min_extent_m: float = ROAD_EDGE_MIN_EXTENT_M,
-                 min_lateral_m: float = ROAD_EDGE_MIN_LATERAL_M,
+                 min_lateral_m: float = ROAD_EDGE_MIN_CENTRE_LATERAL_M,
                  max_axis_deg: float = ROAD_EDGE_MAX_AXIS_DEG) -> bool:
     """A long, low blob beside the lane that runs along the road is a kerb
     or a road edge, not something to stop for. A long, low blob in the lane,
