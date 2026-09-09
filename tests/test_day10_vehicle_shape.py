@@ -168,3 +168,52 @@ def test_a_real_car_far_away_still_passes():
     assert vehicle_shaped(blob(2.6, 1.1, 1.5, n=14, distance=30.0)) is True
     assert vehicle_shaped(blob(2.0, 0.5, 1.5, n=14, distance=30.0)) is True, (
         "its near face is thin, but not rail-thin")
+
+
+def test_a_name_is_rechecked_against_what_the_track_has_learned():
+    """Seen live: a thing 3.7 m tall and a thing with no width were both still labelled
+    vehicles. Each had had one frame that looked car-shaped, and the shape rule only ever
+    sees one frame. The track knows the middle of the last twelve, which is better."""
+    from warp_av.perception.tracking import ObjectTracker
+
+    def feed(tr, sizes, cls_frames):
+        t = 0.0
+        for k, (l, w, h) in enumerate(sizes):
+            t += 0.1
+            o = {"wx": 20.0, "wy": 0.0, "distance": 20.0,
+                 "length_m": l, "width_m": w, "height_m": h, "yaw_deg": 0.0}
+            if k in cls_frames:
+                o["cls"] = "vehicle"
+                o["cls_source"] = "shape"
+                o["confidence"] = 0.45
+            tr.update([o], t)
+        return tr._tracks[0]
+
+    tall = feed(ObjectTracker(), [(4.0, 1.8, 3.7)] * 8, {0, 1})
+    assert tall.cls is None, "a 3.7 m tall thing is not a vehicle, whatever one frame said"
+
+    thin = feed(ObjectTracker(), [(1.4, 0.05, 2.1)] * 8, {0, 1})
+    assert thin.cls is None, "and neither is a rail"
+
+    # a real car keeps looking car-shaped, so the rule keeps naming it every frame
+    car = feed(ObjectTracker(), [(4.2, 1.8, 1.5)] * 8, set(range(8)))
+    assert car.cls == "vehicle", "a real car keeps its name"
+    # and even if the shape rule falls silent for a couple of frames, the re-check has no
+    # complaint about it: what the track has learned is a perfectly ordinary car
+    blinking = feed(ObjectTracker(), [(4.2, 1.8, 1.5)] * 8, {0, 1, 2, 4, 6})
+    assert blinking.cls == "vehicle"
+
+
+def test_a_camera_name_is_left_alone_by_the_recheck():
+    """The camera saw the thing itself, not just its outline; a poor LiDAR view of a
+    person must not overrule it."""
+    from warp_av.perception.tracking import ObjectTracker
+    tr = ObjectTracker()
+    t = 0.0
+    for k in range(8):
+        t += 0.1
+        o = {"wx": 12.0, "wy": 0.0, "distance": 12.0, "length_m": 0.5, "width_m": 0.05,
+             "height_m": 1.8, "yaw_deg": 0.0, "cls": "pedestrian", "cls_source": "camera",
+             "confidence": 0.9}
+        tr.update([o], t)
+    assert tr._tracks[0].cls == "pedestrian"

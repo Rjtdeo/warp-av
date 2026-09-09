@@ -601,6 +601,31 @@ def expected_size_spread_m(range_m: float) -> float:
     return SIZE_SPREAD_BASE_M + SIZE_SPREAD_PER_M * max(0.0, float(range_m))
 
 
+def _recheck_name(tr: "Track") -> None:
+    """A name given on one frame, checked against everything the track has learned since.
+
+    The shape rule looks at a single sighting. The track keeps the middle of the last
+    twelve, which is a better description of the thing. Seen live: something 3.7 m tall and
+    something 0 cm wide were both still labelled vehicles, because each had one frame that
+    happened to look car-shaped. If what the track has settled on could not be a vehicle,
+    the name goes; a name from the camera is left alone, since the camera saw the thing
+    itself and not just its outline.
+    """
+    if tr.cls != "vehicle" or tr.cls_source != "shape":
+        return
+    if len(tr._sizes) < SIZE_MIN_FOR_MEDIAN:
+        return
+    if tr.height_m > VEHICLE_MAX_HEIGHT_M or tr.length_m > VEHICLE_MAX_LENGTH_M:
+        tr.cls = None
+        tr.cls_source = None
+        tr.confidence = 0.5
+        return
+    if tr.width_m > 0.0 and tr.width_m < VEHICLE_MIN_WIDTH_FAR_M:
+        tr.cls = None
+        tr.cls_source = None
+        tr.confidence = 0.5
+
+
 def clearance_radius_m(cls, length_m: float, width_m: float) -> float:
     """How much room to leave around a thing: what was measured, but never less than the
     kind of thing deserves. A person may be small and still step sideways without warning."""
@@ -676,6 +701,7 @@ class ObjectTracker:
             else:
                 _forget_name(tr)
             _note_size(tr, o)
+            _recheck_name(tr)
 
         for j in unmatched:
             o = observations[j]
