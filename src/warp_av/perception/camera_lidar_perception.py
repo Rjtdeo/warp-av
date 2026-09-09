@@ -103,6 +103,8 @@ RIDDEN_CONFIDENCE_THRESHOLD = 0.15   # how sure the camera must be that it saw a
                                      # walker. Both are people the van stops for.
 CYCLIST_SPEED_MPS = 4.0     # nobody walks this fast. A person moving at cycling pace is on
                             # something with wheels, whether or not the camera saw them.
+CYCLIST_TRAVEL_M = 3.0      # ... and they must have actually got somewhere, so that a thing
+                            # which has just appeared cannot be renamed by one frame of it
 
 
 # ============================================================
@@ -995,9 +997,13 @@ class CameraLidarPerception:
                 if dist > self.detection_range:
                     continue
                 kind = tr.cls
+                # Nobody walks at cycling pace. The test is on travel actually made, not on
+                # a speed reading: a thing that has just appeared can show a large speed for
+                # a moment, and that was enough to turn a standing person into a cyclist.
                 if (kind == "pedestrian" and not getattr(tr, "stationary", True)
-                        and self.tracker.reported_speed(tr) >= CYCLIST_SPEED_MPS):
-                    kind = "cyclist"     # nobody walks at cycling pace
+                        and self.tracker.reported_speed(tr) >= CYCLIST_SPEED_MPS
+                        and getattr(tr, "travelled_m", 0.0) >= CYCLIST_TRAVEL_M):
+                    kind = "cyclist"
                 otype = (ObjectType.PEDESTRIAN if kind == "pedestrian"
                          else ObjectType.CYCLIST if kind == "cyclist"
                          else ObjectType.VEHICLE if kind == "vehicle"

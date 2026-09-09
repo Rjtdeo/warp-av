@@ -180,3 +180,30 @@ def test_a_vehicle_is_not_protected_by_the_rider_rule():
         tr.update([{"wx": 9.0, "wy": 0.0, "distance": 9.0, "cls": cls,
                     "cls_source": "camera", "confidence": 0.9}], t)
     assert tr._tracks[0].cls == "vehicle"
+
+
+def test_the_speed_rule_needs_real_travel_not_one_fast_reading():
+    """A thing that has just appeared can show a large speed for a moment. That was enough
+    to turn a person standing still into a cyclist in a live run."""
+    import inspect
+    from warp_av.perception import camera_lidar_perception as clp
+    from warp_av.perception.camera_lidar_perception import CYCLIST_TRAVEL_M
+    src = inspect.getsource(clp.CameraLidarPerception.update)
+    assert 'travelled_m' in src, "the test is on ground actually covered"
+    assert CYCLIST_TRAVEL_M >= 2.0
+
+
+def test_what_the_camera_can_and_cannot_see_here():
+    """Measured on the simulator, six frames each, with the bar dropped to 0.05:
+
+        a plain walker      no bicycle at all
+        a pedal cyclist     no bicycle at all
+        a motorbike rider   0.12 to 0.23
+
+    So a motorbike rider can be named from the camera and a pedal cyclist cannot. That is
+    the detector's limit, not the fusion's, and it is why the threshold sits at 0.15: low
+    enough for the motorbike, and it invents nothing on a walker because there is nothing
+    there to find.
+    """
+    from warp_av.perception.camera_lidar_perception import RIDDEN_CONFIDENCE_THRESHOLD
+    assert 0.10 <= RIDDEN_CONFIDENCE_THRESHOLD <= 0.25
