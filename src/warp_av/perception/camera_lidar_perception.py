@@ -39,7 +39,7 @@ import cv2
 import numpy as np
 
 from . import tracking as _tracking
-from .camera_model import (CameraModel, box_contains, box_edges, box_foot, box_overlap,
+from .camera_model import (CameraModel, camera_models, box_contains, box_edges, box_foot, box_overlap,
                            cluster_point, ground_point)
 from .occupancy import OccupancyGrid
 from .road_edges import RoadEdges, find_road_edges
@@ -762,6 +762,13 @@ class CameraLidarPerception:
         self.last_road_edges_dropped = 0
         self.last_kerb_crumbs_dropped = 0
         self._last_pose = None            # day 12: where the van was at the previous sweep
+        # Day 13: the van has five cameras and only the front one ever named anything. The
+        # laser already finds things all round; what was missing was the name. Set
+        # WARP_ALL_CAMERAS=0 to go back to the front camera alone.
+        self.use_all_cameras = str(os.environ.get("WARP_ALL_CAMERAS", "1")).strip().lower() \
+            not in ("0", "false", "off", "no")
+        self._view_models = {k: v for k, v in camera_models().items() if k != "front"}
+        self.last_view_detections = {}
         self.last_points_kept = 0
         self.last_clusters_before_cap = 0
 
@@ -816,9 +823,15 @@ class CameraLidarPerception:
                 self.last_detection_age_s = time.monotonic() - self._last_inference_time
             else:
                 if self._worker is None:
+                    views = {"front": (lambda: self.sensor_adapter.latest_camera)}
+                    if self.use_all_cameras:
+                        for v in ("left", "right", "rear"):
+                            views[v] = (lambda v=v: (getattr(self.sensor_adapter,
+                                                             "latest_frames", {}) or {}).get(v))
                     self._worker = DetectionWorker(self.detector.detect,
                                                    lambda: self.sensor_adapter.latest_camera,
-                                                   interval_s=self.inference_interval, name="yolox")
+                                                   interval_s=self.inference_interval, name="yolox",
+                                                   views=views)
                     self._worker.start()
                 elif not self._worker.running:
                     self._worker.start()          # a died thread is restarted, never silently missing
@@ -930,51 +943,25 @@ class CameraLidarPerception:
             for c in clusters:
                 c["cls"] = None
                 c["conf"] = 0.0
-                c["uv"] = cam.project(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M))
-                c["uv_foot"] = cam.project(*ground_point(c, DEFAULT_LIDAR_HEIGHT_M))
-            matched_boxes = 0
-            ridden = [d for d in detections if d.class_id in RIDDEN_CLASSES]
-            named = []
-            for det in detections:
-                if det.class_id == PERSON_CLASS:
-                    # a person standing over a bicycle's box is riding it, and a cyclist needs
-                    # a bicycle's room while still being a person to give way to
-                    over = max((box_overlap(det.box, b.box) for b in ridden), default=0.0)
-                    named.append((det, "cyclist" if over >= RIDER_OVERLAP else "pedestrian", over))
-                elif det.class_id in VEHICLE_CLASSES:
-                    named.append((det, "vehicle", 0.0))
-            # riders first: with a person beside the bike and a person on it, the one on it
-            # must claim the blob, or the rider ends up named a pedestrian
-            named.sort(key=lambda n: (n[1] != "cyclist", -n[2]))
-            for det, cls, _over in named:
-                if cls is None:
-                    continue
-                # Which blob is this box drawn around? Not simply the nearest one inside it:
-                # a cone standing in front of a car sits inside the car's box and would steal
-                # its name. The bottom of a box is where the thing touches the road, so the
-                # blob whose own ground point lands nearest that edge is the right one, and
-                # the box's height must suit the blob's range (day 5).
-                fu, fv = box_foot(det.box)
-                _, by1, _, by2 = box_edges(det.box)
-                box_h = max(1.0, by2 - by1)
-                best, best_score = None, None
-                for c in clusters:
-                    if c["uv"] is None or c["cls"] is not None or c["uv_foot"] is None:
+            # Every camera that has something to say, FRONT FIRST so the sharpest picture
+            # gets first say and the others only speak for what it cannot see (day 13).
+            lookers = [("front", cam, detections)]
+            if self.use_all_cameras and not camera_fault and self._worker is not None:
+                frames = getattr(self.sensor_adapter, "latest_frames", {}) or {}
+                per_view = self._worker.latest_by_view(self.detection_max_age_s)
+                for v in ("left", "right", "rear"):
+                    fr, model = frames.get(v), self._view_models.get(v)
+                    if fr is None or model is None:
                         continue
-                    if not box_contains(det.box, c["uv"][0], c["uv"][1], self.fusion_margin_px):
-                        continue
-                    height_m = c.get("height") or 0.5
-                    want_px = cam.focal_px * max(0.3, height_m) / max(1.0, c["distance"])
-                    if not (1.0 / self.fusion_size_ratio) <= (want_px / box_h) <= self.fusion_size_ratio:
-                        continue          # a thing of that size at that range cannot fill this box
-                    score = math.hypot(c["uv_foot"][0] - fu, c["uv_foot"][1] - fv)
-                    if best_score is None or score < best_score:
-                        best, best_score = c, score
-                if best is not None:
-                    best["cls"] = cls
-                    best["cls_from"] = "camera"
-                    best["conf"] = float(det.confidence)
-                    matched_boxes += 1
+                    dets, _age = per_view.get(v, ([], float("inf")))
+                    lookers.append((v, model.with_frame(fr.width, fr.height, fr.fov), dets))
+            # which cameras can even SEE each blob: the shape rule below needs to know
+            for c in clusters:
+                here = cluster_point(c, DEFAULT_LIDAR_HEIGHT_M)
+                c["views"] = [n for n, mdl, _d in lookers if mdl.in_view(*here)]
+            matched_boxes = sum(self._name_with_camera(clusters, mdl, dets)
+                                for _n, mdl, dets in lookers)
+            self.last_view_detections = {n: len(d) for n, _m, d in lookers}
             self.last_camera_labels = matched_boxes
             self.last_camera_detections = len(detections)
 
@@ -985,8 +972,8 @@ class CameraLidarPerception:
             for c in clusters:
                 if c["cls"] is not None:
                     continue
-                seen_by_camera = (camera_fresh and c.get("uv") is not None
-                                  and cam.in_view(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M)))
+                # "did a camera actually look at this?" now means ANY of them (day 13)
+                seen_by_camera = camera_fresh and bool(c.get("views"))
                 if seen_by_camera:
                     # the camera looked straight at it and did not call it a car, so only a
                     # blob that is unmistakably car-sized may still be named one. This is what
@@ -1323,6 +1310,63 @@ class CameraLidarPerception:
         w, h = self.camera_model.width, self.camera_model.height
         return CameraFrame(image=_np.zeros((h, w, 4), dtype=_np.uint8), width=w, height=h,
                            fov=self.camera_model.fov_deg, timestamp=time.time())
+
+    def _name_with_camera(self, clusters, cam, detections) -> int:
+        """Put names from ONE camera onto the blobs it can see. Returns how many stuck.
+
+        Called once per camera, front first (day 13). A blob that already has a name is left
+        alone, so the front camera -- the biggest, sharpest picture -- always gets first say,
+        and the side and rear cameras only speak for what it cannot see.
+        """
+        if not detections:
+            return 0
+        for c in clusters:
+            c["uv"] = cam.project(*cluster_point(c, DEFAULT_LIDAR_HEIGHT_M))
+            c["uv_foot"] = cam.project(*ground_point(c, DEFAULT_LIDAR_HEIGHT_M))
+        matched = 0
+        ridden = [d for d in detections if d.class_id in RIDDEN_CLASSES]
+        named = []
+        for det in detections:
+            if det.class_id == PERSON_CLASS:
+                # a person standing over a bicycle's box is riding it, and a cyclist needs
+                # a bicycle's room while still being a person to give way to
+                over = max((box_overlap(det.box, b.box) for b in ridden), default=0.0)
+                named.append((det, "cyclist" if over >= RIDER_OVERLAP else "pedestrian", over))
+            elif det.class_id in VEHICLE_CLASSES:
+                named.append((det, "vehicle", 0.0))
+        # riders first: with a person beside the bike and a person on it, the one on it
+        # must claim the blob, or the rider ends up named a pedestrian
+        named.sort(key=lambda n: (n[1] != "cyclist", -n[2]))
+        for det, cls, _over in named:
+            if cls is None:
+                continue
+            # Which blob is this box drawn around? Not simply the nearest one inside it:
+            # a cone standing in front of a car sits inside the car's box and would steal
+            # its name. The bottom of a box is where the thing touches the road, so the
+            # blob whose own ground point lands nearest that edge is the right one, and
+            # the box's height must suit the blob's range (day 5).
+            fu, fv = box_foot(det.box)
+            _, by1, _, by2 = box_edges(det.box)
+            box_h = max(1.0, by2 - by1)
+            best, best_score = None, None
+            for c in clusters:
+                if c["uv"] is None or c["cls"] is not None or c["uv_foot"] is None:
+                    continue
+                if not box_contains(det.box, c["uv"][0], c["uv"][1], self.fusion_margin_px):
+                    continue
+                height_m = c.get("height") or 0.5
+                want_px = cam.focal_px * max(0.3, height_m) / max(1.0, c["distance"])
+                if not (1.0 / self.fusion_size_ratio) <= (want_px / box_h) <= self.fusion_size_ratio:
+                    continue          # a thing of that size at that range cannot fill this box
+                score = math.hypot(c["uv_foot"][0] - fu, c["uv_foot"][1] - fv)
+                if best_score is None or score < best_score:
+                    best, best_score = c, score
+            if best is not None:
+                best["cls"] = cls
+                best["cls_from"] = "camera"
+                best["conf"] = float(det.confidence)
+                matched += 1
+        return matched
 
     def _moved_since(self, tf):
         """(forward, right, turned) since the last sweep, in the van's frame back then.

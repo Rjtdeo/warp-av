@@ -30,6 +30,25 @@ LIDAR_MOUNT = (0.0, 0.0, 2.5)
 CAMERA_MOUNT = (2.0, 0.0, 1.8)
 CAMERA_PITCH_DEG = -10.0        # negative = nose down
 
+#: Every camera on the van, exactly as the sensor adapter mounts them. Until day 13 only the
+#: front one was ever used to name anything; the other three fed the operator's screen and
+#: nothing else, so a person standing beside the van was an unnamed lump.
+VIEW_MOUNTS = {
+    "front": ((2.0, 0.0, 1.8), -10.0, 0.0, 800, 600, 90.0),
+    "left":  ((0.0, -1.1, 1.7), -15.0, -90.0, 480, 360, 100.0),
+    "right": ((0.0, 1.1, 1.7), -15.0, 90.0, 480, 360, 100.0),
+    "rear":  ((-2.6, 0.0, 1.8), -12.0, 180.0, 480, 360, 90.0),
+}
+
+
+def camera_models() -> dict:
+    """One model per camera, keyed by name."""
+    out = {}
+    for name, (mount, pitch, yaw, w, h, fov) in VIEW_MOUNTS.items():
+        out[name] = CameraModel(width=w, height=h, fov_deg=fov, mount=mount,
+                                pitch_deg=pitch, yaw_deg=yaw, name=name)
+    return out
+
 
 @dataclass(frozen=True)
 class CameraModel:
@@ -40,7 +59,9 @@ class CameraModel:
     fov_deg: float = 90.0
     mount: Tuple[float, float, float] = CAMERA_MOUNT
     pitch_deg: float = CAMERA_PITCH_DEG
+    yaw_deg: float = 0.0            # which way it faces: 0 ahead, +90 right, 180 behind
     lidar_mount: Tuple[float, float, float] = LIDAR_MOUNT
+    name: str = "front"
 
     @property
     def focal_px(self) -> float:
@@ -57,6 +78,12 @@ class CameraModel:
         dx = vx - self.mount[0]
         dy = vy - self.mount[1]
         dz = vz - self.mount[2]
+        # undo the camera's turn first: the right-hand camera faces +90, so something
+        # straight out to the van's right is straight AHEAD of that camera
+        if self.yaw_deg:
+            a = math.radians(self.yaw_deg)
+            ca, sa = math.cos(a), math.sin(a)
+            dx, dy = dx * ca + dy * sa, -dx * sa + dy * ca
         p = math.radians(self.pitch_deg)
         cp, sp = math.cos(p), math.sin(p)
         # the camera is turned by +pitch about the y axis, so undo it by -pitch
@@ -85,7 +112,8 @@ class CameraModel:
         if width == self.width and height == self.height and abs(fov_deg - self.fov_deg) < 1e-6:
             return self
         return CameraModel(width=width, height=height, fov_deg=fov_deg,
-                           mount=self.mount, pitch_deg=self.pitch_deg, lidar_mount=self.lidar_mount)
+                           mount=self.mount, pitch_deg=self.pitch_deg, yaw_deg=self.yaw_deg,
+                           lidar_mount=self.lidar_mount, name=self.name)
 
 
 def box_edges(box) -> Tuple[float, float, float, float]:

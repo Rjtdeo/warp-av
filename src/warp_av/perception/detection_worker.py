@@ -34,13 +34,28 @@ class DetectionWorker:
     LOG_EVERY_S = 10.0
 
     def __init__(self, detect_fn: Callable, frame_fn: Callable, interval_s: float = 0.25,
-                 name: str = "detector"):
+                 name: str = "detector", views=None):
+        """`views`: {name: frame_fn}. Given them, the detector takes them in TURN -- one
+        picture per pass -- and keeps the newest answer for each separately.
+
+        One detector, several cameras. The van has five cameras and until day 13 only the
+        front one was ever used to name anything; a person standing beside the van came out
+        as an unnamed lump with a bin's worth of room. Running a second detector would cost
+        another lot of computer time the van has not got. It does not need one: the laser has
+        already FOUND everything all round, so all that is missing is the name, and a name
+        does not change from second to second. So the same detector looks at a different
+        camera each pass and every view's answer is held until that view comes round again.
+        """
         self._detect = detect_fn            # image (H, W, 3) -> detections
         self._frame = frame_fn              # () -> object with .image and .timestamp, or None
+        self._views = dict(views) if views else None
+        self._order = list(self._views) if self._views else None
+        self._turn = 0
         self.interval_s = float(interval_s)
         self.name = name
         self._lock = threading.Lock()
         self._result: Tuple[list, Optional[float], float] = ([], None, 0.0)   # detections, frame ts, published (monotonic)
+        self._by_view = {}                  # view -> (detections, frame ts, published)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_inference_ms = 0.0
@@ -77,9 +92,15 @@ class DetectionWorker:
             if now < next_run:
                 self._stop.wait(min(0.01, next_run - now))
                 continue
-            frame = self._frame()
+            view = None
+            if self._order:
+                view = self._order[self._turn % len(self._order)]
+                self._turn += 1
+                frame = self._views[view]()
+            else:
+                frame = self._frame()
             ts = getattr(frame, "timestamp", None) if frame is not None else None
-            if frame is None or ts == last_frame_ts:
+            if frame is None or (view is None and ts == last_frame_ts):
                 self._stop.wait(0.01)                 # nothing new yet
                 continue
             t0 = time.perf_counter()
@@ -96,11 +117,26 @@ class DetectionWorker:
                     print(f"[{self.name}] detection failed ({self.errors} so far): {e}")
             ms = (time.perf_counter() - t0) * 1000.0
             with self._lock:
-                self._result = (detections, ts, time.monotonic())
+                published = time.monotonic()
+                if view is None or view == "front":
+                    self._result = (detections, ts, published)
+                if view is not None:
+                    self._by_view[view] = (detections, ts, published)
                 self.last_inference_ms = ms
                 self.runs += 1
             last_frame_ts = ts
             next_run = now + self.interval_s
+
+    def latest_by_view(self, max_age_s: float = 1.0):
+        """{view: (detections, age_s)} for every camera that has an answer worth using."""
+        out = {}
+        with self._lock:
+            snapshot = dict(self._by_view)
+        now = time.monotonic()
+        for view, (detections, _, published) in snapshot.items():
+            age = now - published
+            out[view] = ([], age) if age > max_age_s else (detections, age)
+        return out
 
     # ---- what the loop reads ---------------------------------------------
     def latest(self, max_age_s: float = 1.0) -> Tuple[List, float]:
