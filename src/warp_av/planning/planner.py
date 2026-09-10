@@ -26,6 +26,26 @@ from .instrumentation import (PlannerDecision, debug_planning_enabled,
 # Half a car for vehicles; a bin/pole/planter for other things.
 DEFAULT_OBSTACLE_RADIUS_M = {"vehicle": 0.9, "pedestrian": 0.4, "obstacle": 0.5, "unknown": 0.5}
 FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary objects this far ahead
+# ...and never further off the line than this. The swept body exists to catch what the
+# centre-line bands miss: "a parked car 1.6 m off the line still blocks, a planter at 1.9 m
+# no longer does, a body 2.4 m off the line on the outside of a bend is caught". So 2.4 m is
+# the case it was written for, and this is that plus a little.
+#
+# Without a bound it reaches much further, because the box is 3.26 m half-LENGTH: its CORNER
+# sits 3.51 m from its centre, and on a curving path that corner sweeps an arc wider still.
+# Measured, with the bound off:
+#
+#     bend radius   how far off the line a "hit" could be
+#        20 m                    2.70 m
+#        12 m                    3.60 m
+#         8 m                    5.90 m
+#
+# Live, that meant blocked_swept_path on 97% of ticks, the van never above 0.35 m/s, and the
+# things blocking it 4.2 m off the centreline -- kerb and street furniture it drives past
+# every day. A first attempt bounded this by JUNCTIONS instead, on the theory that turns are
+# where the arc tightens. It did not help: the road bends without being flagged a junction,
+# so the sweep was still active through the turn. The honest bound is on the answer itself.
+SWEEP_MAX_LATERAL_M = 2.6
 
 VAN_HALF_WIDTH_M = 0.99               # the CARLA Sprinter, measured (planning/footprint_config.py)
 VAN_HALF_LENGTH_M = 2.96              # ... and its nose, that far ahead of the point it steers about
@@ -851,7 +871,8 @@ class RoutePlanner:
             sweep_on_plain_road = (plain_road_m is None
                                    or along + footprint_reach <= plain_road_m)
             sweep_decides = (footprint is not None and stationary
-                             and not near_junction and sweep_on_plain_road)
+                             and not near_junction and sweep_on_plain_road
+                             and lat <= SWEEP_MAX_LATERAL_M)
             # Old rules never look beyond 2.20 m from the line. The swept body
             # can reach further in a bend (the outer corner swings wide), so in
             # footprint mode a stationary object is kept for the sweep up to
