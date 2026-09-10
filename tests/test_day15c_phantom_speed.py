@@ -177,3 +177,51 @@ def test_a_real_car_keeps_its_track_and_its_speed():
     assert seen, "a car driving in a straight line was never confirmed"
     assert seen[-1][0] == ident, "a car driving in a straight line changed identity"
     assert 6.0 <= seen[-1][1] <= 10.0, f"read {seen[-1][1]:.1f} m/s for a car doing {speed}"
+
+
+# ---------------------------------------------------------------- stopping for the kerb
+
+
+def kerb_thing(length, width, kind="obstacle"):
+    from warp_av.perception.perception import DetectedObject, ObjectType
+    o = DetectedObject(object_type=getattr(ObjectType, kind.upper()), x=6.0, y=0.0, distance=6.0)
+    o.length_m, o.width_m = length, width
+    return o
+
+
+def test_the_van_does_not_stop_for_a_kerb_post():
+    """The live fault: on an empty road the van stopped on 18% of frames for stationary things
+    1.36 to 2.20 m off its line -- posts, railings and kerb, none of them on any road. It was
+    treating every one of them as if it were a parked car reaching into its margin."""
+    from warp_av.planning.planner import would_scrape
+    assert would_scrape(kerb_thing(0.3, 0.1), 1.53) is False
+    assert would_scrape(kerb_thing(0.5, 0.1), 1.60) is False
+    assert would_scrape(kerb_thing(0.5, 0.5), 1.90) is False      # the planter, as documented
+
+
+def test_the_van_still_stops_for_a_parked_car_half_in_its_margin():
+    """Run 62: a parked mini 1.6 m off the line was hit at 2.8 m/s. Half a car reaches into
+    the van's margin, and the LiDAR only ever sees one face of it, so a vehicle keeps a floor
+    near its real half-width."""
+    from warp_av.planning.planner import would_scrape
+    assert would_scrape(kerb_thing(4.5, 1.8, "vehicle"), 1.60) is True
+    assert would_scrape(kerb_thing(1.8, 0.5, "vehicle"), 2.00) is True   # seen end-on, floored
+
+
+def test_something_we_never_measured_still_stops_the_van():
+    """Not knowing how big a thing is has never been a reason to drive at it."""
+    from warp_av.planning.planner import would_scrape, scrape_half_width_m
+
+    class Nameless:
+        object_type = None
+        length_m = None
+        width_m = None
+    assert scrape_half_width_m(Nameless()) is None
+    assert would_scrape(Nameless(), 2.10) is True
+
+
+def test_a_big_thing_blocks_however_it_is_turned():
+    """The half-diagonal over-estimates on purpose: a long object lying along the kerb still
+    counts, because we cannot tell from a footprint which way it is facing."""
+    from warp_av.planning.planner import would_scrape
+    assert would_scrape(kerb_thing(3.0, 0.2), 1.60) is True

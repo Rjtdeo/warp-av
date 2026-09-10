@@ -54,6 +54,54 @@ def obstacle_radius_m(obj) -> float:
 #: whose room is allowed to widen the band that stops the van. Only people.
 WIDENS_THE_BAND = ("pedestrian", "cyclist")
 
+# How wide a thing's BODY is, for deciding whether the van would scrape it. This is not the
+# same question as how much room to leave around it, and using the clearance figure for both
+# is what made the van stop for kerbs.
+#
+# obstacle_radius_m answers "how much room does this deserve", and floors an unnamed lump at
+# 0.4 m for safety. That floor is right for keeping a polite distance and wrong for asking
+# "would I hit it": a kerb sliver measured 0.3 x 0.1 m does not become 0.8 m wide because the
+# van is being careful. Measured live in Town10HD on 2026-09-10 with the road empty, the van
+# stopped on 18% of frames for stationary things 1.36 to 2.20 m off its line -- railings,
+# posts and kerb, none of them on any road, all of them things it passes every day.
+#
+# So the scrape test uses what was MEASURED, with a floor only where under-measurement is both
+# likely and expensive. The LiDAR sees one face of a car and can report it 1.8 x 0.5 m, so a
+# vehicle keeps a floor near its real half-width; an unnamed lump is taken at its measured size.
+SCRAPE_HALF_WIDTH_FLOOR_M = {"vehicle": 0.90, "pedestrian": 0.30, "cyclist": 0.30}
+DEFAULT_SCRAPE_HALF_WIDTH_M = 0.15    # an unnamed lump is measured, not assumed to be car-sized
+SCRAPE_MARGIN_M = 0.25                # how close its body may come to ours before we stop
+
+
+def scrape_half_width_m(obj):
+    """Half the body of a thing, for asking whether the van would touch it -- or None.
+
+    The half-diagonal, so it is an over-estimate whichever way the thing is turned: a car
+    measured 4.5 x 1.8 m comes out at 2.42 m and blocks readily, which is the point.
+
+    None means NOTHING WAS MEASURED, and the caller must then do what the van always did and
+    stop. Not knowing how big something is has never been a reason to drive at it.
+    """
+    length = getattr(obj, "length_m", None) or 0.0
+    width = getattr(obj, "width_m", None) or 0.0
+    try:
+        length, width = float(length), float(width)
+    except (TypeError, ValueError):
+        return None
+    if length != length or width != width or (length <= 0.0 and width <= 0.0):
+        return None                                 # never measured: assume the worst
+    measured = 0.5 * math.hypot(length, width)
+    kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+    return max(measured, SCRAPE_HALF_WIDTH_FLOOR_M.get(kind, DEFAULT_SCRAPE_HALF_WIDTH_M))
+
+
+def would_scrape(obj, lat_m: float) -> bool:
+    """Would this thing's body reach the van's, at this distance off the line?"""
+    half = scrape_half_width_m(obj)
+    if half is None:
+        return True                                 # size unknown -> treat it as in the way
+    return (lat_m - half) < (VAN_HALF_WIDTH_M + SCRAPE_MARGIN_M)
+
 
 def block_band_m(obj, floor_m: float) -> float:
     """How far off the line an object can sit and still stop us.
@@ -740,6 +788,8 @@ class RoutePlanner:
             if (lat > block_halfwidth_m and lat <= 2.20
                     and stationary
                     and max(0.0, along) < 12.0 and not near_junction):
+                # SEEING it is unconditional -- the slow-zone bookkeeping wants everything
+                # out here, whatever its size.
                 found = True
                 dist = max(0.0, along)
                 if dist < closest:
@@ -747,7 +797,11 @@ class RoutePlanner:
                     closest_type = obj.object_type
                     closest_speed = obj.speed
                     closest_lat = round(lat, 2)
-                if not sweep_decides:
+                # STOPPING for it needs its body to actually reach ours. The old rule stopped
+                # for anything in this band, which on a normal street means stopping for the
+                # kerb: measured live, 18% of frames on an empty road, for railings and posts
+                # 1.36 to 2.20 m off the line and not on any road at all. See would_scrape.
+                if not sweep_decides and would_scrape(obj, lat):
                     blocked = True
             # Planning V2: the van's real body, slid along the route, decides
             # whether a stationary object is in the way. A parked car 1.6 m off
