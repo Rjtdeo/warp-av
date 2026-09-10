@@ -65,6 +65,15 @@ MAX_UNNAMED_HEIGHT_M = 3.0    # ... and shorter than a lamp post
 # 53 km/h. A person or someone on a bicycle is not doing that, and anything that IS doing
 # that is a vehicle, which has a vehicle's footprint. This is not a cap on the speed; it is
 # a refusal to raise a CROSSING warning from a reading that cannot be true.
+# And a crossing must start from somewhere near the road. The prediction is for crossers and
+# cut-ins -- a person stepping off a pavement is 2 to 4 m from our lane centre, a car at a
+# side-road stop line 2 to 6 m. Measured live on 2026-09-10, what was still firing sat 6.7 to
+# 20.0 m out to the side: poles in a forecourt, a car park, the next street over. For a thing
+# 20 m out to reach a 2.2 m corridor inside the 3.5 s horizon it must close at more than 5 m/s
+# and keep it up, and anything that could is a vehicle entering a junction, which the give-way
+# logic already handles as its own thing.
+MAX_START_LATERAL_M = 12.0               # three and a half lane widths from our line
+
 FAST_ENOUGH_TO_BE_A_VEHICLE_MPS = 8.0    # quicker than a racing cyclist
 VEHICLE_FOOTPRINT_WIDTH_M = 0.8
 VEHICLE_FOOTPRINT_LENGTH_M = 2.5
@@ -175,6 +184,8 @@ def predict_route_conflict(objects, route_wps, ego_x, ego_y, ego_yaw, ego_speed)
         arc_now, lat_now = _project(wx, wy, route_wps, n)
         if lat_now <= CORRIDOR_M and arc_now - ego_arc > -1.0:
             continue          # already in our corridor: following logic's job
+        if lat_now > MAX_START_LATERAL_M:
+            continue          # too far off the road to be crossing it
         t = STEP_S
         while t <= HORIZON_S:
             px, py = wx + vx * t, wy + vy * t

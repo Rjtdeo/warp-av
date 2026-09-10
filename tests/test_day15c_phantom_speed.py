@@ -337,3 +337,26 @@ def test_something_we_never_sized_still_counts():
     from warp_av.planning.prediction import predict_route_conflict
     assert predict_route_conflict([crosser("obstacle", None, None)], route_ahead(),
                                   0.0, 0.0, 0.0, 4.0) is not None
+
+
+def test_a_crossing_must_start_from_near_the_road():
+    """What was left firing sat 6.7 to 20.0 m out to the side -- poles in a forecourt, a car
+    park, the next street. A person steps off a pavement 2 to 4 m from our lane centre."""
+    from warp_av.planning.prediction import predict_route_conflict, MAX_START_LATERAL_M
+
+    class Far:
+        object_type = "vehicle"          # named, so no size argument can be made against it
+        def __init__(self, y, vy):
+            self.x, self.y = 4.0, y
+            self.vx_world, self.vy_world = 0.0, vy
+            self.speed = abs(vy)
+            self.stationary = False
+            self.height_m, self.width_m, self.length_m = 1.5, 1.8, 4.5
+            self.id = 11
+
+    near = MAX_START_LATERAL_M - 3.0
+    assert predict_route_conflict([Far(near, -near / 1.0)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is not None
+    far = MAX_START_LATERAL_M + 8.0
+    assert predict_route_conflict([Far(far, -far / 1.0)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is None
