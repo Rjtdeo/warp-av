@@ -13,6 +13,9 @@ Design rules (anti-phantom-braking):
 - A conflict needs both sides of the appointment to match: the object's
   guessed position must be on our path AND we must be near that spot at
   around that time.
+- And it must be COMING TOWARDS our path. A thing that slides along beside
+  us -- which is what a kerb looks like to a tracker driving past it -- is
+  not crossing anything. See MIN_CLOSING_MPS.
 
 Pure math, no CARLA — the same code runs in offline tests.
 """
@@ -25,6 +28,24 @@ STEP_S = 0.5             # guessing resolution
 MIN_SPEED = 0.8          # slower than this = treated as standing
 CORRIDOR_M = 2.2         # same body-width band the live corridor uses
 MEET_WINDOW_M = 7.0      # how close our arrival must be to count as a meeting
+MIN_CLOSING_MPS = 0.5    # ... and it must actually be COMING TOWARDS our path, this fast
+
+# Why the closing rule exists.
+#
+# Beside a kerb the LiDAR hands back dozens of near-identical slivers -- railings, posts, wall
+# segments, 0.1 to 0.3 m wide. The tracker's association hops from one to the next as the van
+# drives past, and the resulting track really does slide through the world: measured on 4702
+# live readings in Town10HD on 2026-09-10, tracks the van called moving claimed a median
+# 3.19 m/s and had genuinely covered ground at 2.78 m/s. So no amount of doubting the speed
+# helps -- the sliding is real. What is wrong is what it was taken to MEAN.
+#
+# A slider goes ALONG the kerb, which is along our own path. It is not coming towards us. A
+# real crosser -- someone stepping off the pavement, a car nosing out of a side road -- closes
+# on our path, and that is the thing worth braking for. A cut-in closes too, more slowly: a
+# van changing lane covers its 3.5 m in a few seconds, comfortably over this threshold.
+#
+# On an empty street this rule is the difference between warning about nothing and staying
+# quiet; it cannot hide anything that is actually approaching the van.
 
 
 def _project(px, py, wps, n):
@@ -87,6 +108,10 @@ def predict_route_conflict(objects, route_wps, ego_x, ego_y, ego_yaw, ego_speed)
             arc_p, lat_p = _project(px, py, route_wps, n)
             along = arc_p - ego_arc
             if lat_p <= CORRIDOR_M and 0.0 < along <= 35.0:
+                # is it actually coming TOWARDS our path, or just sliding along beside it?
+                closing = (lat_now - lat_p) / t
+                if closing < MIN_CLOSING_MPS:
+                    break
                 # will WE be near that spot around then?
                 ours = ego_speed * t
                 if abs(along - ours) <= MEET_WINDOW_M + 0.3 * ego_speed:

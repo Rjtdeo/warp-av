@@ -418,6 +418,13 @@ class Track:
         return min(STILL_WINDOW_MAX_S, STILL_WINDOW_S + STILL_WINDOW_PER_M * self.range_m)
 
     @property
+    def history_span_s(self) -> float:
+        """How long the kept history actually covers."""
+        if len(self._history) < 2:
+            return 0.0
+        return self._history[-1][0] - self._history[0][0]
+
+    @property
     def travelled_m(self) -> float:
         """How far it has actually moved over the last second and a half."""
         if len(self._history) < 2:
@@ -659,6 +666,30 @@ class ObjectTracker:
     GATE_SPEED_MPS = 4.0    # ... plus a step's worth of travel, for at least this speed, so a
                             #     fast car is still caught on its second sighting while two
                             #     parked things 2.4 m apart never swap tracks (day 6)
+    # ...but bounded, three ways, because the line above ran away with itself.
+    #
+    # A track's OWN speed widened its OWN search radius, with nothing above it, multiplied by
+    # a gap of up to DROP_AFTER_S. That is a loop with the gain on the wrong side: one wrong
+    # match gives a track a speed it never had, the speed widens the radius, the wider radius
+    # finds another wrong match further away, and so on. Beside a kerb, where the LiDAR
+    # returns dozens of near-identical slivers, it runs away completely.
+    #
+    # Measured live in Town10HD on 2026-09-10, van crawling under 1.2 m/s on an empty road:
+    # tracks 0.1 m wide reported a MEDIAN speed of 19 to 27 m/s, pinned at the 30 m/s clamp,
+    # and jumped 19, 22 and 31 m between one frame and the next. At 30 m/s with a 1.2 s gap
+    # the old radius was 38 m. Those phantoms fired the crossing-prediction on 12% of readings
+    # and stopped the van on 18%, on a street with nothing in it.
+    #
+    # What each bound is for, and why it cannot cost a real sighting:
+    #   * a brand new track has speed 0, so its gate is GATE_M + dt * GATE_SPEED_MPS and none
+    #     of these touch it -- the day-6 "catch a fast car on its second sighting" case is
+    #     exactly as it was;
+    #   * an established track already carries its velocity in the PREDICTED position, so the
+    #     gate only has to cover error, not travel. At 9 Hz a car doing 14 m/s moves 1.6 m a
+    #     frame and is predicted there.
+    GATE_SPEED_CAP_MPS = 14.0   # a track may widen its own gate, but only up to a fast car
+    GATE_MAX_DT_S = 0.35        # a long gap does not licence a huge gate: about three frames
+    GATE_MAX_M = 4.0            # and nothing is ever the same object 4 m from where it should be
     DROP_AFTER_S = 1.2      # unseen this long -> forget
     VEL_ALPHA = 0.35        # velocity smoothing
     SPEED_DEADBAND = 0.4    # below this, report standing still
@@ -681,7 +712,9 @@ class ObjectTracker:
         pairs = []
         for tr in self._tracks:
             dt = max(0.0, t - tr.last_seen)
-            best_j, best_d = None, self.GATE_M + dt * max(self.GATE_SPEED_MPS, tr.speed)
+            reach = min(self.GATE_MAX_DT_S, dt) * min(self.GATE_SPEED_CAP_MPS,
+                                                      max(self.GATE_SPEED_MPS, tr.speed))
+            best_j, best_d = None, min(self.GATE_MAX_M, self.GATE_M + reach)
             px = tr.wx + tr.vx * dt
             py = tr.wy + tr.vy * dt
             for j in unmatched:
@@ -741,7 +774,16 @@ class ObjectTracker:
         return [tr for tr in self._tracks if tr.hits >= self.MIN_HITS - 1e-6]
 
     def reported_speed(self, tr: Track) -> float:
-        """A thing the van has decided is parked reports exactly zero, not a wobble."""
+        """A thing the van has decided is parked reports exactly zero, not a wobble.
+
+        Capping this by how far the thing has actually travelled was tried and taken back
+        out. It sounds right -- the filter's velocity chases jitter, displacement is a fact --
+        but measured on 4702 live readings of tracks the van called moving, the claim and the
+        truth differ by a median of 1.1x, and a cap at 1.6x silences 3% of them. These blobs
+        are not jittering in place. They really do slide along the kerb at 2 to 8 m/s, because
+        the association hops from one sliver to the next. The fault is in what the sliding is
+        taken to MEAN, which is why the fix lives in the crossing prediction.
+        """
         if getattr(tr, "stationary", False):
             return 0.0
         s = tr.speed
