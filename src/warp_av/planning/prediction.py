@@ -44,28 +44,62 @@ MIN_CLOSING_MPS = 0.5    # ... and it must actually be COMING TOWARDS our path, 
 # name will no longer raise an EARLY warning. It is not invisible -- the corridor rule still
 # stops the van when it is actually in the way, with no size gate at all. What is lost is the
 # few seconds of notice, and only for something perception could not identify.
+# Measured live on 2026-09-10, on the same empty streets, once the first size gate was in:
+#
+#     a real person walking across    1.72 m tall
+#     a real car driving              1.45 m tall
+#     phantom, named "pedestrian"     0.70 m   (kerb the camera mislabelled -- now fixed
+#                                               at source, in the tracker's name check)
+#     phantom, named "obstacle"       2.6 to 3.8 m   (lamp posts, sign poles, tree trunks)
+#
+# So a road user lives in a band. Below it is kerb; above it is street furniture and the
+# corners of buildings. The ceiling is the tracker's own VEHICLE_MAX_HEIGHT_M -- a car, a van
+# or a small lorry -- because that is already this codebase's answer to "how tall can a thing
+# on the road be".
 NAMED_ROAD_USERS = ("pedestrian", "cyclist", "vehicle")
-MIN_UNNAMED_HEIGHT_M = 1.0    # taller than a bollard
-MIN_UNNAMED_WIDTH_M = 0.5     # or wide enough to be a body rather than a post
+MIN_UNNAMED_HEIGHT_M = 0.9    # taller than a kerb or a bollard
+MAX_UNNAMED_HEIGHT_M = 3.0    # ... and shorter than a lamp post
+
+# And nothing may be believed to move faster than its shape allows. The poles that got past
+# the height band were "moving" at 7.3, 9.3, 11.1, 11.5, 11.9, 12.4 and 14.6 m/s -- 26 to
+# 53 km/h. A person or someone on a bicycle is not doing that, and anything that IS doing
+# that is a vehicle, which has a vehicle's footprint. This is not a cap on the speed; it is
+# a refusal to raise a CROSSING warning from a reading that cannot be true.
+FAST_ENOUGH_TO_BE_A_VEHICLE_MPS = 8.0    # quicker than a racing cyclist
+VEHICLE_FOOTPRINT_WIDTH_M = 0.8
+VEHICLE_FOOTPRINT_LENGTH_M = 2.5
+
+
+def _size(obj, field):
+    v = getattr(obj, field, None)
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _could_use_a_road(obj) -> bool:
-    """Could this thing be a road user at all? Named ones always could."""
+    """Could this thing be a road user at all?
+
+    Two questions. Is it the right SIZE -- asked only of things the camera could not name,
+    because the laser sees one face and a half-seen person measures 0.3 x 0.1 m. And could a
+    thing this shape be going this FAST -- asked of everything, because a reading of 12 m/s
+    from something the size of a post is not a fast post, it is a wrong reading.
+    """
     kind = getattr(getattr(obj, "object_type", None), "value", str(getattr(obj, "object_type", "")))
-    if kind in NAMED_ROAD_USERS:
-        return True
-    height = getattr(obj, "height_m", None)
-    width = getattr(obj, "width_m", None)
-    try:
-        height = float(height) if height is not None else None
-        width = float(width) if width is not None else None
-    except (TypeError, ValueError):
-        return True                      # nothing measured: do not talk ourselves out of it
-    if height is None and width is None:
-        return True
-    tall = height is not None and height >= MIN_UNNAMED_HEIGHT_M
-    wide = width is not None and width >= MIN_UNNAMED_WIDTH_M
-    return tall or wide
+    height, width, length = _size(obj, "height_m"), _size(obj, "width_m"), _size(obj, "length_m")
+
+    if kind not in NAMED_ROAD_USERS and height is not None:
+        if not (MIN_UNNAMED_HEIGHT_M <= height <= MAX_UNNAMED_HEIGHT_M):
+            return False
+
+    speed = _size(obj, "speed") or 0.0
+    if speed >= FAST_ENOUGH_TO_BE_A_VEHICLE_MPS:
+        wide = width is not None and width >= VEHICLE_FOOTPRINT_WIDTH_M
+        long_ = length is not None and length >= VEHICLE_FOOTPRINT_LENGTH_M
+        if (width is not None or length is not None) and not (wide or long_):
+            return False
+    return True
 
 # Why the closing rule exists.
 #

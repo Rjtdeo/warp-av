@@ -46,6 +46,12 @@ WIDTH_TEST_FROM_M = 5.0       # only things this long are judged on being too th
 WIDTH_TEST_WITHIN_M = 25.0    # ... and near enough that the measurement means something
 VEHICLE_MIN_LENGTH_M = 2.0    # shorter than this, near the van, is a bin or a post
 VEHICLE_MIN_WIDTH_FAR_M = 0.4  # ... and thinner than this, at any distance, is a rail
+# A person the LiDAR has settled on is at least this tall. The laser under-measures height --
+# a real walker in Town10HD comes out at 1.72 m, and full_check accepts anything from 1.2 m --
+# so this sits far below that and only catches what is flatly impossible. Measured live on
+# 2026-09-10: the camera was naming kerb "pedestrian" at 0.50 to 0.74 confidence, and every
+# one of those was 0.7 m tall. Nobody is 0.7 m tall and walking.
+PEDESTRIAN_MIN_HEIGHT_M = 0.9
 
 
 def vehicle_shaped(cluster, min_points=None, min_extent=None, min_height=None,
@@ -632,9 +638,21 @@ def _recheck_name(tr: "Track") -> None:
     distance, not a size gate the laser cannot support. A track that loses its name keeps its place, its
     size and its room to leave; it becomes an obstacle, and the van still stops for it.
     """
-    if tr.cls != "vehicle" or tr.cls_source not in ("shape", "camera"):
+    if tr.cls_source not in ("shape", "camera"):
         return
     if len(tr._sizes) < SIZE_MIN_FOR_MEDIAN:
+        return
+    # A PERSON who is knee high is not a person. This is the same rule as the vehicle one
+    # below and for the same reason -- check a name against what the track has settled on,
+    # and only against what is flatly impossible. Height is the number the laser is most
+    # honest about; width at range is the least, which is why neither test uses it.
+    if tr.cls == "pedestrian":
+        if 0.0 < tr.height_m < PEDESTRIAN_MIN_HEIGHT_M:
+            tr.cls = None
+            tr.cls_source = None
+            tr.confidence = 0.5
+        return
+    if tr.cls != "vehicle":
         return
     if tr.height_m > VEHICLE_MAX_HEIGHT_M or tr.length_m > VEHICLE_MAX_LENGTH_M:
         tr.cls = None

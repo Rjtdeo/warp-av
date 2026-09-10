@@ -267,12 +267,68 @@ def test_a_person_the_camera_named_is_trusted_at_any_size():
     assert hit is not None and hit["type"] == "pedestrian"
 
 
-def test_an_unnamed_thing_big_enough_to_be_a_road_user_still_counts():
-    """A person the camera missed, but the LiDAR saw properly, is still a person."""
+def test_an_unnamed_thing_the_size_of_a_road_user_still_counts():
+    """A person the camera missed, but the LiDAR saw properly, is still a person.
+
+    The band is measured, not guessed: a real person walking across Town10HD comes out at
+    1.72 m and a real car at 1.45 m, while the kerb the camera mislabels is 0.7 m and the
+    lamp posts are 2.6 to 3.8 m.
+    """
     from warp_av.planning.prediction import predict_route_conflict
-    assert predict_route_conflict([crosser("obstacle", 1.7, 0.4)], route_ahead(),
-                                  0.0, 0.0, 0.0, 4.0) is not None
-    assert predict_route_conflict([crosser("obstacle", 0.8, 0.6)], route_ahead(),
+    for height in (1.0, 1.7, 2.9):
+        assert predict_route_conflict([crosser("obstacle", height, 0.4)], route_ahead(),
+                                      0.0, 0.0, 0.0, 4.0) is not None, f"{height} m excluded"
+
+
+def test_a_lamp_post_cannot_raise_a_crossing_warning():
+    """Above the band is street furniture and the corners of buildings. The ceiling is the
+    tracker's own VEHICLE_MAX_HEIGHT_M -- a car, a van or a small lorry."""
+    from warp_av.planning.prediction import predict_route_conflict
+    for height in (3.4, 3.8):
+        assert predict_route_conflict([crosser("obstacle", height, 0.2)], route_ahead(),
+                                      0.0, 0.0, 0.0, 4.0) is None, f"{height} m got through"
+
+
+def test_nothing_the_shape_of_a_post_may_be_doing_twelve_metres_a_second():
+    """The poles that fitted inside the height band were 'moving' at 7.3 to 14.6 m/s -- 26 to
+    53 km/h. A person or someone on a bicycle is not doing that, and anything that is doing
+    that has a vehicle's footprint. Not a cap on the speed: a refusal to raise a CROSSING
+    warning from a reading that cannot be true."""
+    from warp_av.planning.prediction import predict_route_conflict
+
+    class Post:
+        object_type = "obstacle"
+        def __init__(self):
+            # close enough that we would actually MEET it: a thing 12 m ahead while we are
+            # doing 4 m/s is correctly ignored whatever its shape, and would make this test
+            # pass for the wrong reason
+            self.x, self.y = 4.0, 5.0
+            self.vx_world, self.vy_world = 0.0, -12.0
+            self.speed = 12.0
+            self.stationary = False
+            self.height_m, self.width_m, self.length_m = 2.2, 0.1, 0.8
+            self.id = 9
+
+    class Car(Post):
+        def __init__(self):
+            super().__init__()
+            self.height_m, self.width_m, self.length_m = 1.5, 1.8, 4.5
+            self.id = 10
+
+    assert predict_route_conflict([Post()], route_ahead(), 0.0, 0.0, 0.0, 4.0) is None
+    assert predict_route_conflict([Car()], route_ahead(), 0.0, 0.0, 0.0, 4.0) is not None
+
+
+def test_what_the_height_band_costs():
+    """Stated plainly rather than left implicit: something under 0.9 m tall that the camera
+    could not name -- a dog, a very small child -- no longer raises an EARLY warning. It is
+    not invisible: the corridor rule still stops the van when it is actually in the way, with
+    no size gate at all. What is lost is the few seconds of notice."""
+    from warp_av.planning.prediction import predict_route_conflict
+    assert predict_route_conflict([crosser("obstacle", 0.5, 0.3)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is None
+    # ...but the moment the camera names it, its size stops arguing
+    assert predict_route_conflict([crosser("pedestrian", 0.5, 0.3)], route_ahead(),
                                   0.0, 0.0, 0.0, 4.0) is not None
 
 
