@@ -142,6 +142,11 @@ def test_release_latch_survives_detection_blinks():
 
     r1 = b.update(blocked, stopped, 500, True)
     assert r1.behavior == DrivingBehavior.STOPPED_VEHICLE
+    # The car has been sitting in front of us for a second, which is what a real blocker
+    # does: measured live, a real cone in the lane blocked for 385 frames in a row against
+    # four for a phantom. Only an ESTABLISHED blocker arms the release latch.
+    b._block_run_since = _time.time() - 1.0
+    b.update(blocked, stopped, 500, True)
     # one-tick blink: perception says clear — the van must STAY stopped
     r2 = b.update(clear, stopped, 500, True)
     assert r2.should_stop and r2.behavior == DrivingBehavior.STOPPED_VEHICLE
@@ -150,3 +155,31 @@ def test_release_latch_survives_detection_blinks():
     b._block_memory = (_time.time() - 2.5, DrivingBehavior.STOPPED_VEHICLE, 5.0)
     r3 = b.update(clear, stopped, 500, True)
     assert not r3.should_stop, "after a genuinely clear window the van moves"
+
+
+def test_a_flicker_does_not_freeze_the_van_for_two_seconds():
+    """The other side of the latch, and the expensive one.
+
+    The latch is for a blocker that blinks OUT of detection. It was arming on one that
+    blinked IN: a single blocked frame bought two seconds of standing still. Measured live
+    on an empty road in Town10HD on 2026-09-10, a phantom block lasted four frames and cost
+    about twenty-two, and 62% of the van's obstacle-stopped time was spent in this latch
+    with nothing blocking at all.
+
+    The van still STOPS for the flicker on the frame it happens -- that is not in question
+    here -- it just does not go on standing there afterwards.
+    """
+    from warp_av.behavior.behavior import BehaviorSystem, DrivingBehavior
+    from warp_av.localization.localization import Pose
+
+    b = BehaviorSystem(); b.set_mission()
+    blocked = PerceptionOutput(path_blocked=True, closest_obstacle_distance=5.0,
+                               closest_obstacle_type=ObjectType.OBSTACLE)
+    clear = PerceptionOutput()
+    stopped = Pose(healthy=True)
+
+    for _ in range(4):                       # four frames, as measured
+        assert b.update(blocked, stopped, 500, True).should_stop
+    out = b.update(clear, stopped, 500, True)
+    assert not out.should_stop, "a four-frame flicker held the van after the path was clear"
+    assert b._block_memory is None

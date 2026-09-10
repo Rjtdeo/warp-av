@@ -128,6 +128,20 @@ class BehaviorSystem:
         self._park_best_d = None             # closest approach to the parking spot
         self.block_release_s = 2.0           # blocked verdicts must stay clear this long before moving again
         self._block_memory = None            # (t_last_blocked, kind, distance)
+        # ...but the latch only ARMS once a blocker has been there a moment. It exists for a
+        # blocker that BLINKS OUT of detection, and it was arming on one that blinked IN.
+        #
+        # Measured live in Town10HD on 2026-09-10, empty road: a phantom block lasted FOUR
+        # frames; a real cone in the lane lasted 385, which is every frame it was in front of
+        # the van. Four frames of blocking bought two seconds of standing still, so one
+        # flicker cost about twenty-two frames -- and 62% of the van's obstacle-stopped time
+        # was spent in this latch with nothing blocking at all.
+        #
+        # This costs nothing in safety. The van STOPS on the very first blocked frame either
+        # way; all this decides is whether it keeps standing after the path is clear again.
+        # A real blocker earns that within two thirds of a second, while it is already stopped.
+        self.block_latch_after_s = 0.6
+        self._block_run_since = None         # when the current run of blocked frames began
         self.destination_threshold = 1.5 # meters — parked when this close to the SPOT (was 5.0 anywhere on the road)
         self.parked_max_speed = 0.8      # ...and slower than this
         self.park_zone_m = 15.0          # final approach: taper to walking pace
@@ -304,6 +318,8 @@ class BehaviorSystem:
         # brawl the verdict flapped every 1-3 s and the van crept half a
         # metre per blink into a shrinking gap (two contacts). Stay stopped
         # until the path has been continuously clear for block_release_s.
+        # nothing is blocking this frame, so the run of blocked frames is over
+        self._block_run_since = None
         if (self._block_memory is not None
                 and pose.speed < 1.2
                 and time.time() - self._block_memory[0] < self.block_release_s):
@@ -475,9 +491,19 @@ class BehaviorSystem:
 
     def _note_block(self, kind, distance):
         """Remember a CLOSE physical blocker so a one-tick detection blink
-        cannot release the van instantly (release latch above)."""
-        if distance is not None and distance < 12.0:
-            self._block_memory = (time.time(), kind, distance)
+        cannot release the van instantly (release latch above).
+
+        Only once it has been there for block_latch_after_s: see the note on that setting.
+        A thing that appears for four frames and vanishes has not earned a two-second hold.
+        """
+        if distance is None or distance >= 12.0:
+            self._block_run_since = None
+            return
+        now = time.time()
+        if self._block_run_since is None:
+            self._block_run_since = now
+        if now - self._block_run_since >= self.block_latch_after_s:
+            self._block_memory = (now, kind, distance)
 
     def _decide(self, behavior, reason, speed, stop) -> BehaviorOutput:
         # Every cap can only ever slow the van down, never speed it up, and none of them can

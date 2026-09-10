@@ -225,3 +225,59 @@ def test_a_big_thing_blocks_however_it_is_turned():
     counts, because we cannot tell from a footprint which way it is facing."""
     from warp_av.planning.planner import would_scrape
     assert would_scrape(kerb_thing(3.0, 0.2), 1.60) is True
+
+
+# ---------------------------------------------------------------- who may raise a warning
+
+
+def crosser(kind, height, width, y=5.0, vy=-1.6):
+    class Obj:
+        object_type = kind
+        x, y_ = 12.0, y
+        def __init__(self):
+            self.x, self.y = 12.0, y
+            self.vx_world, self.vy_world = 0.0, vy
+            self.speed = abs(vy)
+            self.stationary = False
+            self.height_m, self.width_m = height, width
+            self.id = 4
+    return Obj()
+
+
+def route_ahead():
+    from warp_av.planning.planner import Waypoint
+    return [Waypoint(x=float(i) * 2.0, y=0.0) for i in range(40)]
+
+
+def test_a_knee_high_post_cannot_raise_a_crossing_warning():
+    """Every one of the 31 warnings left on an empty road came from an unnamed lump 0.0 to
+    0.3 m wide and under a metre tall -- kerb, railings, posts. Nothing that crosses a road
+    is 10 cm wide and knee high."""
+    from warp_av.planning.prediction import predict_route_conflict
+    assert predict_route_conflict([crosser("obstacle", 0.7, 0.1)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is None
+
+
+def test_a_person_the_camera_named_is_trusted_at_any_size():
+    """The LiDAR sees one face of a thing, and a half-seen person measures 0.3 x 0.1 m. If the
+    camera has NAMED it, its size is not allowed to argue."""
+    from warp_av.planning.prediction import predict_route_conflict
+    hit = predict_route_conflict([crosser("pedestrian", 0.4, 0.1)], route_ahead(),
+                                 0.0, 0.0, 0.0, 4.0)
+    assert hit is not None and hit["type"] == "pedestrian"
+
+
+def test_an_unnamed_thing_big_enough_to_be_a_road_user_still_counts():
+    """A person the camera missed, but the LiDAR saw properly, is still a person."""
+    from warp_av.planning.prediction import predict_route_conflict
+    assert predict_route_conflict([crosser("obstacle", 1.7, 0.4)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is not None
+    assert predict_route_conflict([crosser("obstacle", 0.8, 0.6)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is not None
+
+
+def test_something_we_never_sized_still_counts():
+    """Not having measured a thing is not evidence that it is small."""
+    from warp_av.planning.prediction import predict_route_conflict
+    assert predict_route_conflict([crosser("obstacle", None, None)], route_ahead(),
+                                  0.0, 0.0, 0.0, 4.0) is not None

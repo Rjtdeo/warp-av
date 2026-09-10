@@ -30,6 +30,43 @@ CORRIDOR_M = 2.2         # same body-width band the live corridor uses
 MEET_WINDOW_M = 7.0      # how close our arrival must be to count as a meeting
 MIN_CLOSING_MPS = 0.5    # ... and it must actually be COMING TOWARDS our path, this fast
 
+# An UNNAMED lump must also look like something that uses roads before it may raise a warning.
+# Anything the camera has actually recognised -- a person, someone on a bicycle, a vehicle --
+# is trusted whatever size it measures, because the LiDAR only ever sees one face of a thing
+# and a half-seen pedestrian can measure 0.3 x 0.1 m.
+#
+# Measured live in Town10HD on 2026-09-10, empty road, after the closing rule went in: every
+# one of the 31 remaining warnings came from an unnamed lump 0.0 to 0.3 m wide, thirty of the
+# thirty-one under a metre tall, all of them 2.2 to 5.4 m out to the left and outside the lane.
+# Kerb, railings and posts. Nothing that crosses a road is 10 cm wide and knee high.
+#
+# The cost, stated plainly: a small animal, or a child under a metre, that the camera fails to
+# name will no longer raise an EARLY warning. It is not invisible -- the corridor rule still
+# stops the van when it is actually in the way, with no size gate at all. What is lost is the
+# few seconds of notice, and only for something perception could not identify.
+NAMED_ROAD_USERS = ("pedestrian", "cyclist", "vehicle")
+MIN_UNNAMED_HEIGHT_M = 1.0    # taller than a bollard
+MIN_UNNAMED_WIDTH_M = 0.5     # or wide enough to be a body rather than a post
+
+
+def _could_use_a_road(obj) -> bool:
+    """Could this thing be a road user at all? Named ones always could."""
+    kind = getattr(getattr(obj, "object_type", None), "value", str(getattr(obj, "object_type", "")))
+    if kind in NAMED_ROAD_USERS:
+        return True
+    height = getattr(obj, "height_m", None)
+    width = getattr(obj, "width_m", None)
+    try:
+        height = float(height) if height is not None else None
+        width = float(width) if width is not None else None
+    except (TypeError, ValueError):
+        return True                      # nothing measured: do not talk ourselves out of it
+    if height is None and width is None:
+        return True
+    tall = height is not None and height >= MIN_UNNAMED_HEIGHT_M
+    wide = width is not None and width >= MIN_UNNAMED_WIDTH_M
+    return tall or wide
+
 # Why the closing rule exists.
 #
 # Beside a kerb the LiDAR hands back dozens of near-identical slivers -- railings, posts, wall
@@ -96,6 +133,8 @@ def predict_route_conflict(objects, route_wps, ego_x, ego_y, ego_yaw, ego_speed)
         vy = getattr(obj, "vy_world", 0.0)
         if math.hypot(vx, vy) < MIN_SPEED:
             continue
+        if not _could_use_a_road(obj):
+            continue          # a 10 cm post is not about to walk into the road
         # ego frame -> world (same transform the corridor uses)
         wx = ego_x + cos_y * obj.x - sin_y * obj.y
         wy = ego_y + sin_y * obj.x + cos_y * obj.y
