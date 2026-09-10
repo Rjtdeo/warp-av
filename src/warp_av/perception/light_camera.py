@@ -57,9 +57,27 @@ a green tree above the light or a red sign below it cannot say go. And green, th
 that lets the van move, must be seen twice running before it is believed; red, yellow and
 "cannot read it" are believed the first time.
 
-The honest limit: beyond 45 m the lamp is two or three pixels across, and one green in five is
-read as amber. That costs a slow-down, never a red light run, and by 25 m every green in the
-set was read correctly.
+Two honest limits.
+
+Beyond 45 m the lamp is two or three pixels across and one green in five reads as amber. That
+costs a slow-down, never a red light run, and by 25 m every green in the set was read right.
+
+And in the worst weather it stops working almost completely. Measured over 45 approaches per
+weather, on the same lights:
+
+    clear noon           78% of greens recognised    0 false goes    45/45 reds caught
+    wet cloudy           84%                         0               45/45
+    hard rain            91%                         0               45/45
+    sunset               73%                         0               45/45
+    night                89%                         0               45/45
+    night + storm + fog   7%                         0               45/45
+
+Rain and night are fine -- better than clear noon, because a glowing lamp stands out more
+against a dark or dull background than against a bright one. Night plus storm plus fog is not:
+the fog swallows the lamp and only three greens in forty-five get through. The van does not
+run a light in that weather -- every red was still caught and there was not one false go in
+270 readings -- but it will sit at green lights waiting. That is a real limitation to fix in
+phase 17 (night and rain scoring), not something to paper over here.
 
 Swapping this in is one argument, exactly as phase 15 left room for:
 
