@@ -400,6 +400,7 @@ class WarpAV:
                 perception.traffic_light_distance_m = tl_dist
             except Exception:
                 pass
+        _phase("traffic light (asks CARLA)")
 
         if self._route and perception.healthy and pose.healthy:
             # The map's DECORATIVE parked cars are not actors, so ground-truth
