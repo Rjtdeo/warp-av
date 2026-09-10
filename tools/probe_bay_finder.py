@@ -62,6 +62,12 @@ def main():
                     help="place the sensor one driving lane further LEFT where one exists - the rig's 'set-back' bays are this: the van in the left lane of a two-lane road, kerb 7-9 m out")
     a = ap.parse_args()
 
+    # This puts CARLA into lock-step and spawns its own sensors, which breaks a running
+    # stack's camera, LiDAR and clock. Refuse rather than do that quietly.
+    from scratch_world import stack_is_up
+    if stack_is_up():
+        sys.exit("the van's stack is running: stop it first (schtasks /End /TN WarpAVStack)")
+
     client = carla.Client("localhost", 2000)
     client.set_timeout(15.0)
     world = client.get_world()
