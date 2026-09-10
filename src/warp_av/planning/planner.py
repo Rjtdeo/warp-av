@@ -28,6 +28,7 @@ DEFAULT_OBSTACLE_RADIUS_M = {"vehicle": 0.9, "pedestrian": 0.4, "obstacle": 0.5,
 FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary objects this far ahead
 
 VAN_HALF_WIDTH_M = 0.99               # the CARLA Sprinter, measured (planning/footprint_config.py)
+VAN_HALF_LENGTH_M = 2.96              # ... and its nose, that far ahead of the point it steers about
 MAX_BLOCK_HALFWIDTH_M = 2.20          # nothing beyond this is looked at at all, so no band may exceed it
 
 
@@ -96,6 +97,26 @@ def scrape_half_width_m(obj):
     measured = 0.5 * math.hypot(length, width)
     kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
     return max(measured, SCRAPE_HALF_WIDTH_FLOOR_M.get(kind, DEFAULT_SCRAPE_HALF_WIDTH_M))
+
+
+#: How far a thing whose size was never measured is assumed to reach. Half a car's length:
+#: enough that an unmeasured lump beside the driver's door still stops the van, and not so
+#: much that one well behind the tail does. Not knowing how big something is has never been
+#: a reason to drive at it.
+UNMEASURED_REACH_M = 2.5
+
+
+def reach_toward_us_m(obj) -> float:
+    """How far this thing's BODY might extend back toward our bumper.
+
+    The half-diagonal of what was measured, so it over-estimates whichever way the thing is
+    turned -- which is the safe direction. This is a geometric question and takes the
+    measured body, not obstacle_radius_m: that one answers "how much room does it deserve",
+    floors an unnamed lump at 0.4 m for politeness, and using it here read a nine-metre
+    lorry as half a metre long.
+    """
+    half = scrape_half_width_m(obj)
+    return UNMEASURED_REACH_M if half is None else max(half, 0.0)
 
 
 def would_scrape(obj, lat_m: float) -> bool:
@@ -738,6 +759,9 @@ class RoutePlanner:
 
         ego_arc, _, _ = arc_pos(ego_x, ego_y)
         cos_y, sin_y = math.cos(ego_yaw), math.sin(ego_yaw)
+        # how far ahead of the steering point the van's nose is: its real body when the
+        # caller gave us one, otherwise the measured Sprinter
+        front_bumper_m = (footprint.half_length if footprint is not None else VAN_HALF_LENGTH_M)
 
         closest = 999.0
         closest_type = perception.closest_obstacle_type
@@ -775,6 +799,20 @@ class RoutePlanner:
             near_junction = (wps[oseg].is_junction
                              or wps[min(oseg + 1, n - 1)].is_junction)
             stationary = getattr(obj, "speed", 0.0) < 0.5
+            # Is any part of it at or ahead of the FRONT BUMPER? Driving forward cannot
+            # reach anything behind that line.
+            #
+            # `along` is measured from the point the van steers about, which sits 2.96 m
+            # behind its nose, and the loop keeps everything from 1 m behind that point.
+            # So an object level with the driver's door counted as an obstacle "ahead", and
+            # one beside the rear wheels was reported at 0.0 m -- max(0.0, along) clamped
+            # it -- and hard-stopped the van. Seen live on 2026-09-10: eleven ticks in a row
+            # blocked by object 3845 "at 0.0 m", with nothing in front of the van.
+            #
+            # The object's own size counts, so a lorry whose middle is level with our door
+            # but whose nose reaches past our bumper still blocks.
+            nose_gap = (along - front_bumper_m) + reach_toward_us_m(obj)
+            reaches_our_nose = nose_gap > 0.0
             # Planning V2: does the swept body decide this object's hard-block?
             sweep_decides = (footprint is not None and stationary and not near_junction)
             # Old rules never look beyond 2.20 m from the line. The swept body
@@ -809,7 +847,8 @@ class RoutePlanner:
                 # a person, 0.4 m for a bin -- and until now nothing read it. The band can
                 # only ever GROW: a bin keeps today's 1.40 m, a person gains 0.19 m, and
                 # nothing anywhere gets a narrower band than it had before.
-                if dist < danger_m and lat <= block_band_m(obj, block_halfwidth_m) and not sweep_decides:
+                if (dist < danger_m and lat <= block_band_m(obj, block_halfwidth_m)
+                        and not sweep_decides and reaches_our_nose):
                     blocked = True
                     _note_block(BLOCKED_TRACKED_OBJECT, obj, along, lat)
             # Physical-width conflict: centre-line thresholds ignore that the
@@ -837,7 +876,7 @@ class RoutePlanner:
                 # for anything in this band, which on a normal street means stopping for the
                 # kerb: measured live, 18% of frames on an empty road, for railings and posts
                 # 1.36 to 2.20 m off the line and not on any road at all. See would_scrape.
-                if not sweep_decides and would_scrape(obj, lat):
+                if not sweep_decides and would_scrape(obj, lat) and reaches_our_nose:
                     blocked = True
                     _note_block(BLOCKED_SCRAPE, obj, along, lat)
             # Planning V2: the van's real body, slid along the route, decides
