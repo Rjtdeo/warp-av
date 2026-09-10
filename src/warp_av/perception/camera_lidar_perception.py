@@ -155,8 +155,15 @@ class CameraDetection:
 # YOLOX USING ONLY OPENCV DNN
 # ============================================================
 
-#: how many cores the detector may use. See the note where it is applied.
-DEFAULT_DETECTOR_THREADS = 6
+#: How many cores the detector may use. 0 means "all but two", which is what it always did.
+#:
+#: I set this to 6 on a theory that the detector was starving the driving loop, and then
+#: measured it: 20, 12, 8, 6, 4 and 2 cores. The detector got steadily slower exactly as you
+#: would expect -- 150 ms a picture at 20 cores, 821 ms at 2 -- and the loop did not improve
+#: at all, bouncing between 7.1 and 9.2 Hz with no pattern. So starving the detector costs a
+#: lot and buys nothing. The default is back to what it was; the setting stays because being
+#: able to run that experiment again is worth keeping.
+DEFAULT_DETECTOR_THREADS = 0
 
 
 def detector_threads(env=None) -> int:
@@ -168,7 +175,7 @@ def detector_threads(env=None) -> int:
         want = DEFAULT_DETECTOR_THREADS
     cores = os.cpu_count() or 4
     if want <= 0:
-        return cores
+        return max(1, cores - 2)      # what it always did: all but two
     return max(1, min(want, cores))
 
 

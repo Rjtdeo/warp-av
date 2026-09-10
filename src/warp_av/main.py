@@ -169,6 +169,7 @@ class WarpAV:
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
+        self._phase_ms = {}           # ... and which part of it took how long
         self._last_tick_error = ""
 
         # Route selected on the dashboard before START is pressed.
@@ -361,11 +362,25 @@ class WarpAV:
         if extra_delay > 0:
             time.sleep(extra_delay)
 
+        # Where the tick's time actually goes. Two thirds of it was unaccounted for -- the
+        # only timings on show were the ground filter's and the free-space map's, both
+        # inside perception, so a slow tick could not be pinned on anything.
+        _phase_t0 = time.perf_counter()
+        _phases = {}
+
+        def _phase(name):
+            nonlocal _phase_t0
+            now = time.perf_counter()
+            _phases[name] = (now - _phase_t0) * 1000.0
+            _phase_t0 = now
+
         # 1. Localize
         pose = self.localization.update()
+        _phase("where am i")
 
         # 2. Perceive
         perception = self.perception.update()
+        _phase("perception")
         # Raw surroundings for the learned parker's feelers (van frame), taken
         # BEFORE the corridor filter throws away everything beside us.
         try:
@@ -403,6 +418,7 @@ class WarpAV:
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
                 footprint=self.footprint_blocking.active_footprint(),   # None while the flag is OFF
             )
+        _phase("route corridor")
 
         self._last_perception = perception      # the learned parker's stop-override rule reads this
         # One sheet saying what the van knows, built once and read by everyone else
@@ -563,6 +579,7 @@ class WarpAV:
                 predicted = None
         self._predicted_conflict = predicted
 
+        _phase("safety and health")
         behavior_output = self.behavior.update(
             perception=perception,
             world=self._world,                 # day 7: the one sheet of what the van knows
@@ -743,6 +760,11 @@ class WarpAV:
         if self.mission_manager.current_mission:
             mission_state = self.mission_manager.current_mission.state.value
 
+        _phase("drive and the rest")
+        # keep a smoothed picture, so one odd tick does not mislead
+        for _k, _v in _phases.items():
+            self._phase_ms[_k] = 0.85 * self._phase_ms.get(_k, _v) + 0.15 * _v
+
         self.logger.log_tick(
             pose_x=pose.x, pose_y=pose.y, pose_yaw=pose.yaw, pose_speed=pose.speed,
             behavior=behavior_output.behavior.value,
@@ -918,6 +940,8 @@ class WarpAV:
             "tick": self._tick_count,
             "loop_hz": round(self._loop_hz, 1) if self._loop_hz else None,
             "tick_ms": round(self._tick_ms, 1),
+            # where the tick's time goes, so a slow one can be pinned on something
+            "tick_phases_ms": {k: round(v, 1) for k, v in sorted(self._phase_ms.items())},
             "autonomy_state": self.vehicle_adapter._autonomy_state.value,
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
