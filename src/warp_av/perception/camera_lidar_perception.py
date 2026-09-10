@@ -1367,9 +1367,27 @@ class CameraLidarPerception:
         named = []
         for det in detections:
             if det.class_id == PERSON_CLASS:
-                # a person standing over a bicycle's box is riding it, and a cyclist needs
-                # a bicycle's room while still being a person to give way to
-                over = max((box_overlap(det.box, b.box) for b in ridden), default=0.0)
+                # A person standing over a bicycle's box is riding it, and a cyclist needs a
+                # bicycle's room while still being a person to give way to.
+                #
+                # Asked BOTH WAYS ROUND, and that matters. It used to ask only how much of
+                # the PERSON was covered by the bike, and a rider's box is taller than the
+                # bicycle underneath them, so that number is small and marginal. Measured on
+                # Town10HD 2026-09-09 with three bicycles and a motorbike: person-covered-by-
+                # bike came out 0.33, 0.46, 0.56, 0.62, 0.65 -- and the 0.33 was a real rider
+                # called a pedestrian, missing the bar by 0.02. The other way round gave
+                # 0.58, 0.67, 0.72, 0.76, 0.91 on the same riders: always higher, never
+                # marginal. Taking the larger of the two names every one of them correctly.
+                #
+                # What this test CANNOT do, measured rather than assumed: tell a rider from
+                # somebody standing beside the bike. A person 2.5 m away scored 0.48 one way
+                # and 0.73 the other -- the same as a real rider. That was already true
+                # before this change, and it fails in the safe direction: a bystander called
+                # a cyclist gets MORE room (0.8 m against 0.6 m) and is still someone the van
+                # gives way to. Telling them apart needs the detector to place the rider ON
+                # the saddle, which is class-list work, not a threshold.
+                over = max((max(box_overlap(det.box, b.box), box_overlap(b.box, det.box))
+                            for b in ridden), default=0.0)
                 named.append((det, "cyclist" if over >= RIDER_OVERLAP else "pedestrian", over))
             elif det.class_id in VEHICLE_CLASSES:
                 named.append((det, "vehicle", 0.0))

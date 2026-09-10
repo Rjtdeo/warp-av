@@ -207,3 +207,38 @@ def test_what_the_camera_can_and_cannot_see_here():
     """
     from warp_av.perception.camera_lidar_perception import RIDDEN_CONFIDENCE_THRESHOLD
     assert 0.10 <= RIDDEN_CONFIDENCE_THRESHOLD <= 0.25
+
+
+# ---------------------------------------------------------------- the rider test, both ways
+
+from warp_av.perception.camera_model import box_overlap
+from warp_av.perception.camera_lidar_perception import RIDER_OVERLAP
+
+
+def rider_score(person_box, bike_box):
+    """What the naming code now computes: the larger of the two overlaps."""
+    return max(box_overlap(person_box, bike_box), box_overlap(bike_box, person_box))
+
+
+def test_a_rider_taller_than_their_bicycle_is_still_a_rider():
+    """The live case that was failing. Measured on Town10HD 2026-09-09: a real rider's
+    person box was 107 px tall over an 87 px bicycle box, and the old one-way test scored
+    0.33 -- missing the 0.35 bar by 0.02 and calling the rider a pedestrian."""
+    person = (300.0, 200.0, 60.0, 107.0)      # left, top, width, height
+    bike = (300.0, 220.0, 60.0, 87.0)
+    one_way = box_overlap(person, bike)
+    assert one_way < RIDER_OVERLAP, "this case only matters because the old test failed it"
+    assert rider_score(person, bike) >= RIDER_OVERLAP
+
+
+def test_the_real_measured_riders_all_pass():
+    """Every rider measured live, as (person covered by bike, bike covered by person)."""
+    measured = [(0.46, 0.72), (0.33, 0.58), (0.62, 0.67), (0.56, 0.76), (0.65, 0.91)]
+    for a, b in measured:
+        assert max(a, b) >= RIDER_OVERLAP, f"({a}, {b}) would not be called a cyclist"
+
+
+def test_someone_well_away_from_any_bike_is_not_a_rider():
+    person = (100.0, 200.0, 50.0, 110.0)
+    bike = (400.0, 240.0, 70.0, 80.0)          # a long way off to the side
+    assert rider_score(person, bike) == 0.0
