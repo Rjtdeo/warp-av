@@ -6,11 +6,15 @@ gap to a real road fastest.
 
 ## Now (highest value)
 
-1. **Camera + LiDAR perception for real.** Today the van reads object positions from the
-   simulator ("ground truth") — a real van never gets that. Switch detection + tracking to
-   the on-board sensors, then re-run the same 200-mission sweep in camera mode and publish
-   the honest before/after pass-rate. This one number is how perception readiness is
-   measured everywhere.
+1. **Camera + LiDAR perception — SHIPPED, sweep still owed.** `camera_lidar` is now the
+   boot default: four cameras through one shared YOLOX detector, geometric camera–LiDAR
+   fusion, multi-object tracking with velocity, an occupancy/free-space grid, kerb fitting,
+   and map-guided camera traffic-light colour. `ground_truth` remains an automatic fallback.
+   **What is still owed is the number:** re-run the same 200-mission sweep in camera mode and
+   publish the honest before/after pass-rate. Until that exists, perception readiness is
+   claimed rather than measured. Remaining gaps are in
+   [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — chiefly simulator-provided localization, a 1 Hz
+   per-camera semantic rate, and no camera-only object hypotheses.
 2. **Right-of-way reasoning at junctions.** The van looks once, then commits blindly; both
    real collisions in the sweep were crossing traffic during junction exit. It must keep
    watching while crossing and yield by rule, not by radius.

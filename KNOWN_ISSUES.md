@@ -1,96 +1,396 @@
-# Known Issues
+# Known Issues and Current Limitations
 
-## Perception Uses Ground Truth
+Warp AV is a **CARLA research prototype**. It is not a production autonomous-driving
+system and has never driven a real vehicle.
 
-Perception currently reads CARLA's actor list (world.get_actors()) instead of processing camera/lidar data with ML models. This means:
-- Detection is perfect in simulation but wouldn't work with real sensors
-- No camera-based object detection (YOLO etc.) is integrated yet
-- This is an intentional shortcut to get the full pipeline working first
-- Next step: run YOLOv8 on camera images for real perception
+This file lists what is actually wrong or missing **today**, verified against the code
+rather than against older documentation. Anything already solved has moved to
+[Recently resolved](#recently-resolved) at the bottom or been deleted.
 
-## No Lane Detection
+Priorities:
 
-The vehicle follows CARLA's route waypoints but does not detect lane markings visually. It relies on the map graph for staying in lane.
+| | |
+|---|---|
+| **P0** | Blocks any real-vehicle work. Mostly simulator dependencies with no on-board replacement yet. |
+| **P1** | Perception or behaviour robustness. The van drives, but these limit where and how well. |
+| **P2** | Capability not yet attempted. |
 
-## Safety Buffers (Troy #4, applied)
+---
 
-Stop trigger (perception.danger_distance) raised 5 → 8 m in BOTH perception implementations; slow-down zone (behavior.slow_distance) 15 → 20 m. Lateral path width intentionally left at 3.5 m — widening it makes the van stop for shoulder objects (parked cars, cones) and would flip the expected result of the path-box boundary scenarios; revisit together with route-aware corridor checking.
+## P0 — Real-vehicle blockers
 
-## Steering Controller (improved, needs CARLA validation)
+### Localization is CARLA ground truth
 
-Fix for the observed weave/brake-taps (Troy #5): speed-scaled lookahead (1.6 s of travel, 5–13 m, was fixed 5 m), speed-scheduled steering gain (1.5 at ≤3 m/s → 0.55 at ≥10 m/s, was fixed 1.5), low-pass + rate limit on steering, and a coast band so small speed overshoot lifts off instead of tapping the brakes. Covered by tests/test_controller_stability.py (kinematic bicycle model). NOTE: the original oscillation could not be reproduced in the lag-free offline model — the tuning is validated for stability offline, but the before/after weave comparison must be done in CARLA (steer_oscillation_index in nm_speed_sweep / rg_geometry scenarios). A Stanley controller or MPC is still the longer-term answer.
+**Current behaviour.** `localization/localization.py` reads `vehicle.get_transform()`.
+GNSS and IMU sensors are attached in `carla_sensor_adapter.py` and their readings are
+published, but nothing fuses them. There is no EKF, no wheel odometry, no uncertainty
+estimate that anything downstream consumes.
 
-## No Re-planning
+**Why it matters.** Every route-relative calculation in the stack — the route corridor,
+traffic-light distance-along-route, kerb offsets, parking-slot geometry — assumes the pose
+is exact. On a real van, pose error is the dominant error source, and none of that code
+has a tolerance for it.
 
-If the route is blocked, the vehicle stops but does not re-plan around the obstacle. It waits until the path is clear.
+**Planned resolution.** RTK GNSS + IMU + wheel odometry fusion behind the existing
+`LocalizationSystem` interface, publishing a covariance the planner actually reads.
 
-## Single Camera Only
+**Validation required.** Re-run the mission sweep with injected pose noise before and
+after, and show which behaviours degrade.
 
-Only a front-facing camera is used. No rear, side, or surround view. Blind spots exist.
+---
 
-## No Sensor Fusion
+### LiDAR sweep de-skew uses the simulator's pose
 
-Camera, lidar, GNSS, and IMU data are not fused. Each is used independently. Real system would need an EKF or similar.
+**Current behaviour.** `adapters/lidar_sweep.py` glues CARLA's per-frame wedges into one
+360° sweep by transforming each wedge into the world frame using **the sensor transform
+CARLA reports at capture**. That transform is exact and instantaneous.
 
-## Console Is Polling-Based
+**Why it matters.** On real hardware, motion compensation needs a time-aligned pose
+estimate per wedge, which is a harder problem and a noisier input. Sweep quality —
+and therefore clustering and object geometry — will not transfer unchanged.
 
-Console polls the API every 200ms instead of using WebSocket push. Works but adds latency.
+**Planned resolution.** Feed de-skew from the localization estimate rather than the
+simulator, once that estimate exists.
 
-## Localization Is Perfect
+---
 
-In simulation, localization reads CARLA's ground truth position. With real sensors, this would need GNSS+IMU+odometry fusion with uncertainty estimation.
+### Traffic-light geometry comes from the simulator
 
-## Tests
-`tests/` has 22 pytest cases (catalog integrity, evaluator, safety supervisor, behaviour priority, command validation, fault injector) that run without CARLA. Scenario execution (`scenarios/run_scenario.py`) needs a live CARLA + stack and is not in CI.
+**Current behaviour.** Two separate map dependencies, both from CARLA:
 
-## Hardcoded CARLA Settings
+* `SignalMap.from_world()` reads every light's stop waypoints, giving stop-line positions
+  and the `(road_id, lane_id)` pairs each light governs.
+* `LampMap.from_world()` reads `traffic_light.get_light_boxes()` — the **exact 3D position
+  and size of each lamp housing**. The camera colour reader projects that box into the
+  image and classifies the pixels inside it.
 
-CARLA host/port, vehicle type, sensor configurations are partially hardcoded. Should be fully configurable.
+The colour itself is read from camera pixels. The *place to look* is not.
 
-## No Map Boundaries
+**Why it matters.** This is map-guided classification, not autonomous signal discovery.
+A real van needs either an HD map carrying the same lamp priors, or a detector that finds
+the signal head in the image itself.
 
-Vehicle doesn't know its allowed operating area. Safety supervisor should check geofencing.
+**Planned resolution.** HD-map lamp priors where a map exists; an image-space signal-head
+detector where one does not. The van's own YOLOX already reports COCO class 9
+(traffic light) under about 40 m, which is a starting point but adds no range over the
+projection.
 
-## Technical Debt
+**Validation required.** Re-run the light accuracy measurement with the ROI taken from a
+detector instead of the map, and compare on the same lights and distances.
 
-- Error handling is minimal in some components
-- No graceful recovery from component crashes (just stops)
-- Logger doesn't handle disk-full scenarios
-- No unit tests for individual components
+---
 
-## Parking (Troy #7, implemented)
+### CARLA traffic-light state is still reachable
 
-Missions now finish PULLED OVER at the right kerb: at planning time the route's last ~15 m are bent to a kerbside spot (real Parking/Shoulder lane if the map has one, else the right edge of the rightmost driving lane); final approach tapers to walking pace (`parking` behavior) and completion requires being within 1.5 m of the spot, nearly stopped, AND within 6 deg of the lane direction (visibly parallel) (was: 5 m anywhere on the road at any speed). Precision is logged ("Parked 0.4 m from the kerbside spot, heading off 3 deg"). **FIND PARKING (slot parking):** runs AUTOMATICALLY at every mission start (boxes visible on map + front camera from the first metre; the chosen free box is the actual parking target). The operator button re-scans on demand — e.g. after new cars park. The button/auto search slices the bays near the destination into van-sized 7 m slots, checks each for occupancy (any other vehicle inside = taken), retargets the mission to the best FREE slot, draws all slots on the dashboard map (green = chosen, red = occupied, grey = free) and for slot parking, COMPLETION ITSELF requires the whole van inside the box (checked every tick against the van's real bounding box; the completion line reports the margins). If the van overshoots its closest approach it stops there honestly ("overshot the spot") instead of creeping off down the road. Slots are only created on STRAIGHT bay sections (heading spread <8 deg across the slot) at least ~6 m from any junction — no tilted corner parking, and most building-entrance cuts are excluded since they cluster at junctions. Limitations: occupancy is checked once at button-press (not re-checked on approach); the map cannot see painted curb markings or mid-block driveways, so a software slot can still land on one — hand-annotated no-parking zones per street are the clean fix if a specific spot misbehaves.
+**Current behaviour.** `carla_state_source()` in `perception/traffic_lights.py` reads the
+light's true colour from the simulator. It is used when:
 
-The automatic (no-button) behaviour PREFERS a real stopping bay: it scans the last 40 m of the route for a Parking/Shoulder strip beyond the lane line and parks fully inside it, off the driving lane ("kind": "bay"). No bay on that street -> kerb-hug inside the rightmost lane (~0.55 m right on a 3.5 m lane — visually subtle but that is all the room a lane has). If the pin sits in a bend/junction it parks on the nearest straight stretch before it. Limitations: forward pull-over only (no reverse/parallel manoeuvres); if there is no straight stretch within 40 m it parks on the lane as before; box tolerance 1.5 m — tighten after CARLA validation.
+* the stack is in `ground_truth` perception mode; **or**
+* `WARP_CAMERA_LIGHTS=0` is set, which exists for side-by-side comparison.
 
-## Gaps surfaced by the 1000-scenario catalog (see docs/SCENARIO_STRATEGY.md §3)
+In the default `camera_lidar` mode the colour comes from the camera. The choice is made
+per read (`main.py`, `light_colour()`), so switching perception mode at runtime switches
+the light source with it.
 
-- **Sensor health not wired to the safety supervisor.** `CarlaSensorAdapter` tracks camera/lidar/gnss/imu staleness but `SafetySupervisor.update()` never receives it; in ground-truth perception mode a dead camera does not stop the vehicle. 50 `sensor_degradation` + 9 `cf_disable` scenarios are `not_implemented` for this reason.
-- **No geofence / ODD enforcement** (40 `odd_boundary` scenarios define the contract).
-- ~~Traffic lights ignored~~ **Implemented (ground-truth mode)**: perception reports the light governing our lane (red/yellow/green), behavior rolls up and holds relative to the JUNCTION ENTRY measured along the route (bumper ~0.6 m before the crosswalk). CARLA's own stop waypoints proved 1-7 m early (probe median 6 m, tools/probe_stop_lines.py) and are only the fallback; no data at all -> stop where the light takes effect. If the light changes while the van is already entering the junction it CLEARS the box instead of freezing inside it. Still stops for yellow always (dilemma-zone "proceed if too close" is now possible since we know the distance — not yet implemented). Camera mode reports "none" until a light classifier exists → unchanged behavior there. Signs (stop/yield/speed) still ignored. CARLA validation of `tc_traffic_light` pending.
-- ~~No car-following~~ **Implemented (ground-truth mode)**: time-gap following (1.5 s + 8 m) behind moving vehicles — `behavior.FOLLOWING_VEHICLE`. In camera+LiDAR mode detections carry no speed (no tracking yet) so the van falls back to the old slow/stop behaviour; needs object tracking to enable following there. CARLA validation of `va_slow_lead` pending.
-- **No re-plan / mission-failure timeout on a persistent block.**
-- ~~Straight ego-frame in-path box~~ **Fixed when a route exists**: objects are judged against the ROUTE CORRIDOR (within 1.75 m of the planned polyline, ahead along the route) — a tilted mid-turn van no longer false-stops for vehicles in neighbouring lanes, and obstacles around a bend are seen at their true along-route distance (`so_after_curve` gap closed). The ego-frame box remains the fallback when no route is active. Caveat: trusts localization — fine in sim, needs a sanity bound with real sensors.
-- **Junction give-way implemented (heuristic)**: before any turn at a junction the van pauses 1.5 s and waits while a moving vehicle is within 25 m (own-lane lead and parked cars excluded); after 12 s of blocked waiting it creeps at 2 m/s rather than deadlocking; the van first ROLLS UP to ~3 m from the crossing before starting its look-and-wait (it used to freeze 8-10 m early). Limitations: radius-based conflict check, no lane-level right-of-way (a vehicle driving AWAY on the crossing road still counts as a conflict → occasional over-cautious waits), creep-on-timeout is a pragmatic policy that needs review before real roads (`va_intersection_crossing` scenarios upgrade from not_implemented to partial).
-- ~~Speed not curvature-aware~~ **Implemented**: `planner.curve_speed_cap` slows the van before/through bends (1.3 m/s² lateral comfort, gradual approach); appended to the behavior reason string when active.
-- ~~Corner cutting (kerb/divider clipping)~~ **Improved**: aim point measured along the route arc (not straight-line), shorter aim distance in bends, a centreline-correction steering term (mini-Stanley, gain 0.12 capped ±0.3), and slew-limited pull-away after slow points. Offline model: worst lane-centre deviation through a tight 90° corner 1.25 m → 0.78 m (van body stays in lane). CARLA validation pending — if it still clips a specific corner, raise `VehicleController.CT_GAIN` slightly (0.12 → 0.15).
-- **Supervisor reports only the first failed check** → second simultaneous fault invisible (`cf_double_failure`).
-- **Recovery policy undefined**: a component coming back auto-resumes motion (`cf_recover`, `cf_flapping`). Needs a decision + hysteresis.
-- **Wall-clock time (`time.time()`) everywhere** → an NTP/GNSS clock step trips every staleness check.
-- **Tie-breaking between a pedestrian and an obstacle at equal range depends on iteration order.**
-- **`get_next_waypoint` is O(n) per tick** — fine at 200 waypoints, noticeable at 2 km routes.
-- **Fault hooks exist only on ground-truth perception**; `camera_lidar_perception` has no `inject_fault` yet (injector returns `success: false`).
+**Why it matters.** This path must not be mistaken for the camera path when reading
+results. Any measurement should state which source was live.
 
-## Scenario runner limitations
-- Does not switch CARLA towns; town mismatch is recorded as a warning. Run per town or restart the stack in the right town.
-- Cut-in / cut-out are open-loop steering pulses (not lane-accurate); weave is ignored.
-- CARLA has no animals; a bin prop stands in. No pallet prop; a plant pot stands in.
-- `noise`/`latency` on raw sensors are accepted and logged but inert until perception/localization consume raw sensors.
-- Ego vehicle is found as "the vehicle nearest the API pose" because the adapter does not set a role_name.
-- The full 1000 have **not** been executed end-to-end yet; the catalog is validated structurally and by dry-run, the runner by unit tests of its evaluator. Expect first-run issues around actor spawn collisions on narrow roads.
+---
 
-## Fixed while building the catalog
-- A tick exception used to leave the last throttle command applied; now → brake command + `tick_error` log event + surfaced in `/api/state.last_tick_error`.
-- Vehicle adapter clamped NaN/inf and accepted stale commands; now rejects non-finite or >0.5 s-old commands and brakes (this is what a physical DBW gateway must do).
-- `/api/mission/start` validated (400 on malformed / out-of-range input).
+### No drive-by-wire or real-sensor validation
+
+**Current behaviour.** The vehicle interface talks to CARLA. `vehicle_interface.py`
+defines the boundary a real DBW gateway would sit behind, and the adapter already rejects
+non-finite or stale (>0.5 s) commands, which is what a physical gateway must do. Nothing
+beyond that has been exercised against hardware.
+
+**Also simulator-only:** the collision sensor (test instrumentation only), scenario
+ground-truth labels used for scoring, and CARLA map topology used for route planning.
+
+---
+
+## P1 — Perception robustness
+
+### One detector is shared across four cameras
+
+**Current behaviour.** A single YOLOX-S instance runs in one background thread
+(`perception/detection_worker.py`) at `inference_interval = 0.25 s`, taking the cameras
+**in turn**: front → left → right → rear. That is roughly **4 detections per second in
+total, so about 1 Hz per camera**, against camera frame rates of 10 Hz (front) and
+~7 Hz (sides and rear).
+
+**Why it matters.** Semantic labels on the side and rear views can be up to a second old.
+Detections older than `detection_max_age_s = 1.0` are dropped rather than used stale, so
+the failure mode is *missing* labels rather than wrong ones — but a fast crossing object
+on a side camera may never be labelled at all.
+
+**Planned resolution.** Either a cheaper detector, GPU inference, or a scheduler that
+weights the front camera and the direction of travel instead of plain round-robin.
+
+---
+
+### Camera detections cannot create objects on their own
+
+**Current behaviour.** Fusion runs in one direction. LiDAR clusters are formed first, then
+each cluster is projected into whichever cameras could see it and takes a class from any
+detection box it lands in (`camera_lidar_perception.py`, `_name_with_camera`). A camera
+detection with **no** LiDAR cluster behind it produces nothing.
+
+**Why it matters.** Anything the LiDAR misses is invisible regardless of how clearly the
+camera sees it — beyond LiDAR range (50 m), below the near-field beam floor, or too thin
+to cluster.
+
+**Planned resolution.** Camera-only object hypotheses with a range estimate from box
+geometry, held at lower confidence until LiDAR confirms them.
+
+---
+
+### Camera and LiDAR are not tightly time-synchronized
+
+**Current behaviour.** Each sensor callback stamps its own arrival with `time.time()`.
+Fusion uses the most recent frame and the most recent sweep, with a freshness cap, not a
+matched pair of timestamps.
+
+**Why it matters.** At 8 m/s a 100 ms mismatch is 0.8 m of projection error, which is
+enough to put a cluster in the wrong detection box at range.
+
+**Planned resolution.** Hardware-triggered or PTP-synchronized sensor clocks on the real
+van; timestamp-matched fusion in software.
+
+---
+
+### Detector classes are generic COCO, not a Warp ontology
+
+**Current behaviour.** YOLOX-S trained on COCO, run through OpenCV DNN at confidence 0.40.
+Only a few classes are used: person (0), vehicle (car 2, motorcycle 3, bus 5, truck 7),
+and bicycle/motorcycle (1, 3) at a lower 0.15 threshold **solely** to decide whether a
+detected person is riding something. A cyclist is inferred, never detected directly —
+either a person's box overlapping a bike's by 35%, or a person travelling faster than
+4 m/s having covered at least 3 m.
+
+Everything else — cones, bollards, pallets, kerb furniture, roll cages, open vehicle
+doors — is an unnamed `obstacle` with measured geometry and no semantics.
+
+**Why it matters.** A delivery van cares about exactly the objects COCO does not have.
+
+**Planned resolution.** A Warp-specific detector. Not started; no training data collected.
+
+---
+
+### Sensor health checks cover the front camera only
+
+**Current behaviour.** `_check_the_picture()` in `carla_sensor_adapter.py` is called from
+`_on_camera`, which is the **front** camera. It checks brightness, contrast, frame-to-frame
+change, and per-tile stuck patches (rain drops), plus LiDAR beam count and point-count
+collapse. The report reaches `SafetySupervisor.update(health=...)` and produces a speed cap
+or a stop.
+
+The left, right, rear and top views are stored (`latest_frames`) and used for detection,
+but **no health check runs on them**. A blinded side camera silently stops contributing
+labels and nothing reports it.
+
+**Planned resolution.** Run the same picture checks on every perception camera and name
+the failing view in the report.
+
+---
+
+### Near-field LiDAR blind region
+
+**Current behaviour.** One roof LiDAR at z = 2.5 m, `lower_fov = -30°`. The lowest beam
+reaches the ground about 4.3 m from the van; closer than that, low objects are below the
+beam fan.
+
+**Why it matters.** A kerb-height object directly in front of the bumper can be outside
+the sensor's view. The occupancy grid's blind-pocket rule caps speed when an unseen
+person-sized pocket is near, which mitigates but does not remove this.
+
+**Planned resolution.** Evaluate a lower `lower_fov` (-40/-45°) and, if that is not enough,
+a low front camera. Not yet measured.
+
+---
+
+### Occupancy and free space do not plan trajectories
+
+**Current behaviour.** The ego-centric grid (`perception/occupancy.py`, 0.25 m cells) holds
+FREE / OCCUPIED / UNKNOWN plus a separate ROAD-surface layer, with temporal memory (free
+believed ~0.5 s, blocked longer) and whole-square ego-motion compensation.
+
+Its only influence on driving is `blind_spot_ahead()` → `blind_spot_m` → a **speed cap** in
+`behavior.py`. It validates and slows; it does not generate paths. Planning still works off
+the route polyline and a corridor test.
+
+**This is not "occupancy-based motion planning" and should not be described as such.**
+
+**Planned resolution.** Use the grid as the primary free-space representation for
+trajectory generation, which also requires a real planner rather than a corridor test.
+
+---
+
+### Tracking uncertainty is measured but not used
+
+**Current behaviour.** `perception/tracking.py` runs a constant-velocity Kalman filter per
+track with a real covariance matrix `P`, persistent IDs, velocity, a moving/stationary
+decision, and a median size estimate. Confidence and a `size_uncertain` flag reach the world
+model.
+
+Nothing in `planning/` or `behavior/` reads the covariance. Decisions use point estimates.
+
+**Note:** `size_uncertain` was measured on a real pedestrian (88% of frames) and a real car
+(100%) as well as on phantom tracks (100%) — it flags almost everything and is **not**
+usable as a filter as it stands.
+
+---
+
+### Kerb sensing is geometric, not road understanding
+
+**Current behaviour.** `perception/road_edges.py` fits a left and a right kerb line from
+LiDAR points, each with a confidence flag and a `lateral_at(x)` query. Used for parking-spot
+placement and to stop kerb fragments being reported as obstacles.
+
+**Not implemented:** lane-marking perception, drivable-area segmentation, junction
+geometry, road-type semantics. Roads without a kerb produce no edge at all. Lane keeping
+comes from the map route, not from vision.
+
+---
+
+### Prediction is constant velocity
+
+**Current behaviour.** `planning/prediction.py` projects each moving object forward at its
+current velocity, 3.5 s ahead in 0.5 s steps, and warns when a projected position lands in
+the route corridor at a time the van will be there. Gates: the object must close on the
+path at ≥0.5 m/s, start within 12 m of the route, be a plausible road user by size, and not
+claim a speed its shape cannot support.
+
+**Not implemented:** intent, multimodality, interaction, map-aware manoeuvre priors.
+A vehicle indicating a turn is treated exactly like one going straight.
+
+---
+
+### Compute limits the decision rate
+
+**Current behaviour.** The main loop runs at roughly **9–10 Hz** measured
+(`/api/state.loop_hz`). YOLOX on CPU is the largest single cost, and its thread count is
+capped deliberately (`WARP_DETECTOR_THREADS`) because letting it take every core slowed
+the ground filter — which never touches the camera — by 2×.
+
+**Why it matters.** Control quality and reaction distance both scale with loop rate.
+A multi-rate design (fast control, slower perception) is the usual answer and does not
+exist yet.
+
+---
+
+## P2 — Not yet attempted
+
+* **Radar.** No radar sensor, no radar fusion. Nothing in the stack expects one.
+* **Sensor calibration.** Camera intrinsics come from the simulator's FOV and image size;
+  extrinsics are the mount transforms in `camera_model.VIEW_MOUNTS`. No calibration
+  procedure, no calibration validation, no allowance for drift.
+* **Re-planning around a blockage.** The van stops and waits. There is a blocked-route
+  timeout but no alternative route.
+* **Geofence / ODD enforcement.** 40 `odd_boundary` scenarios define the contract; nothing
+  enforces it.
+* **Signs.** Stop, give-way and speed-limit signs are not read.
+* **Reverse manoeuvres.** Forward pull-over only. A taken parking slot cannot be recovered
+  from by reversing.
+* **Multi-fault reporting.** `SafetySupervisor` reports only the first failed check, so a
+  second simultaneous fault is invisible (`cf_double_failure`).
+* **Recovery policy.** A component coming back auto-resumes motion with no hysteresis
+  (`cf_recover`, `cf_flapping`).
+* **Wall-clock dependence.** `time.time()` throughout, so an NTP or GNSS clock step trips
+  every staleness check at once.
+
+---
+
+## Behaviour gaps that are not perception
+
+These are real and observed; they are listed here so they are not mistaken for sensing
+faults.
+
+* **Off-route blindness.** `planner.filter_to_route_corridor` reports 999 m clear when the
+  van is more than about 2.2 m from its planned route. Measured: with a barrel at 6 m the
+  van detects it at every lateral offset and still reports a clear path. This caused a
+  mailbox strike on a long route.
+* **Steering wander.** Full-lock steering for about 7% of one long run. The controller is a
+  tuned pure-pursuit with a centreline correction term; a Stanley controller or MPC is the
+  longer-term answer.
+* **Junction give-way is radius-based.** No lane-level right-of-way, so a vehicle driving
+  *away* on the crossing road still counts as a conflict. Creep-on-timeout after 12 s is a
+  pragmatic policy that needs review before real roads.
+* **Yellow is always a stop.** The distance to the line is now known, so dilemma-zone
+  handling is possible, but is not implemented.
+
+---
+
+## Operational and tooling limitations
+
+Real, but not perception or safety faults.
+
+* **Parking is forward-only.** No reverse or parallel manoeuvre, so a slot that has been
+  taken cannot be recovered from by backing out. Slot completion requires the whole van
+  inside the box, parallel to the lane within 6°.
+* **The map cannot see painted kerb markings or mid-block driveways**, so a software-derived
+  parking slot can still land on one. Hand-annotated no-parking zones per street are the
+  clean fix.
+* **`get_next_waypoint` scans the whole route** to find the closest point before searching
+  forward — O(n) per tick. Fine at 200 waypoints, noticeable on a 2 km route.
+* **The operator console polls** `/api/state` every 250 ms rather than receiving pushes.
+  Works, adds latency.
+* **CARLA host/port, vehicle type and sensor configuration are partly hardcoded** in the
+  adapters rather than fully driven by config.
+* **Pedestrian-versus-obstacle tie-breaking at equal range depends on iteration order.**
+
+### Scenario runner
+
+* Does not switch CARLA towns; a town mismatch is recorded as a warning only.
+* Cut-in and cut-out are open-loop steering pulses, not lane-accurate. Weave is ignored.
+* CARLA has no animal or pallet props; a bin and a plant pot stand in.
+* `noise` and `latency` faults on raw sensors are accepted and logged but inert until
+  perception consumes raw sensors directly.
+* The ego vehicle is found as "the vehicle nearest the API pose" because the adapter does
+  not set a `role_name`.
+
+---
+
+## Testing limitations
+
+* **722 offline tests** run without CARLA (`python -m pytest tests/ -q`) and cover
+  perception maths, tracking, occupancy, prediction, planner geometry, behaviour priority,
+  safety, and the traffic-light lookahead.
+* **28 live checks** (`tools/full_check.py`) place real objects in CARLA and read the answer
+  back through the van's own interfaces. These need a running stack and are not in CI.
+* The replay harness (`perception/replay.py`) scores recorded fixtures offline, but uses a
+  **stand-in detector** — the real camera model does not run there, so camera behaviour is
+  not covered by replay.
+* The 1000-scenario catalog is validated structurally and by dry-run. It has **not** been
+  executed end-to-end.
+* Offline fixtures were all recorded on flat roads. Ground-filter behaviour on hills is
+  therefore not covered, which is why one kerb fix is deferred pending a hill recording.
+* Measurement scripts that spawn their own van and sensors must use
+  `tools/scratch_world.py`, which refuses to run while the stack is up. Earlier scripts
+  destroyed every `sensor.*` actor as cleanup — including the running van's own camera and
+  LiDAR — which silently corrupted live measurements.
+
+---
+
+## Recently resolved
+
+Kept short deliberately; this is not a history file.
+
+* **Perception no longer reads the simulator's actor list by default.** `camera_lidar` is
+  the boot default; `ground_truth` remains an automatic fallback so the stack still starts
+  without `models/yolox_s.onnx`.
+* **Four cameras feed perception**, not one.
+* **Camera–LiDAR fusion exists** (geometric projection through a calibrated camera model).
+* **Object tracking exists** — persistent IDs, velocity, moving/stationary — so car
+  following works in camera mode.
+* **Sensor health is wired to the safety supervisor** and produces degraded-speed and stop
+  behaviour, including picture-quality faults (dark, frozen, covered, rain-blocked tiles).
+* **Fault injection works in camera mode** (`camera_covered`, `camera_blanked`,
+  `camera_frozen`, `camera_drops`, `lidar_dead_beams`).
+* **Traffic lights are read from the camera in camera mode**, using map-provided lamp
+  geometry; the simulator's colour is retained only for `ground_truth` mode and for
+  side-by-side comparison.
+* **Traffic-light lookahead is route-based and lane-matched**, replacing a proximity query
+  that first reported a red light 2 m away.
+* **Parking-slot occupancy is re-checked on approach**, not only once when the slot is
+  chosen.

@@ -81,6 +81,8 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 ## 7. Day 2 — operator features & parking box system (Aug 20)
 
 **Surround view:** 5 cameras on the dashboard (front + left/right/rear + bird's-eye TOP at 22 m).
+Four of them (front, left, right, rear) later became perception inputs as well; the TOP view
+remains dashboard-only.
 
 **One-click hazards (Road Scenarios panel):** RED LIGHT (freeze/release all lights), 🚶 JAYWALKER (crosses mid-block 18 m ahead), 🚙 CUT-IN (adjacent-lane car swerves in and brakes), 🚗 DENSE TRAFFIC toggle (15 cars + 4 cyclists + 12 road-crossing walkers around the van, managed in-stack, one button on/off). The whole 7-scenario demo now runs from the dashboard with zero terminals.
 
@@ -91,7 +93,9 @@ pulled on the Windows CARLA machine, and **verified live in CARLA** by the opera
 ## 8. What's left
 
 1. Push the Windows-side reference logs (needs the one-time `gh auth login` on the CARLA machine)
-2. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: camera-mode perception has
-   no object tracking yet (so following/light detection run on ground truth), give-way uses a radius
-   heuristic rather than true right-of-way, corridor check trusts localization (fine in sim)
+2. The honest gap list lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) — notable: localization is
+   simulator-provided, one detector is shared across four cameras (~1 Hz per camera), camera
+   detections cannot create objects without a LiDAR cluster, traffic-light vision is map-guided
+   rather than autonomous signal discovery, give-way uses a radius heuristic rather than true
+   right-of-way, and the corridor check trusts localization (fine in sim)
 4. Run the full 1000-scenario catalog on the CARLA machine and commit the first `REPORT.md` scoreboard

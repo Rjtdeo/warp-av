@@ -69,6 +69,59 @@ ros2 topic pub /mission/goal std_msgs/String '{"data": "destination_1"}' --once
 ## Architecture
 See [architecture/README.md](architecture/README.md)
 
+## Perception Stack
+
+A classical multi-sensor perception stack, CARLA-validated, designed so each stage can be
+replaced independently when real hardware arrives. `camera_lidar` is the boot default;
+`ground_truth` remains an automatic fallback so the stack starts without a model file.
+
+**Sensors**
+
+| | |
+|---|---|
+| Front camera | 800×600, 90° FOV, 10 Hz, at (2.0, 0, 1.8) m, pitched 10° down |
+| Left / right cameras | 480×360, 100° FOV, ~7 Hz, at (0, ∓1.1, 1.7) m, yawed ∓90°, pitched 15° down |
+| Rear camera | 480×360, 90° FOV, ~7 Hz, at (−2.6, 0, 1.8) m, yawed 180° |
+| Top-down camera | 420×420 at 22 m — **operator dashboard only, never used for perception** |
+| Roof LiDAR | 32 channels, 150k points/s, 50 m range, 10 Hz, at (0, 0, 2.5) m |
+| GNSS, IMU | attached and published, **not fused** — see [KNOWN_ISSUES.md](KNOWN_ISSUES.md) |
+
+**Processing**
+
+- **Four-view semantic camera coverage using a shared detector scheduler.** One YOLOX-S
+  instance runs in a background thread and takes the four perception cameras in turn at
+  4 detections/second in total — roughly **1 Hz per camera**. Detections older than 1 s are
+  dropped rather than used stale.
+- **LiDAR sweep accumulation** — per-frame wedges glued into a full 360° sweep, with returns
+  off the van's own body removed.
+- **Local ground filtering** — per-tile ground height from a neighbour median, with a
+  road-plane fallback and kerb-line-aware point removal.
+- **Grid flood-fill clustering** with oriented footprints: length, width, height and yaw.
+- **Geometric camera–LiDAR fusion** — each cluster is projected through a calibrated camera
+  model (mounts, tilt, yaw, focal length) into whichever cameras could see it, and takes its
+  class from the detection box it lands in.
+- **Multi-object tracking** — nearest-neighbour association with a constant-velocity Kalman
+  filter: persistent IDs, world-frame velocity, and a moving/stationary decision that weighs
+  distance actually travelled and path straightness, not just one speed reading.
+- **Temporal occupancy / free-space grid** — 0.25 m cells, FREE / OCCUPIED / UNKNOWN plus a
+  separate road-surface layer, with short-term memory and ego-motion compensation.
+- **Blind-pocket detection** — finds unseen person-sized gaps ahead and caps speed by how
+  near the nearest one is.
+- **Kerb / road-edge estimation** — a fitted left and right kerb line, each with a confidence
+  flag and a lateral-offset query.
+- **Map-based traffic-light lookahead** — every light read once at start-up, matched to the
+  route by `(road_id, lane_id)` **and** by actually reaching the stop line, with the colour
+  queried at 4 Hz beyond 25 m and 10 Hz within it.
+- **Map-guided camera traffic-light state** — the map says where the lamp housing is, the
+  camera says what colour it is. An unreadable light reads `unknown`, which means stop.
+
+**World model** (`world_model.py`) — tracked objects with position, world velocity, size,
+heading, confidence and clearance radius; free / occupied / unknown space; kerb geometry;
+traffic-control state; and sensor health.
+
+Note that **occupancy and free space validate and slow the van; they do not generate
+trajectories.** Planning still works from the route polyline and a corridor test.
+
 ## Scenarios (1000-scenario catalog + runner)
 ```bash
 python3 scenarios/generate_catalog.py                  # regenerate catalog (deterministic)
@@ -82,8 +135,14 @@ Catalog browser (static, deployed on Vercel from `web/public/`): see [web/README
 ## Tests
 ```bash
 pip install pytest
-python3 -m pytest tests/        # catalog integrity, evaluator, safety supervisor, behaviour priority, command validation, fault injector (no CARLA needed)
+python3 -m pytest tests/ -q     # 700+ offline tests, no CARLA needed
+python3 tools/full_check.py     # 28 live checks: needs a running CARLA + stack
 ```
+Offline tests cover perception maths, ground filtering, clustering, tracking, occupancy,
+prediction, planner geometry, behaviour priority, safety and the traffic-light lookahead.
+`tools/full_check.py` places real objects in CARLA and reads the answer back through the
+van's own interfaces — nothing is mocked. Scenario execution
+(`scenarios/run_scenario.py`) also needs a live CARLA + stack and is not in CI.
 
 ## Operator / test API additions (port 5000)
 | Endpoint | Purpose |
@@ -125,7 +184,10 @@ The goal is to keep sensing, perception, behavior, safety, control, and vehicle 
 
 ### Front RGB Camera
 
-A simulated front-facing RGB camera is attached to the CARLA cargo van.
+A simulated front-facing RGB camera is attached to the CARLA cargo van. It is the sharpest
+and fastest of the four perception cameras and is given first say when naming an object;
+the left, right and rear views speak for what it cannot see. See
+[Perception Stack](#perception-stack) for the full sensor layout.
 
 The camera provides real image frames from the simulated environment.
 
@@ -158,9 +220,11 @@ The vehicle also uses a simulated 32-channel LiDAR.
 
 LiDAR produces 3D point-cloud measurements around the vehicle.
 
-The current implementation filters the point cloud to focus mainly on hazards relevant to the vehicle's forward driving path.
+Per-frame wedges are accumulated into a full 360° sweep, ground points are removed with a
+local per-tile height estimate, and what remains is clustered into objects with a measured
+footprint, height and heading.
 
-LiDAR is primarily used to estimate the physical distance to potential obstacles.
+LiDAR provides object geometry and position; the camera provides the class.
 
 The simulated LiDAR has approximately a 50-meter sensing range, although the perception logic intentionally filters the data to focus on useful driving hazards.
 
@@ -497,19 +561,49 @@ The current Warp AV software flow is:
 
 ### Current Scope
 
-This implementation is intentionally designed as a practical simulation-level autonomous vehicle stack.
+**Warp AV is a CARLA research prototype.** It has never driven a real vehicle, and it is
+not a production autonomous-driving system.
 
-The Camera + LiDAR system currently uses lightweight forward association between camera classifications and LiDAR hazard distance.
+The architecture is deliberately modular so each stage can be replaced when hardware
+arrives. What follows is what the code actually does and does not do today — the full list
+lives in [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
-It is **not** intended to represent a production-grade 3D sensor-fusion system.
+#### Current limitations
 
-Current limitations include:
+- **Localization is simulator-provided.** CARLA's exact pose. GNSS and IMU are attached but
+  not fused; there is no EKF and no pose uncertainty that planning reads.
+- **One detector is shared across four cameras**, so semantic refresh is about 1 Hz per
+  camera against 7–10 Hz frame rates.
+- **Camera detections cannot create objects on their own.** Fusion labels LiDAR clusters;
+  anything the LiDAR misses is invisible however clearly the camera sees it.
+- **Camera and LiDAR are not tightly time-synchronized** — most-recent-frame fusion with a
+  freshness cap, not matched timestamps.
+- **Detector classes are generic COCO**, not a delivery-specific ontology. Cones, bollards,
+  pallets and open doors are unnamed obstacles with measured geometry.
+- **Traffic-light vision is map-guided.** The camera classifies the colour; the map supplies
+  the lamp position. This is not autonomous signal discovery.
+- **Occupancy / free space is not the motion-planning representation.** It caps speed and
+  validates space; the planner still uses the route line and a corridor test.
+- **Tracking uncertainty is measured but not consumed** by planning or behaviour.
+- **Kerb sensing is geometric**, not road segmentation. No lane-marking perception.
+- **Prediction is constant velocity**, not learned or multimodal.
+- **Sensor health checks cover the front camera only** — a blinded side camera is not
+  reported.
+- **No radar, no calibration procedure, no DBW hardware integration, no real-sensor
+  validation.**
 
-- No full camera-to-LiDAR 3D projection
-- No production multi-object 3D tracker
-- No unrestricted autonomous obstacle avoidance
-- Camera perception focuses primarily on pedestrians and vehicle classes
-- LiDAR hazard processing focuses mainly on the forward driving corridor
+#### Simulator-only dependencies
 
-The architecture is modular so these components can be replaced with more advanced implementations later.
+These are the paths that will not transfer, and what replaces each on a real van:
 
+| Depends on CARLA today | Replaced on the real van by |
+|---|---|
+| Ego pose from `vehicle.get_transform()` | RTK GNSS + IMU + wheel-odometry fusion |
+| Sensor pose used for LiDAR sweep de-skew | the same on-board localization estimate |
+| Map topology for route planning | HD map or an on-board map service |
+| Traffic-light stop lines and lane association | HD map signal layer |
+| Exact lamp-housing geometry for the camera ROI | HD-map lamp prior, or an image-space signal-head detector |
+| Traffic-light colour (`ground_truth` mode and `WARP_CAMERA_LIGHTS=0` only) | the camera classifier, which is already the default in `camera_lidar` mode |
+| Per-sensor arrival timestamps | hardware-triggered / PTP-synchronized clocks |
+| Collision sensor | test instrumentation only — no on-vehicle equivalent |
+| Scenario ground-truth labels | offline annotation for scoring only |

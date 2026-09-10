@@ -14,7 +14,7 @@
                           └──────────┬───────────┘
                                      │
     ┌────────────────────────────────────────────────────────┐
-    │                    AUTONOMY LOOP (10 Hz)                │
+    │              AUTONOMY LOOP (~9-10 Hz measured)          │
     │                                                         │
     │  ┌─────────┐   ┌────────────┐   ┌──────────────┐      │
     │  │ Sensor   │──▶│ Perception │──▶│   Behavior   │      │
@@ -62,7 +62,7 @@ The autonomy stack NEVER imports `carla` directly. Only the adapters do.
 | Component | Job | Rover Equivalent |
 |---|---|---|
 | Sensor Adapter | Read raw sensors, package for system | ESP32 + sensor_node.py |
-| Perception | Detect objects (cars, people, obstacles) | decision_node checking front/left/right |
+| Perception | Four-camera detection, LiDAR clustering, geometric fusion, tracking, occupancy, kerbs, traffic-light state | decision_node checking front/left/right |
 | Localization | Know where the vehicle is | GPS topic |
 | Behavior | Decide what to do and WHY | decision_node.make_decision() |
 | Planner | Plan route from A to B | (rover had none) |
@@ -74,7 +74,8 @@ The autonomy stack NEVER imports `carla` directly. Only the adapters do.
 
 ## Data Flow
 
-Every tick (100ms):
+Every tick (~100-110 ms; the measured rate is in `/api/state.loop_hz`). The camera detector
+runs in its own thread at its own cadence and is read, never waited for:
 1. Sensors produce data → Perception consumes it
 2. Perception outputs detected objects → Behavior consumes them
 3. Localization outputs position → Planner + Behavior consume it
