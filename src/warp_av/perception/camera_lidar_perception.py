@@ -155,6 +155,23 @@ class CameraDetection:
 # YOLOX USING ONLY OPENCV DNN
 # ============================================================
 
+#: how many cores the detector may use. See the note where it is applied.
+DEFAULT_DETECTOR_THREADS = 6
+
+
+def detector_threads(env=None) -> int:
+    """Cores for the detector. WARP_DETECTOR_THREADS overrides; 0 or less means all of them."""
+    env = os.environ if env is None else env
+    try:
+        want = int(str(env.get("WARP_DETECTOR_THREADS", DEFAULT_DETECTOR_THREADS)).strip())
+    except (TypeError, ValueError):
+        want = DEFAULT_DETECTOR_THREADS
+    cores = os.cpu_count() or 4
+    if want <= 0:
+        return cores
+    return max(1, min(want, cores))
+
+
 class YoloXDetector:
     """
     Lightweight YOLOX detector using OpenCV DNN.
@@ -201,10 +218,19 @@ class YoloXDetector:
         self.net = cv2.dnn.readNetFromONNX(
             str(self.model_path)
         )
-        # the model runs in a background thread now: leave two cores for the
-        # driving loop and the sensor callbacks
+        # How many cores the detector may take. This is the single biggest thing setting the
+        # van's thinking rate, and it was not obvious: the detector runs in its own thread and
+        # never blocks the loop, so it LOOKED free. It is not. Measured on the van, turning
+        # the camera off so the detector idles took the loop from 7.8 Hz to 9.4 Hz and made
+        # the GROUND FILTER -- which does not touch the camera at all -- run twice as fast,
+        # 34.6 ms down to 17.2 ms. Same code, same data, half the time, purely because the
+        # cores were free.
+        #
+        # It was taking all but two of the machine's 22 cores. Leaving two cores for CARLA,
+        # the driving loop, the sensor callbacks and every numpy sum in perception is nowhere
+        # near enough. WARP_DETECTOR_THREADS sets it; the default is measured, not guessed.
         try:
-            cv2.setNumThreads(max(1, (os.cpu_count() or 4) - 2))
+            cv2.setNumThreads(detector_threads())
         except Exception:
             pass
 
