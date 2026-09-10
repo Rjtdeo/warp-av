@@ -70,6 +70,11 @@ PASSED_BY_M = 4.0
 #: A colour older than this is not trusted. Better to say "unknown" -- which the van treats
 #: as a reason to stop -- than to act on a stale green.
 STATE_STALE_S = 1.0
+#: How near a route waypoint must come to a light's stop line for the route to be counted as
+#: passing that light. The planner lays waypoints about 2 m apart down the middle of the lane,
+#: and a stop point is the middle of the same lane, so a route that really does go through the
+#: junction lands within a metre or two. Six is generous.
+STOP_LINE_ON_ROUTE_M = 6.0
 
 RED, YELLOW, GREEN, UNKNOWN, NONE = "red", "yellow", "green", "unknown", "none"
 
@@ -225,6 +230,23 @@ def route_signals(signal_map: SignalMap, waypoints: Sequence) -> List[RouteSigna
                     if d < best_d:
                         best_i, best_d = i, d
             if best_i is None:
+                continue
+            # ...and the route has to actually GO THERE. Sharing a lane id with a light is not
+            # the same as passing it: a route can touch the far end of a road the light
+            # governs and never come near the junction.
+            #
+            # This distance was worked out and then thrown away, and the van paid for it.
+            # Seen live in Town10HD on 2026-09-10: the van sat still for 29 seconds saying
+            # "TRAFFIC LIGHT AHEAD, COLOUR UNREADABLE -- holding at the stop line", with its
+            # brake at full. The light was matched at 0.0 m -- right under the wheels -- and
+            # was really 72.6 m away, with its lamps 88 m off to the side. Nothing the camera
+            # could ever see, so the colour never resolved and the van never moved again.
+            #
+            # It was survivable while the SIMULATOR answered for the colour, because a light
+            # 72 m away still reports red or green and eventually turns. Reading the colour
+            # off the camera made it fatal: what cannot be seen reads "unknown", and unknown
+            # means stop.
+            if best_d > STOP_LINE_ON_ROUTE_M:
                 continue
             pt = sig.nearest_stop_point(waypoints[best_i].x, waypoints[best_i].y)
             out.append(RouteSignal(light_id=light_id, along_m=along[best_i],

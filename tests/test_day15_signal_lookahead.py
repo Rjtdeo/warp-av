@@ -260,3 +260,49 @@ def test_waypoints_without_road_ids_are_simply_ignored():
     route = Route(waypoints=[Waypoint(x=float(i) * 2, y=0.0) for i in range(50)])
     look = TrafficLightLookahead(a_map(signal_at(10, 60.0)), fixed_colour(RED))
     assert look.update(route, 20.0, 0.0, now=100.0).light_id is None
+
+
+# ---------------------------------------------------------------- the route must GO there
+
+
+def test_a_light_on_our_lane_but_nowhere_near_our_route_is_not_ours():
+    """The fault that froze the van, measured live in Town10HD on 2026-09-10.
+
+    It sat still for 29 seconds with the brake at full, saying "TRAFFIC LIGHT AHEAD, COLOUR
+    UNREADABLE -- holding at the stop line". The light was reported at 0.0 m, right under the
+    wheels. It was really 72.6 m away with its lamps 88 m off to the side: nothing the camera
+    could ever see, so the colour never resolved and the van never moved again.
+
+    Sharing a lane id with a light is not the same as passing it. A route can touch the far
+    end of a road the light governs and never come near the junction. The distance from the
+    matched waypoint to the stop line was already being worked out -- and thrown away.
+    """
+    from warp_av.perception.traffic_lights import route_signals, STOP_LINE_ON_ROUTE_M
+
+    lane = (6, 1)
+    # our route runs along that lane, but only its first 20 m
+    route = [Waypoint(x=float(i) * 2.0, y=0.0, road_id=lane[0], lane_id=lane[1])
+             for i in range(11)]
+
+    far = SignalMap({18: SignalGeometry(light_id=18, stop_points=[(72.6, 0.0)], lanes={lane})})
+    assert route_signals(far, route) == [], "a light 72 m off the end of the route was ours"
+
+    near = SignalMap({18: SignalGeometry(light_id=18, stop_points=[(18.0, 0.0)], lanes={lane})})
+    got = route_signals(near, route)
+    assert len(got) == 1 and got[0].light_id == 18, "a light the route really passes was dropped"
+
+
+def test_the_edge_of_the_window_is_where_it_says_it_is():
+    """The planner lays waypoints about 2 m apart down the middle of the lane, so a route
+    that really goes through a junction lands within a metre or two of the stop line."""
+    from warp_av.perception.traffic_lights import route_signals, STOP_LINE_ON_ROUTE_M
+
+    lane = (6, 1)
+    route = [Waypoint(x=float(i) * 2.0, y=0.0, road_id=lane[0], lane_id=lane[1])
+             for i in range(11)]
+    inside = SignalMap({7: SignalGeometry(light_id=7, stop_points=[(20.0 + STOP_LINE_ON_ROUTE_M - 1.0, 0.0)],
+                                          lanes={lane})})
+    outside = SignalMap({7: SignalGeometry(light_id=7, stop_points=[(20.0 + STOP_LINE_ON_ROUTE_M + 1.0, 0.0)],
+                                           lanes={lane})})
+    assert len(route_signals(inside, route)) == 1
+    assert route_signals(outside, route) == []
