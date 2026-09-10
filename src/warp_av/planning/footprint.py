@@ -47,6 +47,25 @@ class VehicleFootprint:
 
 
 @dataclass(frozen=True)
+class ObstacleBox:
+    """An obstacle as the rectangle perception measured, rather than a circle round it.
+
+    A circle is the wrong shape for most of what the van meets. It has to be big enough to
+    cover the object's FAR corner in every direction, so a long thin thing becomes a fat
+    blob: a kerb strip measured 3.5 x 0.1 m became a circle of radius 1.75 m, reaching
+    1.75 m ACROSS the road when the strip itself reaches 0.05 m. Measured live on
+    2026-09-10, that made the van stop for kerb 2.5 m out to its side -- 1.2 m clear of its
+    body -- on 19 of 23 blocked ticks in one drive.
+
+    heading is the direction of the long side in the world frame, radians. A rectangle is
+    the same shape turned half a circle, so the long axis's two directions are equivalent.
+    """
+    half_length: float
+    half_width: float
+    heading: float
+
+
+@dataclass(frozen=True)
 class SweepHit:
     """Where the swept body first touches the obstacle."""
     along_m: float          # distance ahead of the van's centre, along the route
@@ -125,9 +144,32 @@ def _disc_touches_box(ox: float, oy: float, radius: float,
     return math.hypot(lx - qx, ly - qy) <= radius + 1e-9
 
 
+def _boxes_touch(ax: float, ay: float, a_heading: float, a_hl: float, a_hw: float,
+                 bx: float, by: float, b_heading: float, b_hl: float, b_hw: float) -> bool:
+    """Do two turned rectangles overlap? Exact, by the separating-axis test.
+
+    Two convex shapes are apart exactly when some line separates them, and for rectangles
+    that line is always parallel to one of their four sides. So project both onto each of
+    the four side directions; if any projection leaves a gap, they do not touch.
+    """
+    dx, dy = bx - ax, by - ay
+    ca, sa = math.cos(a_heading), math.sin(a_heading)
+    cb, sb = math.cos(b_heading), math.sin(b_heading)
+    # each rectangle's two axes, as unit vectors
+    axes = ((ca, sa), (-sa, ca), (cb, sb), (-sb, cb))
+    for ux, uy in axes:
+        # half of each rectangle's shadow on this axis
+        ra = a_hl * abs(ca * ux + sa * uy) + a_hw * abs(-sa * ux + ca * uy)
+        rb = b_hl * abs(cb * ux + sb * uy) + b_hw * abs(-sb * ux + cb * uy)
+        if abs(dx * ux + dy * uy) > ra + rb + 1e-9:
+            return False                    # a gap on this axis: they do not touch
+    return True
+
+
 def sweep_conflict(route_pts: Iterable, ego_xy, footprint: VehicleFootprint,
                    obstacle_xy, obstacle_radius: float = 0.0,
-                   horizon_m: float = 20.0, step_m: float = 0.5) -> Optional[SweepHit]:
+                   horizon_m: float = 20.0, step_m: float = 0.5,
+                   obstacle_box: Optional[ObstacleBox] = None) -> Optional[SweepHit]:
     """Slide the van's rectangle (inflated by the safety margin) along the
     route from the van's current position for `horizon_m` metres, facing
     along the route at every station. Return the first station whose body
@@ -137,6 +179,9 @@ def sweep_conflict(route_pts: Iterable, ego_xy, footprint: VehicleFootprint,
     ego_xy          the van's centre now
     obstacle_xy     the obstacle's centre in the same frame
     obstacle_radius how big the obstacle is (0 for a bare point)
+    obstacle_box    its measured rectangle, when perception has one. Used INSTEAD of the
+                    radius: a turned rectangle is the object, a circle is a guess that has
+                    to be too big in most directions to be big enough in one.
     Obstacles whose route position is behind the van's centre are ignored:
     the sweep only looks where the van is going.
     """
@@ -155,13 +200,21 @@ def sweep_conflict(route_pts: Iterable, ego_xy, footprint: VehicleFootprint,
     end = min(ego_arc + horizon_m, total)
     # quick reject: the obstacle is further ahead than the sweep can reach,
     # even allowing for the van's nose and the disc
-    if obs_arc - end > footprint.swept_half_length + obstacle_radius:
+    reach = (math.hypot(obstacle_box.half_length, obstacle_box.half_width)
+             if obstacle_box is not None else obstacle_radius)
+    if obs_arc - end > footprint.swept_half_length + reach:
         return None
     hl, hw = footprint.swept_half_length, footprint.swept_half_width
     s = ego_arc
     while s <= end + 1e-9:
         cx, cy, heading = _point_at_arc(s, pts)
-        if _disc_touches_box(ox, oy, obstacle_radius, cx, cy, heading, hl, hw):
+        if obstacle_box is not None:
+            touching = _boxes_touch(cx, cy, heading, hl, hw,
+                                    ox, oy, obstacle_box.heading,
+                                    obstacle_box.half_length, obstacle_box.half_width)
+        else:
+            touching = _disc_touches_box(ox, oy, obstacle_radius, cx, cy, heading, hl, hw)
+        if touching:
             return SweepHit(along_m=round(s - ego_arc, 3), station_x=cx, station_y=cy,
                             heading=heading, lateral_m=round(obs_lat, 3))
         s += step_m

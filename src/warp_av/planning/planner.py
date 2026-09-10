@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from .footprint import VehicleFootprint, sweep_conflict
+from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict
 from .instrumentation import (PlannerDecision, debug_planning_enabled,
                               CLEAR, NO_ROUTE, BLOCKED_TRACKED_OBJECT,
                               BLOCKED_SWEPT_PATH, BLOCKED_SCRAPE, BLOCKED_VRU)
@@ -137,6 +137,47 @@ def reach_toward_us_m(obj) -> float:
     """
     half = scrape_half_width_m(obj)
     return UNMEASURED_REACH_M if half is None else max(half, 0.0)
+
+
+# How much to trust a measured heading. The tracker keeps the yaw from the sighting whose
+# length was nearest the median, in the van's frame AT THAT SIGHTING, so if the van has turned
+# since, the object's heading is off by that much. Rather than pretend the heading is exact,
+# the box is widened by what an error this size would swing its ends through. For a 3.5 m
+# kerb strip that is 0.24 m -- plenty, and still a tenth of the 1.75 m the circle claimed.
+YAW_TOLERANCE_DEG = 8.0
+#: Every side of an obstacle box is grown by this much. The LiDAR sees a thing's near face
+#: only, so what it measures is a lower bound on the thing -- never let the box be smaller.
+OBSTACLE_BOX_PAD_M = 0.10
+
+
+def obstacle_box_for(obj, ego_yaw: float):
+    """The obstacle as the rectangle perception measured, in the world frame -- or None.
+
+    None means the size was never measured, and the caller must fall back to the circle,
+    which is the cautious answer: not knowing a thing's shape is not a reason to assume it
+    is thin.
+
+    Widths get the same floors as the scrape test, for the same reason. A car the laser sees
+    end-on comes out 1.8 x 0.5 m, so a vehicle never gets a half-width under 0.9 m however
+    thin it measured; a person never under 0.3 m.
+    """
+    length = getattr(obj, "length_m", None) or 0.0
+    width = getattr(obj, "width_m", None) or 0.0
+    try:
+        length, width = float(length), float(width)
+    except (TypeError, ValueError):
+        return None
+    if length != length or width != width or (length <= 0.0 and width <= 0.0):
+        return None
+    kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+    half_w = max(0.5 * width, SCRAPE_HALF_WIDTH_FLOOR_M.get(kind, DEFAULT_SCRAPE_HALF_WIDTH_M))
+    half_l = max(0.5 * length, half_w)
+    # cover a heading error by what it would swing the ends through
+    half_w += half_l * math.sin(math.radians(YAW_TOLERANCE_DEG))
+    yaw_obj = math.radians(float(getattr(obj, "yaw_deg", 0.0) or 0.0))
+    return ObstacleBox(half_length=half_l + OBSTACLE_BOX_PAD_M,
+                       half_width=half_w + OBSTACLE_BOX_PAD_M,
+                       heading=ego_yaw + yaw_obj)
 
 
 def would_scrape(obj, lat_m: float) -> bool:
@@ -944,9 +985,13 @@ class RoutePlanner:
             # outside of a bend is caught when the corner sweeps over it.
             if sweep_decides and max(0.0, along) < FOOTPRINT_STATIONARY_REACH_M:
                 radius = obstacle_radius_m(obj)
+                # The measured rectangle when there is one; the circle only when there is not.
+                # See ObstacleBox for what the circle did to a kerb strip.
+                box = obstacle_box_for(obj, ego_yaw)
                 hit = sweep_conflict(wps, (ego_x, ego_y), footprint, (wx, wy),
                                      obstacle_radius=radius,
-                                     horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length)
+                                     horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length,
+                                     obstacle_box=box)
                 if hit is not None:
                     found = True
                     dist = max(0.0, along)
