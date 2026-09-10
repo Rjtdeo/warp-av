@@ -127,6 +127,79 @@ def lidar_bp(bl, semantic: bool):
     return bp
 
 
+# Town10HD's streets are empty unless something is spawned, so without this the answer key
+# holds buildings, poles and parked cars and not one person -- and "never call a person
+# static" is the boundary that matters most. So each viewpoint gets company.
+WALKERS_PER_VIEW = 5
+VEHICLES_PER_VIEW = 3
+TWO_WHEELERS = ("vehicle.bh.crossbike", "vehicle.diamondback.century", "vehicle.gazelle.omafiets",
+                "vehicle.harley-davidson.low_rider", "vehicle.kawasaki.ninja",
+                "vehicle.yamaha.yzf", "vehicle.vespa.zx125")
+
+
+def _sidewalk_near(wp, max_hops: int = 4):
+    """Walk sideways from a driving lane until a pavement lane turns up, either side."""
+    for step in ("get_right_lane", "get_left_lane"):
+        cur = wp
+        for _ in range(max_hops):
+            cur = getattr(cur, step)()
+            if cur is None:
+                break
+            if cur.lane_type == carla.LaneType.Sidewalk:
+                return cur
+    return None
+
+
+def populate(sim, bl, wp, rng):
+    """People on the pavement and in the road, and a mix of vehicles and two-wheelers,
+    within about 25 m of the viewpoint. Everything is spawned through the sandbox, so
+    everything is destroyed again whatever happens."""
+    made = []
+    walker_bps = list(bl.filter("walker.pedestrian.*"))
+    side = _sidewalk_near(wp)
+    spots = []
+    for d in (6.0, 11.0, 16.0, 21.0):
+        base = (side or wp).next(d)
+        if base:
+            spots.append((base[0], side is not None))
+    # one person IN the road too: the crossing case is the one that must never read as static
+    road_ahead = wp.next(9.0)
+    if road_ahead:
+        spots.append((road_ahead[0], False))
+    for (w_, on_pavement) in spots[:WALKERS_PER_VIEW]:
+        t = w_.transform
+        lat = rng.uniform(-0.8, 0.8) if on_pavement else rng.uniform(-1.2, 1.2)
+        yaw = math.radians(t.rotation.yaw)
+        loc = carla.Location(t.location.x - math.sin(yaw) * lat,
+                             t.location.y + math.cos(yaw) * lat, t.location.z + 1.0)
+        a = sim.try_spawn(rng.choice(walker_bps),
+                          carla.Transform(loc, carla.Rotation(yaw=rng.uniform(0, 360))))
+        if a is not None:
+            made.append(a)
+    # vehicles: in the next lane and behind/ahead in our own, some two-wheelers among them
+    lanes = [wp.get_left_lane(), wp.get_right_lane(), wp]
+    for k in range(VEHICLES_PER_VIEW):
+        lane = lanes[k % len(lanes)]
+        if lane is None or lane.lane_type != carla.LaneType.Driving:
+            continue
+        ahead = lane.next(rng.uniform(8.0, 24.0))
+        if not ahead:
+            continue
+        t = ahead[0].transform
+        name = rng.choice(TWO_WHEELERS) if rng.random() < 0.5 else None
+        bps = bl.filter(name) if name else [b for b in bl.filter("vehicle.*")
+                                            if int(b.get_attribute("number_of_wheels")) == 4
+                                            and "sprinter" not in b.id]
+        if not bps:
+            continue
+        a = sim.try_spawn(rng.choice(list(bps)),
+                          carla.Transform(carla.Location(t.location.x, t.location.y,
+                                                         t.location.z + 0.4), t.rotation))
+        if a is not None:
+            made.append(a)
+    return made
+
+
 def viewpoints(cmap, n: int, seed: int):
     """Spread across the whole map, driving lanes only, a few metres apart at least."""
     rng = random.Random(seed)
@@ -168,6 +241,7 @@ def main():
                 carla.Location(t.location.x, t.location.y, t.location.z + 0.3), t.rotation))
             if van is None:
                 continue
+            company = populate(sim, bl, wp, random.Random(a.seed * 1000 + vi))
             plain = sim.spawn(lidar_bp(bl, False), mount, attach_to=van)
             label = sim.spawn(lidar_bp(bl, True), mount, attach_to=van)
             got_p, got_l = [], []
@@ -181,8 +255,11 @@ def main():
             time.sleep(0.05)
             plain.stop(); label.stop()
             if not got_p or not got_l:
-                for x in (plain, label, van):
-                    x.destroy(); sim._mine.remove(x)
+                for x in [plain, label, van] + company:
+                    try:
+                        x.destroy(); sim._mine.remove(x)
+                    except Exception:
+                        pass
                 continue
             pts = np.concatenate(got_p, axis=0)
             lab = np.concatenate(got_l, axis=0)
@@ -243,8 +320,11 @@ def main():
                     tag=int(tag), tag_name=TAG_NAME.get(int(tag), f"tag{tag}"),
                     category=category_of(int(tag)), purity=float(votes / len(tags)),
                     tags_seen=json.dumps({TAG_NAME.get(k, str(k)): v for k, v in count.most_common(3)})))
-            for x in (plain, label, van):
-                x.destroy(); sim._mine.remove(x)
+            for x in [plain, label, van] + company:
+                try:
+                    x.destroy(); sim._mine.remove(x)
+                except Exception:
+                    pass
             sim.tick()
             if (vi + 1) % 20 == 0:
                 print(f"  {vi + 1}/{len(spots)} viewpoints, {len(rows)} blobs so far")
