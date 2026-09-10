@@ -87,6 +87,11 @@ class PerceptionOutput:
     degraded_reason: str = ""
 
 
+#: How often the traffic light is actually asked about. See current_light_state.
+LIGHT_NEAR_REFRESH_S = 0.15   # a light governs us: we are at a junction, ask often
+LIGHT_FAR_REFRESH_S = 0.5     # no light at all: mid-road, nothing to be late about
+
+
 class PerceptionSystem:
     """
     Detects objects around the vehicle.
@@ -101,6 +106,8 @@ class PerceptionSystem:
         self.vehicle = vehicle
         self._enabled = True
         self._tl_stop_cache = {}   # traffic light id -> stop-line points
+        self._tl_asked_at = None   # when the simulator was last asked (day 14 follow-up)
+        self._tl_last = ("none", None)   # ... and what it said
         # Fault-injection hooks (see testing/fault_injector.py). All default off.
         self._fault = {"freeze": False, "stale_age_s": 0.0, "latency_s": 0.0, "crash": False}
         self._last_output: Optional["PerceptionOutput"] = None
@@ -197,11 +204,30 @@ class PerceptionSystem:
                 reason=f"PERCEPTION_ERROR: {e}"
             )
 
-    def current_light_state(self):
+    def current_light_state(self, now=None):
         """(state, stop_line_distance_m) of the light governing our lane —
         the map/signal feed (CARLA ground truth). Camera mode reads signals
         from here too: production AVs take light positions/phases from the
-        HD map and V2I feeds, not from pixel classification alone."""
+        HD map and V2I feeds, not from pixel classification alone.
+
+        ASKED A FEW TIMES A SECOND, NOT EVERY TICK. Measured on the van
+        2026-09-09: `get_traffic_light()` alone costs about 65 ms, worst case
+        121 ms -- it is a search on the simulator's side, not a lookup -- and it
+        was 29 % of the whole tick, more than everything except perception. In
+        30 seconds of watching at 10 a second the answer changed 0 times out of
+        190 readings.
+
+        The refresh rate follows the risk. With a light governing us, we are at a
+        junction and it is asked often. With none, we are mid-road and it is asked
+        rarely; there is nothing to be late about. Worst case with a light present
+        is being LIGHT_NEAR_REFRESH_S late to notice a change, which at 8 m/s is
+        about 1.2 m -- against a stopping margin of roughly 7.5 m.
+        """
+        now = time.time() if now is None else float(now)
+        wait = LIGHT_NEAR_REFRESH_S if self._tl_last[0] != "none" else LIGHT_FAR_REFRESH_S
+        if self._tl_asked_at is not None and now - self._tl_asked_at < wait:
+            return self._tl_last
+        self._tl_asked_at = now
         tl_state = "none"
         tl_dist = None
         try:
@@ -219,7 +245,8 @@ class PerceptionSystem:
                     tl_dist = min(math.hypot(px - vloc.x, py - vloc.y) for px, py in pts)
         except Exception:
             pass
-        return tl_state, tl_dist
+        self._tl_last = (tl_state, tl_dist)
+        return self._tl_last
 
     def _actor_to_object(self, actor, vehicle_location, vehicle_yaw, obj_type) -> Optional[DetectedObject]:
         """Convert a CARLA actor to a DetectedObject in vehicle-relative coordinates."""
