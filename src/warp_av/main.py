@@ -55,6 +55,7 @@ from .perception.bay_finder import why_no_kerb
 
 
 from .world_model import build_world_model
+from .perception.traffic_lights import SignalMap, TrafficLightLookahead
 from .sensor_health import HealthMonitor, read_sensors
 
 class WarpAV:
@@ -133,9 +134,21 @@ class WarpAV:
 
         self._health = None               # the day-8 sensor report, rebuilt every tick
         self._blind_spot_m = None         # the day-12 distance to the nearest unseen pocket
+        self._signal_lookahead = None     # traffic lights, known about before we reach them
+        self._signal_ahead = None
         self.health_monitor = HealthMonitor()
         print("[Init] Starting planner...")
         self.planner = RoutePlanner(self.vehicle_adapter.get_map())
+        # Every traffic light on the map, and the lanes each one governs. Read ONCE: the
+        # geometry never moves, and finding it was what cost 65 ms a tick before.
+        try:
+            smap = SignalMap.from_world(self.vehicle_adapter.world)
+            self._signal_lookahead = TrafficLightLookahead(smap)
+            print(f"[Signals] {len(smap)} traffic lights read from the map "
+                  f"in {smap.build_ms:.0f} ms")
+        except Exception as e:
+            self._signal_lookahead = None
+            print(f"[Signals] could not read the map's traffic lights: {e}")
         # Planning V2: swept-path blocking, OFF by default. The van's real size
         # is read from the CARLA bounding box (fallback 2.96 x 0.99 m).
         self.footprint_blocking = FootprintBlockingConfig.from_vehicle(self.vehicle_adapter.vehicle)
@@ -393,14 +406,29 @@ class WarpAV:
         # Camera mode: objects come from the sensors, but SIGNALS come from
         # the map/V2I feed (like production AVs) — without this the camera
         # stack would sail through red lights.
-        if self.perception_mode == "camera_lidar" and perception.healthy:
+        # Which signal is next on OUR route, how far off, and what colour. The old way asked
+        # CARLA "is a light affecting me right now", which only answers inside a small box at
+        # the stop line -- measured, RED first appeared at 2 m, and the van needs 14 m to
+        # stop. This knows about the signal from 50 m out.
+        try:
+            signal = self._signal_lookahead.update(self._route, pose.x, pose.y) \
+                if self._signal_lookahead is not None else None
+        except Exception:
+            signal = None
+        self._signal_ahead = signal
+        if signal is not None and signal.light_id is not None:
+            perception.traffic_light = signal.state
+            perception.traffic_light_distance_m = signal.distance_m
+        elif self.perception_mode == "camera_lidar" and perception.healthy:
+            # no signal on the route: fall back to the old proximity answer, which at least
+            # catches a light on a road we are driving without a planned route
             try:
                 tl_state, tl_dist = self.ground_truth_perception.current_light_state()
                 perception.traffic_light = tl_state
                 perception.traffic_light_distance_m = tl_dist
             except Exception:
                 pass
-        _phase("traffic light (asks CARLA)")
+        _phase("traffic light")
 
         if self._route and perception.healthy and pose.healthy:
             # The map's DECORATIVE parked cars are not actors, so ground-truth
@@ -953,6 +981,9 @@ class WarpAV:
             "parking_slots": getattr(self, "_parking_slots", None),
             "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers),
                         "parked_cars": len(getattr(self, "_parked_cars", []))},
+            "signal_ahead": (self._signal_ahead.as_dict() if self._signal_ahead is not None else None),
+            "signal_lookahead": (self._signal_lookahead.as_dict()
+                                 if self._signal_lookahead is not None else None),
             "traffic_light": {"state": perception.traffic_light,
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None),
                               "white_line_m": getattr(self, "_white_line_m", None)},

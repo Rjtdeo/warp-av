@@ -43,6 +43,18 @@ class DrivingBehavior(Enum):
     NO_MISSION = "no_mission"
 
 
+#: Colours that mean "do not go". UNKNOWN is deliberately one of them: at a stop line we
+#: know about, not being able to read the light is never permission.
+LIGHT_MEANS_STOP = ("red", "yellow", "unknown")
+
+
+def _light_words(state: str) -> str:
+    """What to say about it, so an unreadable light does not read as a red one."""
+    if state == "unknown":
+        return "TRAFFIC LIGHT AHEAD, COLOUR UNREADABLE"
+    return f"{state.upper()} light"
+
+
 BLIND_REACTION_S = 0.4      # noticing, deciding and the brakes taking hold, at ~9 decisions a second
 BLIND_DECEL_MPS2 = 3.0      # comfortable braking for a laden van, not an emergency stop
 
@@ -329,7 +341,12 @@ class BehaviorSystem:
         # Ranked below pedestrian/vehicle/obstacle stops (a closer physical
         # hazard always wins) and above following/cruising. Green releases it
         # automatically on the next tick.
-        if perception.traffic_light in ("red", "yellow"):
+        # "unknown" is in here on purpose. If we KNOW a traffic-controlled stop line is
+        # coming and cannot read its colour, that is not permission to carry on. Before the
+        # map-based lookahead this could not arise -- the van either had a colour or knew
+        # nothing at all -- but now it can know a signal is 30 m ahead while the colour is
+        # missing or stale, and treating that as green would be the worst of both.
+        if perception.traffic_light in LIGHT_MEANS_STOP:
             # Committed: already entering/inside the junction when the light
             # changed — clear it, never freeze inside the box.
             if junction_ahead_m is not None and junction_ahead_m < 1.0:
@@ -350,12 +367,12 @@ class BehaviorSystem:
                     creep = max(0.6, min(3.0, 0.45 * (d - hold)))
                     return self._decide(
                         DrivingBehavior.FOLLOWING_ROUTE,
-                        f"{perception.traffic_light.upper()} light ahead ({d:.0f} m to {line}) — rolling up",
+                        f"{_light_words(perception.traffic_light)} ahead ({d:.0f} m to {line}) — rolling up",
                         speed=creep, stop=False
                     )
                 return self._decide(
                     DrivingBehavior.STOPPED_RED_LIGHT,
-                    f"{perception.traffic_light.upper()} traffic light — holding at the {line}, waiting for green",
+                    f"{_light_words(perception.traffic_light)} — holding at the {line}, waiting for green",
                     speed=0.0, stop=True
                 )
 

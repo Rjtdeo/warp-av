@@ -78,6 +78,13 @@ def block_band_m(obj, floor_m: float) -> float:
     return min(MAX_BLOCK_HALFWIDTH_M, max(floor_m, VAN_HALF_WIDTH_M + obstacle_radius_m(obj)))
 
 
+def _int_or_none(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class Waypoint:
     x: float
@@ -86,6 +93,12 @@ class Waypoint:
     yaw: float = 0.0       # desired heading at this point
     speed: float = 8.0     # desired speed at this point
     is_junction: bool = False   # inside an intersection (from the CARLA map)
+    # Which piece of road and which lane this point sits on. CARLA gives both and this code
+    # used to throw them away, which is why a traffic light could not be tied to OUR lane --
+    # the van had to wait until it was 2 m from the stop line for the simulator to admit a
+    # light governed it. None when the route was not built from a CARLA map.
+    road_id: Optional[int] = None
+    lane_id: Optional[int] = None
 
 
 @dataclass
@@ -146,7 +159,10 @@ class RoutePlanner:
                     y=wp.transform.location.y,
                     z=wp.transform.location.z,
                     yaw=math.radians(wp.transform.rotation.yaw),
-                    is_junction=bool(getattr(wp, "is_junction", False))
+                    is_junction=bool(getattr(wp, "is_junction", False)),
+                    # kept so a traffic light can be matched to this exact lane
+                    road_id=_int_or_none(getattr(wp, "road_id", None)),
+                    lane_id=_int_or_none(getattr(wp, "lane_id", None)),
                 )
                 waypoints.append(point)
 
