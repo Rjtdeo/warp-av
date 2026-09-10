@@ -25,11 +25,24 @@ class BrokenVehicle:
         raise RuntimeError("actor destroyed")
 
 
-def test_flag_defaults_off_and_planner_gets_no_footprint():
+def test_flag_defaults_on_and_the_planner_gets_the_real_body():
+    """Default ON since 2026-09-10: the van decides what is in its way by sliding its own
+    BODY along the route, not by measuring from a centre line. Was OFF for months while the
+    code sat written and tested."""
     cfg = FootprintBlockingConfig.from_vehicle(fake_vehicle())
+    assert cfg.enabled is True
+    assert cfg.active_footprint() is not None        # the planner sees the real body
+    assert cfg.state()["footprint_blocking_enabled"] is True
+
+
+def test_it_can_still_be_turned_off():
+    """The switch is what made the before/after measurable, and is how it gets backed out
+    in a hurry if the sweep misbehaves on a road we have not driven yet."""
+    cfg = FootprintBlockingConfig.from_vehicle(fake_vehicle(), enabled=False)
     assert cfg.enabled is False
-    assert cfg.active_footprint() is None            # the planner sees footprint=None -> old rules
-    assert cfg.state()["footprint_blocking_enabled"] is False
+    assert cfg.active_footprint() is None            # planner sees footprint=None -> old rules
+    assert cfg.set(enabled=True)["success"] is True
+    assert cfg.active_footprint() is not None
 
 
 def test_when_on_the_footprint_is_handed_to_the_planner():
@@ -65,7 +78,8 @@ def test_safety_margin_is_configurable_and_validated():
     assert cfg.set(safety_margin_m=9.0)["success"] is False
     assert cfg.set(safety_margin_m="lots")["success"] is False
     assert cfg.footprint.safety_margin == 0.5            # rejected values leave it untouched
-    assert cfg.set(enabled="maybe")["success"] is False and cfg.enabled is False
+    # a value it cannot read is rejected and leaves the flag exactly as it was
+    assert cfg.set(enabled="maybe")["success"] is False and cfg.enabled is True
 
 
 def test_state_reports_the_values_in_use():

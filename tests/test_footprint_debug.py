@@ -53,7 +53,10 @@ def test_debug_visualisation_defaults_off():
 
 
 def test_debug_switch_does_not_touch_the_blocking_switch():
-    blocking = FootprintBlockingConfig()
+    """Drawing what the sweep sees and USING what the sweep sees are separate switches.
+    Set explicitly rather than leaning on either default, so a change to one default
+    cannot quietly make this test stop testing anything."""
+    blocking = FootprintBlockingConfig(enabled=False)
     debug = FootprintDebugConfig()
     debug.set(enabled=True)
     assert blocking.enabled is False and blocking.active_footprint() is None

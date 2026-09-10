@@ -49,16 +49,26 @@ class FootprintBlockingConfig:
     """The runtime switch and the footprint the live planner call uses."""
 
     def __init__(self, half_length: float = FALLBACK_HALF_LENGTH_M, half_width: float = FALLBACK_HALF_WIDTH_M,
-                 safety_margin: float = DEFAULT_SAFETY_MARGIN_M, enabled: bool = False,
+                 safety_margin: float = DEFAULT_SAFETY_MARGIN_M, enabled: bool = True,
                  dimensions_source: str = "fallback"):
-        self.enabled = bool(enabled)                 # DEFAULT OFF
+        # DEFAULT ON since 2026-09-10. The van decides what is in its way by sliding its own
+        # BODY along the route, not by measuring from a centre line -- which cannot tell a
+        # lorry whose nose reaches past our bumper from a cone we have already passed.
+        #
+        # It was written months earlier, tested, and left switched off. Turning it on
+        # unchanged froze the van: blocked_swept_path on 97% of ticks, never above 0.35 m/s,
+        # blocked by kerb furniture 4.2 m off the centreline. See SWEEP_MAX_LATERAL_M in
+        # planner.py for why, and for the bound that made it usable. Measured after that
+        # bound, same drive both ways: driving 98% -> 93%, top speed 3.50 -> 3.62 m/s, and
+        # the eleven blocks it added were objects 1.2-1.4 m off the line, 3-5 m ahead.
+        self.enabled = bool(enabled)
         self.dimensions_source = dimensions_source
         self.footprint = VehicleFootprint(half_length=float(half_length), half_width=float(half_width),
                                           safety_margin=float(safety_margin))
 
     @classmethod
     def from_vehicle(cls, vehicle, safety_margin: float = DEFAULT_SAFETY_MARGIN_M,
-                     enabled: bool = False) -> "FootprintBlockingConfig":
+                     enabled: bool = True) -> "FootprintBlockingConfig":
         hl, hw, source = vehicle_half_dimensions(vehicle)
         return cls(hl, hw, safety_margin, enabled=enabled, dimensions_source=source)
 
