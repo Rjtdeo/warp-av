@@ -434,6 +434,17 @@ class WarpAV:
             self._obstacle_points_xy = self._collect_obstacle_points(perception, pose)
         except Exception:
             self._obstacle_points_xy = []
+        # A route the van is not driving is not a plan, and must not be judged against.
+        #
+        # api_stop_mission never cleared self._route, so after a mission ended the corridor
+        # kept measuring against the dead one. Seen on the operator console 2026-09-10:
+        # parked with no mission, the van reported blocked_swept_path on a post 7.8 m out to
+        # its side, calling it 2.08 m from "the line" -- the line being a ten-point stub left
+        # over from before. During a real mission the same check is well behaved: 34 of 35
+        # blocking objects were on the road, 0.5 to 2.4 m off the centre.
+        m_now = self.mission_manager.current_mission
+        driving_a_plan = m_now is not None and m_now.state == MissionState.EXECUTING
+
         # Route-aware in-path check: judge objects against the corridor we will
         # actually drive, not the direction the nose points (mid-turn the nose
         # sweeps neighbouring lanes -> false "vehicle ahead" stops).
@@ -475,7 +486,7 @@ class WarpAV:
                 pass
         _phase("traffic light")
 
-        if self._route and perception.healthy and pose.healthy:
+        if self._route and driving_a_plan and perception.healthy and pose.healthy:
             # The map's DECORATIVE parked cars are not actors, so ground-truth
             # perception cannot see them — the van slammed one at full
             # parking-approach speed (sweep: impulse 9281). Feed them in as
@@ -490,7 +501,7 @@ class WarpAV:
             perception = self.planner.filter_to_route_corridor(
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
-                footprint=self.footprint_blocking.active_footprint(),   # None while the flag is OFF
+                footprint=self.footprint_blocking.active_footprint(),
             )
         _phase("route corridor")
 
