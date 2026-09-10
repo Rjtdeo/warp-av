@@ -55,7 +55,8 @@ from .perception.bay_finder import why_no_kerb
 
 
 from .world_model import build_world_model
-from .perception.traffic_lights import SignalMap, TrafficLightLookahead
+from .perception.traffic_lights import SignalMap, TrafficLightLookahead, carla_state_source
+from .perception.light_camera import CameraLightReader, LampMap, camera_lights_wanted
 from .sensor_health import HealthMonitor, read_sensors
 
 class WarpAV:
@@ -135,6 +136,7 @@ class WarpAV:
         self._health = None               # the day-8 sensor report, rebuilt every tick
         self._blind_spot_m = None         # the day-12 distance to the nearest unseen pocket
         self._signal_lookahead = None     # traffic lights, known about before we reach them
+        self._light_reader = None         # phase 15b: their colour, read off the camera
         self._signal_ahead = None
         self.health_monitor = HealthMonitor()
         print("[Init] Starting planner...")
@@ -143,11 +145,39 @@ class WarpAV:
         # geometry never moves, and finding it was what cost 65 ms a tick before.
         try:
             smap = SignalMap.from_world(self.vehicle_adapter.world)
-            self._signal_lookahead = TrafficLightLookahead(smap)
+            # Phase 15b: in camera mode the COLOUR comes off the camera, not out of the
+            # simulator. The map still says WHERE each lamp head is -- a real van's HD map
+            # records the same thing -- and the camera says what colour it is.
+            #
+            # Which source is used is decided per read, not here, because the perception mode
+            # is switched over the API long after start-up and can be switched back. In
+            # ground-truth mode there is no picture to read and asking the simulator is the
+            # honest answer; in camera mode the camera answers even when it cannot tell, and
+            # "cannot tell" already means stop.
+            self._light_reader = None
+            if camera_lights_wanted():
+                lamps = LampMap.from_world(self.vehicle_adapter.world)
+                if len(lamps):
+                    self._light_reader = CameraLightReader(lamps)
+                    print(f"[Signals] lamp heads for {len(lamps)} lights read in "
+                          f"{lamps.build_ms:.0f} ms -- in camera mode the COLOUR comes "
+                          f"from the camera")
+                else:
+                    print("[Signals] no lamp heads found; the simulator will give the colour")
+            from_sim = carla_state_source(smap)
+
+            def light_colour(light_id, _reader=lambda: self._light_reader, _sim=from_sim):
+                reader = _reader()
+                if reader is not None and self.perception_mode == "camera_lidar":
+                    return reader.read(light_id)
+                return _sim(light_id)
+
+            self._signal_lookahead = TrafficLightLookahead(smap, state_source=light_colour)
             print(f"[Signals] {len(smap)} traffic lights read from the map "
                   f"in {smap.build_ms:.0f} ms")
         except Exception as e:
             self._signal_lookahead = None
+            self._light_reader = None
             print(f"[Signals] could not read the map's traffic lights: {e}")
         # Planning V2: swept-path blocking, OFF by default. The van's real size
         # is read from the CARLA bounding box (fallback 2.96 x 0.99 m).
@@ -410,6 +440,17 @@ class WarpAV:
         # CARLA "is a light affecting me right now", which only answers inside a small box at
         # the stop line -- measured, RED first appeared at 2 m, and the van needs 14 m to
         # stop. This knows about the signal from 50 m out.
+        # Hand the light reader the newest picture and where we were when it was taken,
+        # BEFORE the lookahead asks it for a colour.
+        if self._light_reader is not None:
+            try:
+                frame = getattr(self.sensor_adapter, "latest_camera", None)
+                if frame is not None and frame.image is not None:
+                    self._light_reader.update(frame.image[:, :, :3], pose.x, pose.y,
+                                              math.degrees(pose.yaw), pose.z,
+                                              now=frame.timestamp)
+            except Exception:
+                pass
         try:
             signal = self._signal_lookahead.update(self._route, pose.x, pose.y) \
                 if self._signal_lookahead is not None else None
@@ -984,6 +1025,13 @@ class WarpAV:
             "signal_ahead": (self._signal_ahead.as_dict() if self._signal_ahead is not None else None),
             "signal_lookahead": (self._signal_lookahead.as_dict()
                                  if self._signal_lookahead is not None else None),
+            "light_colour_from": ("camera" if self._light_reader is not None else "simulator"),
+            "light_camera_raw": (self._light_reader.last_raw
+                                 if self._light_reader is not None else None),
+            "light_camera_confidence": (round(self._light_reader.last_confidence, 2)
+                                        if self._light_reader is not None else None),
+            "light_camera_ms": (round(self._light_reader.read_ms, 3)
+                                if self._light_reader is not None else None),
             "traffic_light": {"state": perception.traffic_light,
                               "stop_line_m": getattr(perception, "traffic_light_distance_m", None),
                               "white_line_m": getattr(self, "_white_line_m", None)},
