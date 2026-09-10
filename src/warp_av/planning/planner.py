@@ -759,8 +759,38 @@ class RoutePlanner:
 
         ego_arc, _, _ = arc_pos(ego_x, ego_y)
         cos_y, sin_y = math.cos(ego_yaw), math.sin(ego_yaw)
-        # how far ahead of the steering point the van's nose is: its real body when the
-        # caller gave us one, otherwise the measured Sprinter
+        # How far ahead the path stops being a plain road. The swept-body check is only
+        # trustworthy on a straight-ish stretch, so this is where it must hand back.
+        #
+        # A junction turn is a tight arc -- 8 m radius is an ordinary town corner -- and the
+        # van is 5.92 m long, so its body genuinely sweeps a wide band round it. Measured:
+        #
+        #     bend radius   how far off the line the swept body reaches
+        #        20 m                    2.70 m
+        #        12 m                    3.60 m
+        #         8 m                    5.90 m
+        #
+        # At a real junction there is always something within six metres -- kerb, poles,
+        # parked cars in the next lane, the corner of a building -- so sweeping the turn
+        # blocks on all of it and the van can never turn anywhere in a town. Measured live
+        # on 2026-09-10: with the sweep on, the planner said blocked_swept_path on 98% of
+        # ticks and the van never exceeded 0.54 m/s, blocked by objects 3.98 m off the line.
+        #
+        # The rule already tried to allow for this and asked the wrong question: it exempted
+        # objects STANDING IN a junction, not the swept PATH going through one. An object on
+        # a straight stretch, with the route bending into a junction five metres further on,
+        # was still swept through the turn.
+        junction_arc = None
+        _a = 0.0
+        for _i in range(n):
+            if wps[_i].is_junction and _a >= ego_arc:
+                junction_arc = _a
+                break
+            if _i + 1 < n:
+                _a += math.hypot(wps[_i + 1].x - wps[_i].x, wps[_i + 1].y - wps[_i].y)
+        # how far ahead the plain road runs out; None means "no junction on the route"
+        plain_road_m = None if junction_arc is None else max(0.0, junction_arc - ego_arc)
+        # how far ahead the van's nose is: its real body when we were given one
         front_bumper_m = (footprint.half_length if footprint is not None else VAN_HALF_LENGTH_M)
 
         closest = 999.0
@@ -799,6 +829,7 @@ class RoutePlanner:
             near_junction = (wps[oseg].is_junction
                              or wps[min(oseg + 1, n - 1)].is_junction)
             stationary = getattr(obj, "speed", 0.0) < 0.5
+            footprint_reach = (footprint.swept_half_length if footprint is not None else 0.0)
             # Is any part of it at or ahead of the FRONT BUMPER? Driving forward cannot
             # reach anything behind that line.
             #
@@ -814,7 +845,13 @@ class RoutePlanner:
             nose_gap = (along - front_bumper_m) + reach_toward_us_m(obj)
             reaches_our_nose = nose_gap > 0.0
             # Planning V2: does the swept body decide this object's hard-block?
-            sweep_decides = (footprint is not None and stationary and not near_junction)
+            # Only where the path it would sweep is a plain road: the body must reach the
+            # object before the road turns, or the swept envelope is not something to judge
+            # by. See plain_road_m above for what a turn does to it.
+            sweep_on_plain_road = (plain_road_m is None
+                                   or along + footprint_reach <= plain_road_m)
+            sweep_decides = (footprint is not None and stationary
+                             and not near_junction and sweep_on_plain_road)
             # Old rules never look beyond 2.20 m from the line. The swept body
             # can reach further in a bend (the outer corner swings wide), so in
             # footprint mode a stationary object is kept for the sweep up to
