@@ -224,8 +224,10 @@ def test_a_rider_taller_than_their_bicycle_is_still_a_rider():
     """The live case that was failing. Measured on Town10HD 2026-09-09: a real rider's
     person box was 107 px tall over an 87 px bicycle box, and the old one-way test scored
     0.33 -- missing the 0.35 bar by 0.02 and calling the rider a pedestrian."""
-    person = (300.0, 200.0, 60.0, 107.0)      # left, top, width, height
-    bike = (300.0, 220.0, 60.0, 87.0)
+    # left, top, width, height. The rider stands tall and wide; the bicycle is a short
+    # narrow box low inside them, which is what makes the one-way number small.
+    person = (300.0, 180.0, 70.0, 120.0)
+    bike = (310.0, 250.0, 30.0, 50.0)
     one_way = box_overlap(person, bike)
     assert one_way < RIDER_OVERLAP, "this case only matters because the old test failed it"
     assert rider_score(person, bike) >= RIDER_OVERLAP
