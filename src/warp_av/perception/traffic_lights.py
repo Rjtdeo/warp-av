@@ -295,6 +295,8 @@ class TrafficLightLookahead:
         self.queries = 0
         self.last_geometry_ms = 0.0
         self.last_query_ms = 0.0
+        self.last_ego_along_m = 0.0
+        self.last_route_len = 0
 
     # ---- route ---------------------------------------------------------------------
     def set_route(self, route) -> None:
@@ -323,6 +325,8 @@ class TrafficLightLookahead:
             return SignalAhead()
 
         ego_along = _along_route(route.waypoints, ego_x, ego_y)
+        self.last_ego_along_m = ego_along
+        self.last_route_len = len(route.waypoints)
         nxt = None
         for sig in self._signals:
             if sig.along_m - ego_along > -PASSED_BY_M:
@@ -376,7 +380,11 @@ class TrafficLightLookahead:
                 "map_build_ms": round(self.signal_map.build_ms, 1),
                 "geometry_ms": round(self.last_geometry_ms, 3),
                 "query_ms": round(self.last_query_ms, 3),
-                "queries": self.queries}
+                "queries": self.queries,
+                "ego_along_m": round(getattr(self, "last_ego_along_m", 0.0), 1),
+                "route_points": getattr(self, "last_route_len", 0),
+                "signal_along_m": (round(self._current.along_m, 1)
+                                   if self._current is not None else None)}
 
 
 def _along_route(waypoints: Sequence, x: float, y: float) -> float:
