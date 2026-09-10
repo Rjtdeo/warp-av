@@ -12,39 +12,54 @@ is, to the centimetre, and a real van's HD map records the same thing. So the wo
     the map says WHERE to look       -- geometry, never changes, built once
     the camera says WHAT COLOUR      -- pixels, the only thing read live
 
-Three measurements on Town10HD came before a line of this was written, and each one killed a
-rule that had looked obvious:
+Everything below was measured on Town10HD, and three of the measurements killed a rule that
+had looked obvious:
 
-1. CARLA's lamp-head box is far bigger than the lamps. The box is 0.96 m wide where the lens
-   column is about 0.30 m, and it hangs below the lowest lamp. Reading the whole box meant
-   reading the BUILDING BEHIND THE LIGHT, and a sunlit tan wall is bright, orange, and reads
-   as yellow. Flipping every light on the map through red/yellow/green and keeping only the
-   pixels that CHANGED put the lens column at 48%..76% across the box and in the top 62% of
-   it -- the same answer for all fourteen lights. The van's own YOLOX detector agrees wherever
-   it can see the light at all (under 40 m), which is a second, independent check.
+1. CARLA's lamp-head box is far bigger than the lamps. The box is 1.4 m tall and about a
+   metre across where the lens column is roughly 0.5 m by 0.75 m; the rest is the bracket
+   back to the pole, and sky and building past the edges. Reading the whole box meant reading
+   the BUILDING BEHIND THE LIGHT, and sunlit tan brick is bright, orange, and reads as yellow.
+
+   Finding the lens column inside the box took two goes, and the first was wrong in a way
+   worth recording. Flipping every light through all three colours and keeping the pixels
+   that CHANGED is the right method -- but the van was placed by walking back down the lane a
+   metre at a time, and that walk BRANCHES at junctions. Several lights were therefore
+   measured from a different street, side-on. The answer that came out (lens at 48%..76%
+   across, top 62% down) fitted those views and was wrong for a straight approach: on light
+   837 the strip it picked was pure tan building, identical on red and on green.
+
+   Measured again from straight approaches only -- refusing any branch that turns more than
+   twelve degrees -- the lens column is CENTRED in the box, spanning 30%..78% across and
+   18%..82% down. That is what is used here.
 
 2. "The lit lamp is the most colourful thing in the box" is wrong. The UNLIT amber lens is
-   orange glass, and in daylight it reads 220/187/0 -- MORE colourful than a lit green lamp at
+   orange glass: in daylight it reads 220/187/0, MORE colourful than a lit green lamp at
    183/254/140, which carries a lot of white. Judging by colourfulness picks the wrong lamp.
 
-3. What really separates a lit lamp from a dead one is that it GLOWS: its own colour channel
-   runs close to full. Scoring each lamp by the brightness of its own channel took the reading
-   from 82% right to 91% right, and cut false stops on green from 35 to 9.
+3. What really separates a lit lamp from a dead one is that it GLOWS -- its own colour channel
+   runs close to full. Scoring each lamp by the brightness of its own channel, rather than by
+   how colourful it is, is what made the reading work at all.
 
-Measured over 312 readings -- fourteen lights, eight distances from 92 m in to 13 m, all three
-colours at each:
+Measured over 300 readings on straight approaches: fourteen lights, eight distances from 92 m
+in to 13 m, all three colours at each. What matters is not the colour name but what the van
+DOES with it -- go on green, stop on anything else:
 
-    under 25 m     12 of  12   100%
-    25 to 45 m     89 of  93    96%
-    over 45 m     184 of 207    89%
-    said GREEN when it was not:  0 of 312
+    goes when the light really is green      88 of 100
+        under 25 m                           100%
+        25 to 45 m                            97%
+        over 45 m                             80%
+    goes when the light is NOT green          0 of 200
+    stops for every red                     100 of 100
 
-Every single mistake is a stop the van did not need, and that is by construction, not luck.
-A colour can only ever be reported by its OWN lamp: the top third of the lens column can
-report red and nothing else, the bottom third can report green and nothing else. So a tan
-building, a yellow road sign or a green tree cannot produce a green, whatever it looks like.
-On top of that, green -- the one permissive answer -- must be seen twice running before the
-van acts on it. Red, yellow and "cannot read it" are believed the first time.
+Not one false go. Two things hold that line. A colour has to come from the right part of the
+column -- green only from the lower two thirds, red only from the upper three quarters -- so
+a green tree above the light or a red sign below it cannot say go. And green, the only answer
+that lets the van move, must be seen twice running before it is believed; red, yellow and
+"cannot read it" are believed the first time.
+
+The honest limit: beyond 45 m the lamp is two or three pixels across, and one green in five is
+read as amber. That costs a slow-down, never a red light run, and by 25 m every green in the
+set was read correctly.
 
 Swapping this in is one argument, exactly as phase 15 left room for:
 
@@ -68,27 +83,38 @@ from .traffic_lights import GREEN, RED, UNKNOWN, YELLOW
 
 # ---------------------------------------------------------------------------------------
 # Where the lamps sit inside CARLA's lamp-head box.
-# Not guessed: every light on the map was flipped through all three colours and the pixels
-# that changed were recorded. All fourteen agreed. See the module docstring.
+# Not guessed: every light was flipped through all three colours from a STRAIGHT approach and
+# the pixels that changed were recorded. The straightness matters -- see the module docstring
+# for the first attempt, which measured several lights side-on and got a different answer.
 # ---------------------------------------------------------------------------------------
-LENS_LEFT = 0.48            #: lens column starts this far across the box
-LENS_RIGHT = 0.76           #: ... and ends here. The rest of the box is housing and sky.
-LENS_BOTTOM = 0.62          #: the three lamps live in the top 62%; below is the skirt.
+LENS_LEFT = 0.30            #: the lens column starts this far across CARLA's box
+LENS_RIGHT = 0.78           #: ... and ends here. The rest is bracket, sky and building.
+LENS_TOP = 0.18             #: the lamps start this far down the box
+LENS_BOTTOM = 0.82          #: ... and end here.
+
+#: Which part of the column each colour may come from. A traffic light is stacked red / amber
+#: / green from the top, so a green thing at the TOP of the column is not a green lamp and a
+#: red thing at the BOTTOM is not a red lamp. These two lines are deliberately loose and
+#: overlapping: a hard split into exact thirds was tried and cost fourteen points, because
+#: CARLA's box does not line up with the lamps closely enough to trust thirds. Loose as they
+#: are they still cost nothing -- 88 correct greens out of 100 with them, 87 without -- and
+#: they are what stops a tree above the light from ever saying go.
+GREEN_ONLY_BELOW = 0.34     #: green may only come from the lower two thirds
+RED_ONLY_ABOVE = 0.75       #: red may only come from the upper three quarters
 
 MIN_LENS_ROWS = 3           #: under one row per lamp there is nothing to read
 MIN_CHROMA = 20.0           #: greyer than this is housing, not a lens
 
 # Hue boundaries, degrees. A lit red lamp measures 8-27, amber 44-58, green 87-131, so these
-# sit in the empty gaps between them rather than being tuned to the edge of anything.
-RED_HUE_MAX = 30.0
+# sit in the empty gaps between them rather than on the edge of anything.
+RED_HUE_MAX = 34.0
 YELLOW_HUE_MAX = 68.0
 GREEN_HUE_MAX = 168.0
 
 #: A lit green lamp measures 160..255 in its green channel, even at 92 m. Dark green things
 #: that are NOT lamps -- foliage, a painted sign in shadow -- sit well below that. Without
-#: this floor a tree standing behind the green lens could hand the van a green light, which is
-#: the one mistake this module must never make. Measured: 130 costs nothing at all, 140 starts
-#: throwing away real greens.
+#: this floor a tree standing behind the green lens could hand the van a green light, which
+#: is the one mistake this module must never make. Measured: 130 costs nothing at any range.
 MIN_LIT_GREEN = 130.0
 
 GREEN_NEEDS_TWO = True      #: green is the only answer that lets the van go, so ask twice
@@ -194,15 +220,14 @@ def read_lamp_colour(image: np.ndarray, u: float, v: float,
                      width_px: float, height_px: float) -> Tuple[str, float]:
     """The colour of the lamp whose head box lands at (u, v) with this size, from pixels.
 
-    The three lenses are stacked in a known order, so each third of the column is asked only
-    about ITS OWN colour: the top third can answer red and nothing else, the bottom third can
-    answer green and nothing else. That is what makes a wrong answer safe -- nothing in the
-    world can turn a red light green, because the red lamp's third does not know the word.
+    Each colour is scored by the BRIGHTEST PIXEL OF ITS OWN CHANNEL that also carries its own
+    hue. A lit lamp is one that GLOWS, so its own channel runs close to full. Colourfulness is
+    deliberately not the test: in daylight the unlit amber lens is orange glass reading
+    220/187/0, which beats a lit green lamp at 183/254/140, and scoring that way stopped the
+    van at green lights.
 
-    Within a third, the winner is the pixel whose own channel burns brightest: a lit lamp is a
-    lamp that GLOWS. Colourfulness is deliberately not the test -- the unlit amber lens beats
-    a lit green lamp on colourfulness in daylight, which is exactly the mistake that used to
-    stop the van at green lights.
+    On top of that, green may only be found in the lower part of the column and red only in
+    the upper part, because that is how a traffic light is stacked.
     """
     if image is None or getattr(image, "size", 0) == 0:
         return UNKNOWN, 0.0
@@ -211,46 +236,44 @@ def read_lamp_colour(image: np.ndarray, u: float, v: float,
     top_y = v - height_px / 2.0
     u0 = max(0, int(round(left_x + width_px * LENS_LEFT)))
     u1 = min(cols, int(round(left_x + width_px * LENS_RIGHT)))
-    v0 = max(0, int(round(top_y)))
+    v0 = max(0, int(round(top_y + height_px * LENS_TOP)))
     v1 = min(rows, int(round(top_y + height_px * LENS_BOTTOM)))
     if u1 - u0 < 1 or v1 - v0 < MIN_LENS_ROWS:
         return UNKNOWN, 0.0
 
     strip = image[v0:v1, u0:u1]
     tall = strip.shape[0]
-    edges = (0, tall // 3, (2 * tall) // 3, tall)
     hue, chroma, red_ch, green_ch = _hue_chroma(strip)
+    green_starts = int(tall * GREEN_ONLY_BELOW)
+    red_ends = max(1, int(tall * RED_ONLY_ABOVE))
 
     scores = {}
-    for i, colour in enumerate((RED, YELLOW, GREEN)):
-        lo, hi = edges[i], edges[i + 1]
-        if hi <= lo:
+    for colour in (RED, YELLOW, GREEN):
+        if colour == RED:
+            h, c, lit = hue[:red_ends], chroma[:red_ends], red_ch[:red_ends]
+            # red wraps past zero, so it is "below 34 degrees or above 340"
+            matches = (h < RED_HUE_MAX) | (h >= 340.0)
+        elif colour == YELLOW:
+            h, c = hue, chroma
+            lit = np.minimum(red_ch, green_ch)      # amber needs BOTH channels up
+            matches = (h >= RED_HUE_MAX) & (h < YELLOW_HUE_MAX)
+        else:
+            h, c = hue[green_starts:], chroma[green_starts:]
+            lit = green_ch[green_starts:]
+            matches = ((h >= YELLOW_HUE_MAX) & (h < GREEN_HUE_MAX)
+                       & (lit >= MIN_LIT_GREEN))
+        if c.size == 0:
             scores[colour] = 0.0
             continue
-        h, c = hue[lo:hi], chroma[lo:hi]
-        r, g = red_ch[lo:hi], green_ch[lo:hi]
-        if colour == RED:
-            # red wraps past zero, so it is "below 30 degrees or above 340"
-            matches = (h < RED_HUE_MAX) | (h >= 340.0)
-            lit = r
-        elif colour == YELLOW:
-            matches = (h >= RED_HUE_MAX) & (h < YELLOW_HUE_MAX)
-            lit = np.minimum(r, g)      # amber needs BOTH channels up
-        else:
-            matches = (h >= YELLOW_HUE_MAX) & (h < GREEN_HUE_MAX) & (g >= MIN_LIT_GREEN)
-            lit = g
         matches = matches & (c >= MIN_CHROMA)
         scores[colour] = float(lit[matches].max()) if matches.any() else 0.0
 
-    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-    best, best_score = ranked[0]
+    best, best_score = max(scores.items(), key=lambda kv: kv[1])
     if best_score <= 0.0:
         return UNKNOWN, 0.0
     return best, min(1.0, best_score / FULL_CONFIDENCE_LIT)
 
 
-# ---------------------------------------------------------------------------------------
-# C. Putting it together: the state source phase 15 was built to accept
 # ---------------------------------------------------------------------------------------
 
 

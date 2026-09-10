@@ -16,8 +16,8 @@ import pytest
 
 from warp_av.perception.light_camera import (
     CameraLightReader, LampHead, LampMap, read_lamp_colour,
-    LENS_LEFT, LENS_RIGHT, LENS_BOTTOM, MIN_LIT_GREEN, MIN_LENS_ROWS,
-    AGREEMENT_MAX_AGE_S)
+    LENS_LEFT, LENS_RIGHT, LENS_TOP, LENS_BOTTOM, MIN_LIT_GREEN, MIN_LENS_ROWS,
+    GREEN_ONLY_BELOW, RED_ONLY_ABOVE, AGREEMENT_MAX_AGE_S)
 from warp_av.perception.traffic_lights import (
     GREEN, RED, UNKNOWN, YELLOW, SignalGeometry, SignalMap, TrafficLightLookahead)
 
@@ -48,7 +48,7 @@ def lamp_picture(top, middle, bottom, box_w=40, box_h=60, around=HOUSING, size=(
     img[int(top_y):int(top_y + box_h), int(left):int(left + box_w)] = around
     c0 = int(round(left + box_w * LENS_LEFT))
     c1 = int(round(left + box_w * LENS_RIGHT))
-    r0 = int(round(top_y))
+    r0 = int(round(top_y + box_h * LENS_TOP))
     r1 = int(round(top_y + box_h * LENS_BOTTOM))
     tall = r1 - r0
     for i, colour in enumerate((top, middle, bottom)):
@@ -116,11 +116,32 @@ def test_a_tree_behind_the_green_lens_does_not_say_green():
     assert read_lamp_colour(img, u, v, w, h)[0] != GREEN
 
 
-def test_red_in_the_green_lamps_place_is_not_read_as_red():
-    """A colour is only ever reported by its own lamp. Something red low down in the column
-    is not a red light -- it is a red thing -- so it must not be called one."""
-    img, u, v, w, h = lamp_picture(DEAD_LENS, DEAD_LENS, LIT_RED)
+def test_something_red_below_the_lamps_is_not_a_red_light():
+    """Red is only looked for in the upper part of the column, because that is where the red
+    lamp is. A red thing at the very bottom -- a brake light, a sign -- is not a red light."""
+    img, u, v, w, h = lamp_picture(DEAD_LENS, DEAD_LENS, DEAD_LENS)
+    left, top_y = u - w / 2.0, v - h / 2.0
+    r0 = int(round(top_y + h * LENS_TOP))
+    r1 = int(round(top_y + h * LENS_BOTTOM))
+    c0 = int(round(left + w * LENS_LEFT))
+    c1 = int(round(left + w * LENS_RIGHT))
+    below = r0 + int((r1 - r0) * RED_ONLY_ABOVE)     # under the red lamp's reach
+    img[below:r1, c0:c1] = LIT_RED
     assert read_lamp_colour(img, u, v, w, h)[0] != RED
+
+
+def test_something_green_above_the_lamps_is_not_a_green_light():
+    """The mirror rule, and the one that matters: green is only looked for lower down, so a
+    green thing high in the column -- a tree past the light -- can never say go."""
+    img, u, v, w, h = lamp_picture(DEAD_LENS, DEAD_LENS, DEAD_LENS)
+    left, top_y = u - w / 2.0, v - h / 2.0
+    r0 = int(round(top_y + h * LENS_TOP))
+    r1 = int(round(top_y + h * LENS_BOTTOM))
+    c0 = int(round(left + w * LENS_LEFT))
+    c1 = int(round(left + w * LENS_RIGHT))
+    above = r0 + int((r1 - r0) * GREEN_ONLY_BELOW)   # over the green lamp's reach
+    img[r0:above, c0:c1] = LIT_GREEN
+    assert read_lamp_colour(img, u, v, w, h)[0] != GREEN
 
 
 def test_a_covered_lens_is_unknown():
@@ -218,7 +239,7 @@ def picture_of_head(reader, lamps_colours, ego=(0.0, 0.0, 0.0, 0.0)):
     img[:, :] = (90, 92, 95)
     left, top_y = u - w / 2.0, v - h / 2.0
     c0, c1 = int(round(left + w * LENS_LEFT)), int(round(left + w * LENS_RIGHT))
-    r0, r1 = int(round(top_y)), int(round(top_y + h * LENS_BOTTOM))
+    r0, r1 = int(round(top_y + h * LENS_TOP)), int(round(top_y + h * LENS_BOTTOM))
     tall = r1 - r0
     for i, colour in enumerate(lamps_colours):
         a, b = r0 + (tall * i) // 3, r0 + (tall * (i + 1)) // 3
