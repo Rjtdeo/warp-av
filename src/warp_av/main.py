@@ -49,6 +49,7 @@ from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
+from .planning.instrumentation import PhaseTimer, PlannerDecision
 from .planning.footprint_config import FootprintBlockingConfig
 from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
 from .perception.bay_finder import why_no_kerb
@@ -213,6 +214,12 @@ class WarpAV:
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
         self._phase_ms = {}           # ... and which part of it took how long
+        # Planning V2 phase 0. The old timer kept ONE exponentially-smoothed number per
+        # phase, so its "worst" was the worst SMOOTHED value: a single 300 ms tick moved
+        # the average by 30 ms and then vanished. This keeps a rolling window instead, so
+        # avg, p95 and a genuine worst case are all available -- and the phases below are
+        # split finely enough to name a culprit rather than a third of the tick.
+        self._phases = PhaseTimer()
         self._last_tick_error = ""
 
         # Route selected on the dashboard before START is pressed.
@@ -408,14 +415,11 @@ class WarpAV:
         # Where the tick's time actually goes. Two thirds of it was unaccounted for -- the
         # only timings on show were the ground filter's and the free-space map's, both
         # inside perception, so a slow tick could not be pinned on anything.
-        _phase_t0 = time.perf_counter()
+        self._phases.start()
         _phases = {}
 
         def _phase(name):
-            nonlocal _phase_t0
-            now = time.perf_counter()
-            _phases[name] = (now - _phase_t0) * 1000.0
-            _phase_t0 = now
+            _phases[name] = self._phases.mark(name)
 
         # 1. Localize
         pose = self.localization.update()
@@ -510,6 +514,7 @@ class WarpAV:
             self._world = None
             self._blind_spot_m = None
             self._world_error = repr(e)
+        _phase("occupancy and world model")
         if self.footprint_debug.enabled and self._route:
             # Visualisation only: draws what the swept-path rule sees and what
             # the planner decided. Any failure is counted, never raised.
@@ -533,6 +538,7 @@ class WarpAV:
                 vehicle_alive=self.vehicle_adapter.is_alive()))
         except Exception:
             self._health = None
+        _phase("health monitor")
         safety_output = self.safety.update(
             perception_healthy=perception.healthy,
             perception_timestamp=perception.timestamp,
@@ -604,6 +610,8 @@ class WarpAV:
                     safety_output.reason
                 )
 
+        _phase("safety supervisor")
+
         # 4. Behavior decision
         dest_dist = None
         if self._route and self.mission_manager.current_mission:
@@ -638,6 +646,8 @@ class WarpAV:
                 white_line = None
         self._white_line_m = white_line
 
+        _phase("route context")
+
         # Prediction: yield to crossers/cut-ins BEFORE they are in the path.
         predicted = None
         if self._route and pose.healthy and pose.speed > 0.5:
@@ -649,7 +659,8 @@ class WarpAV:
                 predicted = None
         self._predicted_conflict = predicted
 
-        _phase("safety and health")
+        _phase("prediction")
+
         behavior_output = self.behavior.update(
             perception=perception,
             world=self._world,                 # day 7: the one sheet of what the van knows
@@ -732,6 +743,8 @@ class WarpAV:
                     behavior_output.reason += " | passing a stopped vehicle"
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
+        _phase("behaviour")
+
         # Never overrides stops; only lowers a positive desired speed.
         curve_cap = None
         if self._route and not behavior_output.should_stop and behavior_output.desired_speed_mps > 0.5:
@@ -771,6 +784,8 @@ class WarpAV:
             if next_wp:
                 target_x, target_y = next_wp.x, next_wp.y
 
+        _phase("control target")
+
         # 6. Compute vehicle command
         cmd = self.controller.compute_command(
             current_x=pose.x, current_y=pose.y,
@@ -784,6 +799,8 @@ class WarpAV:
         # 6b. The learned parker takes the wheel for the last 16 m of a slot
         # parking when selected; the behaviour layer's stops still win.
         cmd, behavior_output = self._maybe_learned_parker(cmd, behavior_output, pose)
+
+        _phase("controller")
 
         # 7. Send command to vehicle
         self.vehicle_adapter.send_command(cmd)
@@ -831,7 +848,10 @@ class WarpAV:
             mission_state = self.mission_manager.current_mission.state.value
 
         _phase("drive and the rest")
-        # keep a smoothed picture, so one odd tick does not mislead
+        self._phases.end()
+        # The smoothed picture is kept as it was, because the console draws it and one odd
+        # tick should not make the bars jump. It is no longer the ONLY picture: the window
+        # beside it holds the worst case, which is what a smoothed number cannot show.
         for _k, _v in _phases.items():
             self._phase_ms[_k] = 0.85 * self._phase_ms.get(_k, _v) + 0.15 * _v
 
@@ -1012,6 +1032,15 @@ class WarpAV:
             "tick_ms": round(self._tick_ms, 1),
             # where the tick's time goes, so a slow one can be pinned on something
             "tick_phases_ms": {k: round(v, 1) for k, v in sorted(self._phase_ms.items())},
+            # Planning V2 phase 0. avg / p95 / worst over a rolling window, per phase, so a
+            # single slow tick can be found instead of being smoothed into the average above.
+            "tick_timing": self._phases.as_dict(),
+            "slowest_phase": self._phases.worst_phase(),
+            # ...and WHY the path was judged the way it was. "blocked = true" cannot tell a
+            # parked lorry from the same kerb sliver reported forty times.
+            "planner": (self.planner.last_decision.as_dict()
+                        if getattr(self, "planner", None) is not None
+                        and getattr(self.planner, "last_decision", None) is not None else None),
             "autonomy_state": self.vehicle_adapter._autonomy_state.value,
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,

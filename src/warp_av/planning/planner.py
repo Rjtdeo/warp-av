@@ -17,6 +17,9 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .footprint import VehicleFootprint, sweep_conflict
+from .instrumentation import (PlannerDecision, debug_planning_enabled,
+                              CLEAR, NO_ROUTE, BLOCKED_TRACKED_OBJECT,
+                              BLOCKED_SWEPT_PATH, BLOCKED_SCRAPE, BLOCKED_VRU)
 
 # Planning V2 (phase 1B): perception objects carry no size, so when the swept
 # body is checked against a STATIONARY object it is given a radius by type.
@@ -163,6 +166,11 @@ class RoutePlanner:
     """
 
     def __init__(self, carla_map, sampling_resolution=2.0):
+        # Planning V2 phase 0: what the last path judgement decided and on what evidence.
+        # Read by main.py for the telemetry. Set on every call to filter_to_route_corridor,
+        # including the early returns -- a decision that was never made must not silently
+        # read as the previous tick's.
+        self.last_decision = PlannerDecision()
         self.carla_map = carla_map
 
         # Use CARLA's built-in route planner
@@ -698,7 +706,12 @@ class RoutePlanner:
         pedestrians, junction segments, the slow zone, what counts as
         "closest" - is unchanged. None (the default) = exactly the old rules.
         """
-        if not route or len(route.waypoints) < 2 or not getattr(perception, "objects", None):
+        if not route or len(route.waypoints) < 2:
+            self.last_decision = PlannerDecision(reason=NO_ROUTE)
+            return perception
+        if not getattr(perception, "objects", None):
+            self.last_decision = PlannerDecision(reason=CLEAR,
+                                                 route_points_used=len(route.waypoints))
             return perception
 
         wps = route.waypoints
@@ -732,7 +745,22 @@ class RoutePlanner:
         closest_lat = None
         blocked = False
         found = False
+        # --- phase 0 bookkeeping. Records what was decided; decides nothing. -------------
+        want_detail = debug_planning_enabled()
+        seen = 0            # objects the corridor actually looked at
+        in_corridor = 0     # ... of those, how many sat inside the slow band
+        why = None          # which rule said "blocked", for the first blocker found
+        blocker = None      # and the object it said it about
+        detail = []
+
+        def _note_block(rule, obj_, along_, lat_):
+            """Remember the NEAREST blocker and the rule that caught it."""
+            nonlocal why, blocker
+            if blocker is None or max(0.0, along_) < max(0.0, blocker[1]):
+                why, blocker = rule, (obj_, along_, lat_)
+
         for obj in perception.objects:
+            seen += 1
             # ego frame (x fwd, y left) -> world
             wx = ego_x + cos_y * obj.x - sin_y * obj.y
             wy = ego_y + sin_y * obj.x + cos_y * obj.y
@@ -756,7 +784,14 @@ class RoutePlanner:
             lat_limit = (footprint.swept_half_length + 1.0) if sweep_decides else 2.20
             if lat > lat_limit:
                 continue
+            if want_detail:
+                detail.append({"id": int(getattr(obj, "id", 0) or 0),
+                               "kind": getattr(getattr(obj, "object_type", None), "value", None),
+                               "along_m": round(along, 1), "lateral_m": round(lat, 2),
+                               "stationary": bool(stationary),
+                               "near_junction": bool(near_junction)})
             if lat <= corridor_halfwidth_m:
+                in_corridor += 1
                 found = True
                 dist = max(0.0, along)
                 if dist < closest:
@@ -776,6 +811,7 @@ class RoutePlanner:
                 # nothing anywhere gets a narrower band than it had before.
                 if dist < danger_m and lat <= block_band_m(obj, block_halfwidth_m) and not sweep_decides:
                     blocked = True
+                    _note_block(BLOCKED_TRACKED_OBJECT, obj, along, lat)
             # Physical-width conflict: centre-line thresholds ignore that the
             # van (~2.0 m) plus a parked car (~1.8 m) cannot share 2×1.75 m.
             # A STATIONARY body whose centre sits in the 1.40-2.05 m band
@@ -803,6 +839,7 @@ class RoutePlanner:
                 # 1.36 to 2.20 m off the line and not on any road at all. See would_scrape.
                 if not sweep_decides and would_scrape(obj, lat):
                     blocked = True
+                    _note_block(BLOCKED_SCRAPE, obj, along, lat)
             # Planning V2: the van's real body, slid along the route, decides
             # whether a stationary object is in the way. A parked car 1.6 m off
             # the line still blocks (half a car reaches into our margin); a
@@ -822,6 +859,7 @@ class RoutePlanner:
                         closest_speed = obj.speed
                         closest_lat = round(lat, 2)
                     blocked = True
+                    _note_block(BLOCKED_SWEPT_PATH, obj, along, lat)
 
         perception.closest_obstacle_distance = closest
         perception.closest_obstacle_speed = closest_speed
@@ -829,6 +867,32 @@ class RoutePlanner:
         perception.path_blocked = blocked
         if found:
             perception.closest_obstacle_type = closest_type
+
+        # --- phase 0: say what was decided and on what evidence. Reads the same state the
+        # lines above just wrote; it cannot and must not change any of it.
+        decision = PlannerDecision(reason=CLEAR,
+                                   objects_considered=seen,
+                                   objects_in_corridor=in_corridor,
+                                   route_points_used=n,
+                                   candidates=detail)
+        if blocked and blocker is not None:
+            obj_, along_, lat_ = blocker
+            kind = getattr(getattr(obj_, "object_type", None), "value",
+                           str(getattr(obj_, "object_type", "")) or None)
+            # A person or someone riding is worth its own reason: "the van stopped" and
+            # "the van stopped FOR A PERSON" are different lines in a report.
+            reason = BLOCKED_VRU if kind in ("pedestrian", "cyclist") else why
+            decision.reason = reason
+            decision.blocker_id = int(getattr(obj_, "id", 0) or 0) or None
+            decision.blocker_kind = kind
+            decision.blocker_distance_m = max(0.0, along_)
+            decision.blocker_lateral_m = lat_
+            decision.used_footprint = (why == BLOCKED_SWEPT_PATH)
+        elif blocked:
+            # blocked with nothing recorded should be impossible; say so rather than
+            # reporting a clear path.
+            decision.reason = BLOCKED_TRACKED_OBJECT
+        self.last_decision = decision
         return perception
 
     def blend_departure(self, route: Route, ego_x, ego_y):
