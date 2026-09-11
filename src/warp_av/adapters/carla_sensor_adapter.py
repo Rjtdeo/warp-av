@@ -74,6 +74,20 @@ MAX_DEAD_TILES = 5              # ... and more than this many of them is somethi
                                 # consequence of crying wolf here is a van that crawls in drizzle.
 SCENE_MOVING_FLOOR = 0.25       # only ask while the world is actually going past: parked, the
                                 # whole picture is still and every tile looks frozen
+# ... and a stuck patch must be practically FROZEN, not just quiet. Being much quieter than
+# the rest of the picture is not enough on its own: plain sky is quiet too, and so is the far
+# end of the road straight ahead, which hardly moves while the van drives towards it. On
+# 2026-09-10, 3,512 frames from the van's own front camera, 8 drives in Town10HD (4 weathers,
+# fast and slow, tools/record_lens_check.py), a CLEAN lens was called broken for 18-75 % of
+# the daytime driving -- the sky alone gave 10-25 "stuck" patches -- and each time the safety
+# supervisor slowed the van to walking pace and then stopped it. Sky never stops changing
+# completely (0.25 or more in 95 % of those patches, never 0.00); something on the glass does
+# (0.00 on 77 % of the patches a drop covers). With this floor: a clean lens 0 % in all 8
+# drives, 5 drops still caught on 99 % of daytime driving, and ONE drop now slows the van on
+# 1 % of it instead of 87 % -- which is what MAX_DEAD_TILES always meant to allow.
+# CARLA validation: a real camera's sensor noise never reads 0.00, so on hardware this floor
+# would have to be measured again.
+TILE_FROZEN_BELOW = 0.10
 
 LIDAR_MIN_BEAMS = 24            # of 32. Losing a quarter of them is a broken laser
 LIDAR_POINT_COLLAPSE = 0.4      # fewer than this share of its recent normal is a fault
@@ -486,7 +500,10 @@ class CarlaSensorAdapter:
         typical = float(np.median(per_tile))
         if typical < SCENE_MOVING_FLOOR:
             return 0                      # parked, or nothing going past: no opinion
-        return int((per_tile < TILE_DEAD_SHARE * typical).sum())
+        # much quieter than the rest AND frozen: sky and the far end of the road are the first
+        # without the second (see TILE_FROZEN_BELOW)
+        stuck = (per_tile < TILE_DEAD_SHARE * typical) & (per_tile < TILE_FROZEN_BELOW)
+        return int(stuck.sum())
 
     def camera_fault(self) -> str:
         """What is wrong with the picture, in words, or "" when it is fine."""
