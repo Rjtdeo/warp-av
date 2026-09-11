@@ -209,9 +209,20 @@ def test_everything_starts_dynamic():
 
 
 def test_static_in_the_path_still_blocks():
-    """The corridor rules never read motion_class: a cone in the lane stops the van."""
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "planning" / "planner.py").read_text()
-    assert "motion_class" not in src
+    """A static thing in the lane stops the van exactly as before: the corridor rules never
+    read motion_class (only the parking give-up does, to decide when waiting is pointless)."""
+    import inspect
+    from warp_av.perception.perception import PerceptionOutput
+    from warp_av.planning.planner import RoutePlanner, Route, Waypoint
+    assert "motion_class" not in inspect.getsource(RoutePlanner.filter_to_route_corridor)
+    for label in ("dynamic", "static"):
+        post = DetectedObject(object_type=ObjectType.OBSTACLE, x=6.0, y=0.2, distance=6.0,
+                              length_m=0.3, width_m=0.3, height_m=3.5, id=7,
+                              motion_class=label, static_rule="pole" if label == "static" else "")
+        per = PerceptionOutput(objects=[post])
+        road = Route(waypoints=[Waypoint(x=-20.0 + i * 2.0, y=0.0) for i in range(61)])
+        RoutePlanner.__new__(RoutePlanner).filter_to_route_corridor(per, road, 0.0, 0.0, 0.0)
+        assert per.path_blocked, f"a {label} post in the lane must stop the van"
 
 
 def test_the_switch_turns_it_off():

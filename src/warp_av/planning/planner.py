@@ -13,7 +13,7 @@ THIS VERSION:
 import carla
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict
@@ -150,6 +150,106 @@ YAW_TOLERANCE_DEG = 8.0
 OBSTACLE_BOX_PAD_M = 0.10
 
 
+# A kerb only needs TYRE clearance (fix 3, 2026-09-10). Something no taller than a kerb
+# cannot touch the van's body -- the body passes over it -- only a tyre can, and the tyres
+# sit inboard of the body's side. So a kerb-height thing is judged against the van's body
+# plus KERB_CLEARANCE_M, not the full safety margin, and at its measured width.
+#
+# Why it matters: pulling into a parking slot, the kerb sits beside where the van will
+# stand. Measured in 4 stalled scenarios: 0.5-0.6 m from the parked van's side to the kerb,
+# against 0.55 m of padding the check piled onto it (0.30 m margin, 0.10 m pad, the 0.15 m
+# width floor, 0.09 m for the heading) -- so the van waited at the kerb for ever.
+#
+# Why it is safe: kerb-like means no taller than KERB_LIKE_MAX_HEIGHT_M, standing still, and
+# never named a person, cyclist or vehicle. In both static-truth recordings (18,000 blobs),
+# nothing within 15 m of the van that measured 0.30 m or less was ever a person or vehicle
+# -- the LiDAR sees them whole at that range. Anything taller keeps the full margin, and a
+# kerb-height thing IN the path still blocks: tyre clearance is not zero.
+KERB_LIKE_MAX_HEIGHT_M = 0.20
+KERB_CLEARANCE_M = 0.10
+
+
+def kerb_like(obj) -> bool:
+    """Low enough that only a tyre could touch it, standing still, and not a road user."""
+    kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+    if kind in ("pedestrian", "cyclist", "vehicle"):
+        return False
+    try:
+        height = float(getattr(obj, "height_m", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return False
+    if not (0.0 < height <= KERB_LIKE_MAX_HEIGHT_M):
+        return False
+    return bool(getattr(obj, "stationary", False))
+
+
+class WaitingIsPointless:
+    """Blocked on the way into the parking spot by something that will not move: say when to
+    stop waiting and finish there (fix 3).
+
+    Seen 2026-09-10: 4 of 5 pedestrian scenarios ended with the van in front of a kerb piece
+    for the rest of the run, "replan or operator action required". Waiting only makes sense
+    for what can move. So: near the spot, blocked, by something static or kerb-height, for
+    AFTER_S -> finish. A person or vehicle is never "will not move" -- the van keeps waiting,
+    and the slot re-check deals with a car that took the spot.
+    """
+    WITHIN_M = 30.0     # only on the way into the spot
+    AFTER_S = 6.0       # the behaviour already waits 3 s before it calls the route blocked
+    # An unnamed thing that is not labelled static but has sat in the way this long is not
+    # going anywhere either (a post inside the parking lane is never "static": the lane is
+    # road, and road is where parked cars are). People and vehicles never count.
+    STILL_UNNAMED_AFTER_S = 20.0
+    # A moment of "clear" is the kerb's measured box flickering, not the way opening: seen
+    # live, blocked 4.2 s, clear 1.1 s while the van crept 1.2 m, blocked again. Only a
+    # longer clear restarts the clock.
+    CLEAR_GRACE_S = 2.0
+
+    def __init__(self):
+        self.since = None
+        self.clear_since = None
+
+    @staticmethod
+    def what_is_it(obj) -> str:
+        if kerb_like(obj):
+            return "kerb"
+        return {"pole": "post", "structure": "wall", "low": "kerb"}.get(
+            getattr(obj, "static_rule", "") or "", "fixed object")
+
+    @staticmethod
+    def will_not_move(obj) -> bool:
+        return obj is not None and (getattr(obj, "motion_class", "dynamic") == "static" or kerb_like(obj))
+
+    @staticmethod
+    def can_move(obj) -> bool:
+        """A person, a cyclist or a vehicle: always worth waiting for."""
+        kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+        return kind in ("pedestrian", "cyclist", "vehicle")
+
+    def update(self, blocked: bool, distance_to_spot, blocker, now: float):
+        """What is in the way, once it is time to stop waiting -- else None."""
+        near = distance_to_spot is not None and distance_to_spot <= self.WITHIN_M
+        if near and blocked and blocker is not None and self.can_move(blocker):
+            self.since = self.clear_since = None           # wait for it, however long
+            return None
+        if not (near and blocked and blocker is not None):
+            if self.since is not None:
+                if self.clear_since is None:
+                    self.clear_since = now
+                if now - self.clear_since >= self.CLEAR_GRACE_S or not near:
+                    self.since = self.clear_since = None
+            return None
+        self.clear_since = None
+        if self.since is None:
+            self.since = now
+            return None
+        waited = now - self.since
+        if self.will_not_move(blocker):
+            return self.what_is_it(blocker) if waited >= self.AFTER_S else None
+        if bool(getattr(blocker, "stationary", False)) and waited >= self.STILL_UNNAMED_AFTER_S:
+            return "fixed object"
+        return None
+
+
 def obstacle_box_for(obj, ego_yaw: float):
     """The obstacle as the rectangle perception measured, in the world frame -- or None.
 
@@ -170,7 +270,10 @@ def obstacle_box_for(obj, ego_yaw: float):
     if length != length or width != width or (length <= 0.0 and width <= 0.0):
         return None
     kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
-    half_w = max(0.5 * width, SCRAPE_HALF_WIDTH_FLOOR_M.get(kind, DEFAULT_SCRAPE_HALF_WIDTH_M))
+    # a kerb-height thing is taken at its measured width: the floor is there because the
+    # LiDAR can see a car end-on, and nothing kerb-height hides a car behind it
+    floor = 0.0 if kerb_like(obj) else SCRAPE_HALF_WIDTH_FLOOR_M.get(kind, DEFAULT_SCRAPE_HALF_WIDTH_M)
+    half_w = max(0.5 * width, floor)
     half_l = max(0.5 * length, half_w)
     # cover a heading error by what it would swing the ends through
     half_w += half_l * math.sin(math.radians(YAW_TOLERANCE_DEG))
@@ -460,11 +563,29 @@ class RoutePlanner:
             if not self._straight_run_before(wps, i, 6.0):
                 continue
             bay = self._right_bay(wps[i].x, wps[i].y, wps[i].z)
-            if bay is not None:
+            if bay is not None and self._bay_runs_back(wps, i, self.APPROACH_BAY_BEHIND_M):
                 bx, by, byaw, bw = bay
                 off = math.hypot(bx - wps[i].x, by - wps[i].y)
                 return i, (bx, by, byaw, off)
         return None
+
+    def _bay_runs_back(self, wps, idx, need_m):
+        """Does the bay beside the route carry on unbroken for need_m behind wps[idx]? The
+        turn-in into a bay happens alongside it (APPROACH_BAY_BEHIND_M), so a short bay --
+        one with kerb just behind the spot -- cannot be driven into forwards."""
+        run = 0.0
+        for i in range(idx, 0, -1):
+            run += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
+            if wps[i - 1].is_junction:
+                return False
+            try:
+                if self._right_bay(wps[i - 1].x, wps[i - 1].y, wps[i - 1].z) is None:
+                    return False
+            except Exception:
+                return False
+            if run >= need_m:
+                return True
+        return False
 
     def apply_pullover(self, route: Route, side="right"):
         """
@@ -602,19 +723,23 @@ class RoutePlanner:
 
         slots = []
         run = []
+        bay_id = 0
         for b in bay_pts + [None]:
             if b is not None:
                 run.append(b)
                 continue
             if len(run) >= 2:
-                slots.extend(self._slice_run_into_slots(run))
+                slots.extend(self._slice_run_into_slots(run, bay_id))
+                bay_id += 1
             run = []
         return slots
 
     SLOT_MAX_CURVE_RAD = 0.14   # ~8 deg heading spread across a slot = too curved
 
-    def _slice_run_into_slots(self, run):
-        """run = consecutive (x, y, yaw, width) bay points along the road."""
+    def _slice_run_into_slots(self, run, bay_id=0):
+        """run = consecutive (x, y, yaw, width) bay points along the road. Every slot says
+        which bay it is in, its place in it (k, counted along the road), and how much bay
+        lies behind its centre -- what decides whether the van can drive into it."""
         arcs = [0.0]
         for a, b in zip(run, run[1:]):
             arcs.append(arcs[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
@@ -654,7 +779,8 @@ class RoutePlanner:
                        for sx, sy in ((1, 1), (1, -1), (-1, -1), (-1, 1))]
             out.append({"x": round(x, 2), "y": round(y, 2), "yaw": round(yaw, 3),
                         "length": self.SLOT_LEN_M, "width": round(width, 2),
-                        "corners": corners})
+                        "corners": corners, "bay": bay_id, "k": k,
+                        "bay_behind_m": round(mid, 2)})
         return out
 
     @staticmethod
@@ -684,16 +810,49 @@ class RoutePlanner:
         m_side = slot["width"] / 2.0 - worst_ly
         return (m_along >= 0 and m_side >= 0, round(m_along, 2), round(m_side, 2))
 
-    @staticmethod
-    def choose_free_slot(slots):
-        """Best slot = nearest the destination that is FREE and whose
-        PREDECESSOR is also free (the approach ramp sweeps through it).
-        Fallback: any free slot. Returns an index or None."""
+    # How much BAY the van needs behind a slot's centre to drive into it forwards (fix 3).
+    # The van has no reverse gear, so it turns in from the lane and the turn-in must happen
+    # alongside bay, not kerb. Measured on the van's own turn-in path (_blend_tail_to, a
+    # 2.0 m bay beside a 3.5 m lane, the Sprinter's body): the body leaves the driving lane
+    # 13.1 m before the slot's centre, turning at up to 34 degrees. So the FIRST slot of a
+    # bay puts the body over bare kerb for 9.6 m and the SECOND for 2.6 m; the third and
+    # later are clear. 3 of the 4 parking stalls on 2026-09-10 were bays one slot long.
+    APPROACH_BAY_BEHIND_M = 14.0
+
+    @classmethod
+    def slot_reachable(cls, slots, i):
+        """Can the van drive into slot i forwards? It must be free, have enough bay behind
+        it, and the slots its turn-in sweeps through must be free too. Slots that do not
+        say which bay they are in (from the LiDAR) keep the old test: the one before is free."""
+        sl = slots[i]
+        if sl.get("occupied"):
+            return False
+        if "bay" not in sl or "k" not in sl:
+            return i == 0 or not slots[i - 1].get("occupied")
+        if sl.get("bay_behind_m", 0.0) < cls.APPROACH_BAY_BEHIND_M:
+            return False
+        # every slot the turn-in sweeps through must be there -- straight bay -- and free. A
+        # slot missing from the list is a piece of bay that BENDS, and a bay bends round
+        # something: a kerb build-out, a tree pit. Seen live 2026-09-10: two turn-ins across
+        # such bends, one ending at a kerb and one behind a 3.9 m tree for a minute.
+        swept = int(math.ceil(cls.APPROACH_BAY_BEHIND_M / sl.get("length", cls.SLOT_LEN_M)))
+        behind = {other.get("k"): other for other in slots if other.get("bay") == sl["bay"]}
+        for k in range(sl["k"] - swept, sl["k"]):
+            if k not in behind or behind[k].get("occupied"):
+                return False
+        return True
+
+    @classmethod
+    def choose_free_slot(cls, slots):
+        """Best slot = the one nearest the destination that the van can drive into
+        forwards (slot_reachable). For map slots there is no fallback: None, and the mission
+        parks at the kerb in the lane rather than aim at a slot it would have to scrape into.
+        Slots that do not say which bay they are in keep their old last resort, any free one."""
         for i in range(len(slots) - 1, -1, -1):
-            if not slots[i]["occupied"] and (i == 0 or not slots[i - 1]["occupied"]):
+            if cls.slot_reachable(slots, i):
                 return i
         for i in range(len(slots) - 1, -1, -1):
-            if not slots[i]["occupied"]:
+            if "bay" not in slots[i] and not slots[i].get("occupied"):
                 return i
         return None
 
@@ -988,7 +1147,10 @@ class RoutePlanner:
                 # The measured rectangle when there is one; the circle only when there is not.
                 # See ObstacleBox for what the circle did to a kerb strip.
                 box = obstacle_box_for(obj, ego_yaw)
-                hit = sweep_conflict(wps, (ego_x, ego_y), footprint, (wx, wy),
+                # a kerb needs tyre clearance, not the full safety margin (KERB_CLEARANCE_M)
+                body = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
+                        if kerb_like(obj) else footprint)
+                hit = sweep_conflict(wps, (ego_x, ego_y), body, (wx, wy),
                                      obstacle_radius=radius,
                                      horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length,
                                      obstacle_box=box)

@@ -329,12 +329,14 @@ faults.
   measured middle sits nearer the lane than the car really is, and the swept-path rule (on by
   default since 2026-09-10) judges that the van would touch it. There is no pass-with-care or
   overtake behaviour to fall back on.
-* **The van can stall at a destination beside the kerb.** In the parking approach it stops
-  for a low (0.14-0.15 m) piece of kerb 0.6-1.6 m from its path line -- correctly labelled
-  static -- and waits there (`blocked_swept_path` or `blocked_tracked_object`); 4 of 5
-  pedestrian scenarios on 2026-09-10 ended this way, the fifth behind a vehicle parked 2.4 m
-  from the path. The road edge is treated as an obstacle; `ROAD_BOUNDARY` exists as a planner
-  reason but is not produced yet.
+* **The turn-in to a kerbside spot is sharp, and can end short of the spot.** The van has no
+  reverse gear, so it turns in from the lane, and the ramp (`_blend_tail_to`) turns at up to
+  34 degrees; the front corner swings close to the kerb line even in a long bay. When the
+  swept path meets the kerb the van now stops and finishes there
+  (`WaitingIsPointless`, "stopped short of the spot") instead of waiting: measured on
+  2026-09-10, 4 such finishes, 15-20 m short of the spot and 6-27 degrees off its line. A
+  gentler turn-in would reach the spot. `ROAD_BOUNDARY` exists as a planner reason but is
+  not produced yet.
 
 ---
 
@@ -409,6 +411,16 @@ Kept short deliberately; this is not a history file.
   following works in camera mode.
 * **Sensor health is wired to the safety supervisor** and produces degraded-speed and stop
   behaviour, including picture-quality faults (dark, frozen, covered, rain-blocked tiles).
+* **The van no longer waits for ever at a kerb when pulling in.** 4 of 5 pedestrian
+  scenarios ended with it parked in front of a kerb piece until the run timed out. Three
+  causes, each fixed and measured: (1) it chose bays one slot long -- its body leaves the
+  lane 13.1 m before the slot's centre, over bare kerb -- so a slot now needs
+  `APPROACH_BAY_BEHIND_M` (14 m) of free, straight bay behind it, and the kerbside pull-over
+  the same; (2) a kerb 0.5 m from the parked van's side met 0.55 m of padding, so a
+  kerb-height thing (<= 0.20 m, still, unnamed) now needs tyre clearance only (0.10 m);
+  (3) whatever still blocks the way in near the spot and will not move ends the mission there
+  after 6 s. After: 4 of 5 completed, 0 contacts; the fifth waited behind a car parked 2.6 m
+  from the path (the parked-car item above).
 * **Plain sky no longer reads as "something on the lens".** A clean front camera was called
   broken for 18-75 % of daytime driving (the sky, and the far end of the road, hardly change
   while driving), and each time the safety supervisor slowed the van to 2 m/s and then

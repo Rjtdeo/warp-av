@@ -39,7 +39,7 @@ from .perception.camera_lidar_perception import CameraLidarPerception
 from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
-from .planning.planner import RoutePlanner
+from .planning.planner import RoutePlanner, WaitingIsPointless
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -274,6 +274,7 @@ class WarpAV:
         self._lidar_rescan_done = False
         self._lidar_rescan_tries = 0
         self._hold_short_done = False
+        self._give_up = WaitingIsPointless()     # fix 3: a fresh clock for every mission
         self.rl_parker.reset()
 
         # Create mission
@@ -688,6 +689,12 @@ class WarpAV:
             predicted_conflict=predicted,
         )
 
+        # Waiting is pointless when what blocks the way into the spot cannot move (fix 3).
+        try:
+            self._maybe_give_up_on_the_spot(perception, behavior_output, dest_dist)
+        except Exception as e:
+            print(f"[Parking] give-up check failed: {e}")
+
         # Re-check slot occupancy once the destination is within 30 m, not
         # only when the parking behaviour begins: by then the van was already
         # too close to a stolen slot to stop short of it (arm A, 4 Sep).
@@ -829,6 +836,9 @@ class WarpAV:
                 if sp.get("kind") == "hold":
                     detail = (f"Held short of the taken bay, {d:.2f} m from the hold point "
                               f"(slot #{sp.get('slot_index')} was occupied, none free ahead)")
+                if sp.get("kind") == "short":
+                    detail = (f"Stopped {d:.1f} m short of the spot: the way in is blocked by a "
+                              f"{sp.get('blocked_by', 'fixed object')} that will not move")
                 _sl_list = getattr(self, "_parking_slots", None)
                 if (sp.get("kind") == "slot" and _sl_list
                         and sp.get("slot_index", 1 << 30) < len(_sl_list)):
@@ -2251,6 +2261,35 @@ class WarpAV:
             sl["occupied"] = any(self.planner.point_in_slot(px, py, sl, inflate=0.25)
                                  for pts in others for px, py in pts)
 
+    def _maybe_give_up_on_the_spot(self, perception, behavior_output, dest_dist):
+        """Blocked on the way into the parking spot by something that will not move: stop
+        there and finish, instead of waiting for ever (fix 3, planner.WaitingIsPointless)."""
+        if not getattr(self, "_parking_spot", None):
+            return
+        if getattr(self, "_give_up", None) is None:
+            self._give_up = WaitingIsPointless()
+        blocked = behavior_output.behavior in (DrivingBehavior.STOPPED_OBSTACLE,
+                                               DrivingBehavior.STOPPED_BLOCKED)
+        bid = getattr(self.planner.last_decision, "blocker_id", None)
+        obj = next((o for o in perception.objects if int(getattr(o, "id", 0) or 0) == bid), None) \
+            if bid is not None else None
+        what = self._give_up.update(blocked, dest_dist, obj, time.time())
+        if what is None:
+            return
+        sp = self._parking_spot
+        sp["kind"] = "short"
+        sp["blocked_by"] = what
+        behavior_output.behavior = DrivingBehavior.MISSION_COMPLETE
+        behavior_output.reason = f"Stopped short of the spot: the way in is blocked by a {what}, which will not move"
+        behavior_output.should_stop = True
+        behavior_output.desired_speed_mps = 0.0
+        self.behavior.mission_complete = True
+        self.behavior.has_mission = False
+        self.logger.log_event("parking_gave_up",
+                              f"a {what} {getattr(obj, 'distance', 0.0):.1f} m ahead blocked the way into the "
+                              f"spot for {WaitingIsPointless.AFTER_S:.0f} s, {dest_dist:.1f} m from it")
+        print(f"[Parking] the way into the spot is blocked by a {what} that will not move — stopping here")
+
     def _recheck_parking_on_approach(self, pose):
         """Entering the parking phase: occupancy may be stale (cars parked
         after the mission started). Re-scan; if the chosen slot got taken,
@@ -2271,12 +2310,13 @@ class WarpAV:
                  if (s["x"] - pose.x) * fwd[0] + (s["y"] - pose.y) * fwd[1] > 4.0]
         new_idx = None
         for i in reversed(ahead):               # prefer nearest the destination
-            if not slots[i]["occupied"] and (i == 0 or not slots[i - 1]["occupied"]):
+            if self.planner.slot_reachable(slots, i):
                 new_idx = i
                 break
         if new_idx is None:
+            # only slots that do not say which bay they are in keep the old last resort
             for i in reversed(ahead):
-                if not slots[i]["occupied"]:
+                if "bay" not in slots[i] and not slots[i]["occupied"]:
                     new_idx = i
                     break
         if new_idx is None:
@@ -2593,8 +2633,16 @@ class WarpAV:
         chosen_idx = self.planner.choose_free_slot(slots)
         if chosen_idx is None:
             self._parking_slots = slots
-            self.logger.log_event("parking_slots", f"{len(slots)} slots found — ALL OCCUPIED")
-            return {"success": False, "reason": f"All {len(slots)} slots are occupied", "slots": slots}
+            free = sum(1 for x in slots if not x["occupied"])
+            if free:
+                why = (f"{len(slots)} slots found, {free} free, but none the van can drive into "
+                       f"forwards (it needs {self.planner.APPROACH_BAY_BEHIND_M:.0f} m of free bay "
+                       f"behind the slot to turn in)")
+            else:
+                why = f"All {len(slots)} slots are occupied"
+            self.logger.log_event("parking_slots", why)
+            print(f"[Parking] {why} — parking at the kerb in the lane")
+            return {"success": False, "reason": why, "slots": slots}
 
         sl = slots[chosen_idx]
         if not self.planner.retarget_to_slot(self._route, sl):
