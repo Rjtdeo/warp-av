@@ -536,26 +536,8 @@ class RoutePlanner:
         return None
 
     # --- Parking / pull-over (Troy #7) ---
-    PARK_BLEND_M = 15.0        # length of the pull-over ramp before the spot
     PARK_CURB_MARGIN_M = 1.2   # keep the van's centre this far off the lane edge
     PARK_MAX_PULLBACK_M = 40.0 # may park up to this far BEFORE a pin that sits in a bend/junction
-
-    def _straight_run_before(self, wps, idx, need_m):
-        """Is there >= need_m of straight, non-junction road ending at wps[idx]?"""
-        if wps[idx].is_junction:
-            return False
-        # the anchor itself must be locally straight (not the first point of a bend)
-        if idx > 0 and abs((wps[idx - 1].yaw - wps[idx].yaw + math.pi) % (2 * math.pi) - math.pi) > math.radians(5):
-            return False
-        run = 0.0
-        for i in range(idx, 0, -1):
-            dyaw = abs((wps[i - 1].yaw - wps[idx].yaw + math.pi) % (2 * math.pi) - math.pi)
-            if dyaw > math.radians(20) or wps[i - 1].is_junction:
-                return run >= need_m
-            run += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
-            if run >= need_m:
-                return True
-        return run >= need_m
 
     def _right_bay(self, x, y, z):
         """Is there a Parking/Shoulder bay to the right of the driving lane at
@@ -580,24 +562,126 @@ class RoutePlanner:
             return (t.location.x, t.location.y, math.radians(t.rotation.yaw), bay.lane_width)
         return None
 
-    def _find_bay_anchor(self, wps):
-        """Scan the final PARK_MAX_PULLBACK_M of the route (nearest-to-pin
-        first) for a point with a real stopping bay to the right AND enough
-        straight road behind it to blend in. Returns (index, target) or None."""
-        arc = 0.0
-        for i in range(len(wps) - 1, 2, -1):
-            if i < len(wps) - 1:
-                arc += math.hypot(wps[i + 1].x - wps[i].x, wps[i + 1].y - wps[i].y)
-            if arc > self.PARK_MAX_PULLBACK_M:
+    # --- The way into a parking spot (2026-09-11) ---
+    # Measured against CARLA on 2026-09-11: the ramp into a parking strip was squeezed into
+    # whatever straight road was left. CARLA's route changes lane just before the pin, the
+    # blend window reached back across that change, and one ramp had to move the van 6.5 m
+    # sideways in about 6 m of road -- up to 57 degrees. The van cut in, its path met the
+    # pavement kerb and it finished across the lane. Now the ramp has a fixed gentlest angle,
+    # lies entirely in ONE lane before the spot, and when the road before the pin is too short
+    # the spot moves along the strip, up to PARK_PAST_PIN_M past the pin, instead.
+    PULL_IN_MAX_DEG = 15.0      # the steepest point of the planned ramp
+    PULL_IN_STRAIGHT_M = 5.0    # then dead straight for this long, so it arrives parallel
+    PULL_IN_MIN_RAMP_M = 6.0    # never shorter than this, however small the move
+    LANE_TO_SPOT_MAX_M = 4.6    # the spot must be beside the lane the van is in: a bay next to a
+                                # 3.5 m lane is ~3.05 m from its centre, the kerb of the lane
+                                # beyond ~4.05 m; a bay two lanes over (6.55 m, 2026-09-11) is not
+    SAME_LANE_TOL_M = 0.75      # a route point this far off the lane line is in another lane
+    PULL_IN_SETTLE_M = 10.0     # before the ramp, this long in the lane after a lane change, bend
+                                # or junction. Starting it right at CARLA's 2 m lane change stacked
+                                # the two turns: 27 degrees in the closed-loop test, 12 without
+    PARK_PAST_PIN_M = 80.0      # how far on past the pin a spot may be -- across a junction if need
+                                # be: a pin on a stop line has none before it (2026-09-11, light 21)
+    PARK_KERB_PENALTY_M = 15.0  # choosing: a kerb stop in the lane counts as this much further off
+    PARK_LANE_PENALTY_M = 40.0  # ...and a plain stop in the lane as this much (bays are for parking)
+    LANE_STOP_STRAIGHT_M = 6.0  # a stop in the lane needs this much straight lane before it...
+    LANE_STOP_CLEAR_M = 15.0    # ...and no junction this close ahead: never on a stop line
+
+    @classmethod
+    def pull_in_ramp_m(cls, lateral_m: float) -> float:
+        """How long a ramp moving the van `lateral_m` sideways must be, so its steepest point
+        is PULL_IN_MAX_DEG. The ramp is a smoothstep: steepest in the middle, at 1.5 times the
+        average slope."""
+        return max(cls.PULL_IN_MIN_RAMP_M,
+                   1.5 * abs(lateral_m) / math.tan(math.radians(cls.PULL_IN_MAX_DEG)))
+
+    @classmethod
+    def bay_needed_behind_m(cls, lateral_m: float) -> float:
+        """How much bay must run back beside the ramp. The van's front corner leaves its lane a
+        little under a third of the way down the ramp; from there on the bay must be there."""
+        return 0.7 * cls.pull_in_ramp_m(lateral_m) + cls.PULL_IN_STRAIGHT_M
+
+    def _same_lane_start(self, wps, i, need_m, settle_m=None):
+        """Walk back from wps[i] while the route stays in the same lane -- on the line through
+        wps[i] along its heading -- straight, and out of junctions. The index need_m back, if the
+        lane also carries on settle_m (PULL_IN_SETTLE_M) further back, or the route begins in it;
+        else None -- a bend, a junction, or a lane change comes first."""
+        settle_m = self.PULL_IN_SETTLE_M if settle_m is None else settle_m
+        a = wps[i]
+        c, s = math.cos(a.yaw), math.sin(a.yaw)
+        run, start = 0.0, None
+        for j in range(i, 0, -1):
+            p = wps[j - 1]
+            if p.is_junction and start is None:
+                return None            # the ramp itself never starts inside a junction...
+            if abs(-(p.x - a.x) * s + (p.y - a.y) * c) > self.SAME_LANE_TOL_M:
+                return None            # ...but straight on THROUGH one, the van is settled
+            if abs((p.yaw - a.yaw + math.pi) % (2 * math.pi) - math.pi) > math.radians(10):
                 return None
-            if not self._straight_run_before(wps, i, 6.0):
-                continue
-            bay = self._right_bay(wps[i].x, wps[i].y, wps[i].z)
-            if bay is not None and self._bay_runs_back(wps, i, self.APPROACH_BAY_BEHIND_M):
-                bx, by, byaw, bw = bay
-                off = math.hypot(bx - wps[i].x, by - wps[i].y)
-                return i, (bx, by, byaw, off)
-        return None
+            run += math.hypot(wps[j].x - p.x, wps[j].y - p.y)
+            if start is None and run >= need_m:
+                start = j - 1
+            if start is not None and run >= need_m + settle_m:
+                return start
+        return start          # the route itself begins in this lane: nothing to settle from
+
+    def _pull_in_plan(self, wps, k, tx, ty, tyaw, needs_bay):
+        """Can the van pull in to (tx, ty) beside route point k, gently, from its own lane?
+        (k, ramp start index, tx, ty, tyaw, sideways m, ramp m) or None."""
+        a = wps[k]
+        c, s = math.cos(a.yaw), math.sin(a.yaw)
+        lat = -(tx - a.x) * s + (ty - a.y) * c        # CARLA frame: + is to the right
+        along = (tx - a.x) * c + (ty - a.y) * s
+        if not (0.1 < lat <= self.LANE_TO_SPOT_MAX_M) or abs(along) > 2.0:
+            return None
+        if abs((tyaw - a.yaw + math.pi) % (2 * math.pi) - math.pi) > math.radians(10):
+            return None
+        ramp = self.pull_in_ramp_m(lat)
+        i0 = self._same_lane_start(wps, k, ramp + self.PULL_IN_STRAIGHT_M)
+        if i0 is None:
+            return None
+        if needs_bay and not self._bay_runs_back(wps, k, self.bay_needed_behind_m(lat)):
+            return None
+        return k, i0, tx, ty, tyaw, lat, ramp
+
+    def extend_past_pin(self, route: Route, metres: float) -> int:
+        """Carry the route on past its last point for up to `metres`, straight on -- through a
+        junction too, on the branch that keeps the heading the pin had -- so a parking spot can
+        be chosen past the pin when there is none before it. A pin on a junction's stop line
+        (2026-09-11, light 21) has its nearest spot across the junction. Stops where the road
+        turns away (over 30 degrees from the pin's heading) or ends. The lights on the way are
+        found as for any route (the points keep their road and lane). CARLA map only; returns
+        how many points it added."""
+        cmap = getattr(self, "carla_map", None)
+        if cmap is None or not route or not route.waypoints or metres <= 0:
+            return 0
+        last = route.waypoints[-1]
+        wp = cmap.get_waypoint(carla.Location(x=last.x, y=last.y, z=last.z),
+                               project_to_road=True, lane_type=carla.LaneType.Driving)
+        if wp is None:
+            return 0
+
+        def gap(a, b):
+            return abs((a - b + 180) % 360 - 180)
+        heading = wp.transform.rotation.yaw
+        added, d = [], 0.0
+        while d < metres:
+            options = wp.next(2.0)
+            if not options:
+                break
+            nxt = min(options, key=lambda n: gap(n.transform.rotation.yaw, heading))
+            if (gap(nxt.transform.rotation.yaw, wp.transform.rotation.yaw) > 12
+                    or gap(nxt.transform.rotation.yaw, heading) > 30):
+                break
+            wp, d = nxt, d + 2.0
+            loc = wp.transform.location
+            added.append(Waypoint(x=loc.x, y=loc.y, z=loc.z,
+                                  yaw=math.radians(wp.transform.rotation.yaw), speed=last.speed,
+                                  is_junction=bool(wp.is_junction),
+                                  road_id=wp.road_id, lane_id=wp.lane_id))
+        if added:
+            route.waypoints = route.waypoints + added
+        return len(added)
 
     def _bay_runs_back(self, wps, idx, need_m):
         """Does the bay beside the route carry on unbroken for need_m behind wps[idx]? The
@@ -617,82 +701,105 @@ class RoutePlanner:
                 return True
         return False
 
-    def apply_pullover(self, route: Route, side="right"):
+    def apply_pullover(self, route: Route, side="right", pin_index=None, avoid=(), ahead_of=None):
         """
-        Bend the end of the route so the mission finishes at the kerb on the
-        right-hand side (or a real Parking/Shoulder lane if the map has one)
-        instead of dead-centre on the road.
+        Choose where the mission ends, and bend the route into it. In order of preference:
+          * "bay"  -- a real Parking/Shoulder strip beside the lane, pulled into gently
+          * "kerb" -- the kerb edge of the lane, when there is no strip to use
+          * "lane" -- straight in the lane, where a straight stretch allows and no junction is
+                      just ahead (never on a stop line)
+        Every option is scored by how far it is from the pin in a straight line -- how far to
+        walk -- plus PARK_KERB_PENALTY_M / PARK_LANE_PENALTY_M, and the best one taken. Looked
+        for from PARK_MAX_PULLBACK_M before the pin to PARK_PAST_PIN_M after it (the route must
+        have been carried on past it: extend_past_pin). Every option ends STRAIGHT: the van
+        never finishes part-way through a lane change (2026-09-11: 22 degrees across the line,
+        called arrived).
 
-        If the pin itself sits in a bend or junction, park like a driver would:
-        at the kerb on the nearest STRAIGHT stretch before it (up to 40 m back,
-        the route is truncated there). Returns {"x","y","yaw","offset_m",
-        "moved_back_m"} or None when no safe spot exists within the pullback.
+        When nothing works, the route is cut back to the pin and None returned.
+
+        `avoid`: spots already turned down (x, y) -- nothing within 6 m of one is chosen again.
+        `ahead_of`: the van's (x, y) when choosing again on the way; the pull-in must start
+        ahead of it, since it cannot back up to start one it has already driven past.
         """
         if not route or len(route.waypoints) < 4:
             return None
         wps = route.waypoints
+        pin = len(wps) - 1 if pin_index is None else max(0, min(int(pin_index), len(wps) - 1))
+        px, py = wps[pin].x, wps[pin].y
+        arc = [0.0] * len(wps)
+        for k in range(1, len(wps)):
+            arc[k] = arc[k - 1] + math.hypot(wps[k].x - wps[k - 1].x, wps[k].y - wps[k - 1].y)
+        window = [k for k in range(3, len(wps))
+                  if -self.PARK_MAX_PULLBACK_M <= arc[k] - arc[pin] <= self.PARK_PAST_PIN_M
+                  and not wps[k].is_junction]
+        first_i0 = 1
+        if ahead_of is not None:
+            here = min(range(len(wps)), key=lambda k: (wps[k].x - ahead_of[0]) ** 2
+                       + (wps[k].y - ahead_of[1]) ** 2)
+            first_i0 = here + 2
 
-        # Step 0: PREFER a real stopping bay (parking/shoulder strip beyond the
-        # lane line) anywhere in the last 40 m — park fully OFF the driving lane.
-        bay_target = None
-        kind = "kerb"
-        try:
-            found = self._find_bay_anchor(wps)
-        except Exception:
-            found = None
-        if found is not None:
-            a, bay_target = found
-            kind = "bay"
-            moved_back = 0.0
-            for i in range(a + 1, len(wps)):
-                moved_back += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
-        else:
-            # Step 1: kerb-hug fallback — last waypoint with >=6 m of straight
-            # road behind it, at most PARK_MAX_PULLBACK_M before the pin.
-            moved_back = 0.0
-            a = len(wps) - 1
-            while a > 2 and moved_back <= self.PARK_MAX_PULLBACK_M:
-                if self._straight_run_before(wps, a, 6.0):
-                    break
-                moved_back += math.hypot(wps[a].x - wps[a - 1].x, wps[a].y - wps[a - 1].y)
-                a -= 1
-            else:
-                return None
-            if a <= 2 or moved_back > self.PARK_MAX_PULLBACK_M:
-                return None
-        if a < len(wps) - 1:
-            route.waypoints = wps = wps[:a + 1]   # mission now ends at the bay / before the bend
-        last = wps[-1]
+        best = None                              # (score, plan, kind, strip width)
 
-        # Step 2: how much straight tail do we have to blend over?
-        usable = 0.0
-        i0 = len(wps) - 1
-        for i in range(len(wps) - 1, 0, -1):
-            dyaw = abs((wps[i - 1].yaw - last.yaw + math.pi) % (2 * math.pi) - math.pi)
-            if dyaw > math.radians(20) or wps[i - 1].is_junction:
-                break
-            usable += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
-            i0 = i - 1
-            if usable >= self.PARK_BLEND_M:
-                break
-        if usable < 6.0:
+        def consider(plan, kind, penalty, width=None):
+            nonlocal best
+            if plan is None or plan[1] < first_i0:
+                return
+            if any(math.hypot(plan[2] - ax, plan[3] - ay) < 6.0 for ax, ay in avoid):
+                return
+            score = math.hypot(plan[2] - px, plan[3] - py) + penalty
+            if best is None or score < best[0]:
+                best = (score, plan, kind, width)
+
+        for k in window:
+            try:
+                bay = self._right_bay(wps[k].x, wps[k].y, wps[k].z)
+            except Exception:
+                bay = None
+            if bay is not None:
+                consider(self._pull_in_plan(wps, k, bay[0], bay[1], bay[2], needs_bay=True),
+                         "bay", 0.0, width=bay[3])
+            tx, ty, tyaw, off = self._pullover_target(wps[k])
+            if off > 0.1:
+                consider(self._pull_in_plan(wps, k, tx, ty, tyaw, needs_bay=False),
+                         "kerb", self.PARK_KERB_PENALTY_M)
+            consider(self._lane_stop_plan(wps, k, arc), "lane", self.PARK_LANE_PENALTY_M)
+        if best is None:
+            if pin < len(wps) - 1:
+                route.waypoints = wps[:pin + 1]  # nothing past the pin is wanted after all
             return None
-
-        if bay_target is not None:
-            tx, ty, tyaw, off = bay_target
-        else:
-            tx, ty, tyaw, off = self._pullover_target(last)
-        if off <= 0.1:
-            return None      # nowhere to pull over (very narrow lane)
-
-        self._blend_tail_to(route, i0, tx, ty, tyaw, usable)
+        _, (k, i0, tx, ty, tyaw, lat, ramp), kind, width = best
+        route.waypoints = wps[:k + 1]
+        if kind != "lane":
+            self._blend_tail_to(route, i0, tx, ty, tyaw, ramp_m=ramp)
+        approach = ramp + self.PULL_IN_STRAIGHT_M if kind != "lane" else 0.0
         return {"x": round(tx, 2), "y": round(ty, 2), "yaw": round(tyaw, 3),
-                "offset_m": round(off, 2), "moved_back_m": round(moved_back, 1), "kind": kind}
+                "offset_m": round(lat, 2), "moved_back_m": round(max(0.0, arc[pin] - arc[k]), 1),
+                "past_pin_m": round(max(0.0, arc[k] - arc[pin]), 1),
+                "from_pin_m": round(math.hypot(tx - px, ty - py), 1), "ramp_m": round(ramp, 1),
+                "approach_m": round(approach, 1),
+                "ramp_start": [round(wps[i0].x, 2), round(wps[i0].y, 2)], "kind": kind,
+                "width": None if width is None else round(width, 2)}
 
-    def _blend_tail_to(self, route: Route, i0: int, tx, ty, tyaw, usable):
-        """Replace the route tail after index i0 with a smooth ramp to the
-        target, finishing with a straight-in section so the vehicle arrives
-        parallel (shared by kerbside pull-over and slot parking)."""
+    def _lane_stop_plan(self, wps, k, arc):
+        """Stopping straight in the lane at route point k: a straight run of lane before it
+        (settled after any lane change), and no junction within LANE_STOP_CLEAR_M ahead -- a
+        van stopped on a stop line blocks the junction. The route must run on that far to tell."""
+        if self._same_lane_start(wps, k, self.LANE_STOP_STRAIGHT_M) is None:
+            return None
+        if arc[-1] - arc[k] < self.LANE_STOP_CLEAR_M:
+            return None
+        for j in range(k + 1, len(wps)):
+            if arc[j] - arc[k] > self.LANE_STOP_CLEAR_M:
+                break
+            if wps[j].is_junction:
+                return None
+        a = wps[k]
+        return k, max(0, k - 2), a.x, a.y, a.yaw, 0.0, 0.0
+
+    def _blend_tail_to(self, route: Route, i0: int, tx, ty, tyaw, ramp_m: float):
+        """Replace the route tail after index i0 with a smooth ramp `ramp_m` long to the
+        target's side offset, then straight in to the target, so the van arrives parallel
+        (shared by kerbside pull-over and slot parking)."""
         wps = list(route.waypoints)     # snapshot; writer swaps atomically at the end
         last = wps[-1]
         p0 = wps[i0]
@@ -702,9 +809,8 @@ class RoutePlanner:
         dx, dy = tx - p0.x, ty - p0.y
         along = dx * fwd[0] + dy * fwd[1]
         lat = dx * right[0] + dy * right[1]
-        straight_in = min(9.5, max(0.0, along - 6.0))
-        cut = max(0.5, along - straight_in)
-        K = max(6, int(usable / 2.0))
+        cut = max(0.5, min(along, ramp_m))
+        K = max(6, int(along / 2.0))
         new_tail = []
         for k in range(1, K + 1):
             a = k / K
@@ -840,14 +946,12 @@ class RoutePlanner:
         m_side = slot["width"] / 2.0 - worst_ly
         return (m_along >= 0 and m_side >= 0, round(m_along, 2), round(m_side, 2))
 
-    # How much BAY the van needs behind a slot's centre to drive into it forwards (fix 3).
-    # The van has no reverse gear, so it turns in from the lane and the turn-in must happen
-    # alongside bay, not kerb. Measured on the van's own turn-in path (_blend_tail_to, a
-    # 2.0 m bay beside a 3.5 m lane, the Sprinter's body): the body leaves the driving lane
-    # 13.1 m before the slot's centre, turning at up to 34 degrees. So the FIRST slot of a
-    # bay puts the body over bare kerb for 9.6 m and the SECOND for 2.6 m; the third and
-    # later are clear. 3 of the 4 parking stalls on 2026-09-10 were bays one slot long.
-    APPROACH_BAY_BEHIND_M = 14.0
+    # How much BAY the van needs behind a slot's centre to drive into it forwards. The van has
+    # no reverse gear, so it turns in from the lane, and from where its body leaves the lane
+    # the turn-in must run alongside bay, not kerb (fix 3: 3 of the 4 parking stalls on
+    # 2026-09-10 were bays one slot long). For the gentle ramp into a bay beside a 3.5 m lane
+    # (bay_needed_behind_m(3.05)): 17 m -- the third slot of a strip is the first it can use.
+    APPROACH_BAY_BEHIND_M = 17.0
 
     @classmethod
     def slot_reachable(cls, slots, i):
@@ -865,12 +969,19 @@ class RoutePlanner:
         # slot missing from the list is a piece of bay that BENDS, and a bay bends round
         # something: a kerb build-out, a tree pit. Seen live 2026-09-10: two turn-ins across
         # such bends, one ending at a kerb and one behind a 3.9 m tree for a minute.
-        swept = int(math.ceil(cls.APPROACH_BAY_BEHIND_M / sl.get("length", cls.SLOT_LEN_M)))
+        length = sl.get("length", cls.SLOT_LEN_M)
+        swept = int(math.ceil((cls.APPROACH_BAY_BEHIND_M - length / 2.0) / length))
         behind = {other.get("k"): other for other in slots if other.get("bay") == sl["bay"]}
         for k in range(sl["k"] - swept, sl["k"]):
             if k not in behind or behind[k].get("occupied"):
                 return False
         return True
+
+    @classmethod
+    def free_slots_by_distance(cls, slots, near):
+        """Indices of the slots the van can drive into forwards, nearest `near` (x, y) first."""
+        ok = [i for i in range(len(slots)) if cls.slot_reachable(slots, i)]
+        return sorted(ok, key=lambda i: math.hypot(slots[i]["x"] - near[0], slots[i]["y"] - near[1]))
 
     @classmethod
     def choose_free_slot(cls, slots):
@@ -887,26 +998,36 @@ class RoutePlanner:
         return None
 
     def retarget_to_slot(self, route: Route, slot):
-        """Trim the route beside the chosen slot and blend into it."""
+        """End the route in `slot`, pulling in gently from our lane (_pull_in_plan). A point in
+        the lane itself (a hold-short point) is simply driven to. Returns {"approach_m": how far
+        before the slot the pull-in starts, "ramp_m"}, or None when there is no gentle way in."""
         wps = route.waypoints
         if len(wps) < 6:
-            return False
+            return None
         ci = min(range(len(wps)),
                  key=lambda i: math.hypot(wps[i].x - slot["x"], wps[i].y - slot["y"]))
         if ci < 4:
-            return False
-        trimmed = wps[:ci + 1]
-        trimmed[-1] = Waypoint(x=trimmed[-1].x, y=trimmed[-1].y,
-                               z=trimmed[-1].z, yaw=slot["yaw"])
-        route.waypoints = trimmed          # atomic swap
-        i0 = max(0, len(trimmed) - 8)
-        self._blend_tail_to(route, i0, slot["x"], slot["y"], slot["yaw"], usable=14.0)
-        return True
+            return None
+        a = wps[ci]
+        lat = -(slot["x"] - a.x) * math.sin(a.yaw) + (slot["y"] - a.y) * math.cos(a.yaw)
+        if abs(lat) < 0.5:
+            route.waypoints = wps[:ci] + [Waypoint(x=slot["x"], y=slot["y"], z=a.z, yaw=slot["yaw"],
+                                                   road_id=a.road_id, lane_id=a.lane_id)]
+            return {"approach_m": 0.0, "ramp_m": 0.0}
+        plan = self._pull_in_plan(wps, ci, slot["x"], slot["y"], slot["yaw"], needs_bay=False)
+        if plan is None:
+            return None                    # no gentle way in from our lane: another slot
+        _, i0, tx, ty, tyaw, _, ramp = plan
+        route.waypoints = wps[:ci + 1]     # atomic swap
+        self._blend_tail_to(route, i0, tx, ty, tyaw, ramp_m=ramp)
+        return {"approach_m": round(ramp + self.PULL_IN_STRAIGHT_M, 1), "ramp_m": round(ramp, 1)}
 
     def _pullover_target(self, last: Waypoint):
-        """Kerb-side point for the final stop. Uses the CARLA map when
-        available (rightmost driving lane edge, or a Parking/Shoulder lane);
-        falls back to pure geometry 1.2 m right of the final waypoint."""
+        """Kerb-side point for a stop in the lane: the right edge of the rightmost same-way
+        driving lane, the van's centre PARK_CURB_MARGIN_M in from it. Falls back to pure
+        geometry 1.2 m right of the waypoint. A Parking/Shoulder strip is NOT this function's
+        answer any more: a strip is only pulled into as a bay, where it is checked to run back
+        far enough (_pull_in_plan) -- otherwise a strip too short to enter could be chosen."""
         try:
             wp = self.carla_map.get_waypoint(
                 carla.Location(x=last.x, y=last.y, z=last.z),
@@ -919,11 +1040,6 @@ class RoutePlanner:
                     wp = r
                 else:
                     break
-            park = wp.get_right_lane()
-            if (park is not None and park.lane_type in (carla.LaneType.Parking, carla.LaneType.Shoulder)
-                    and park.lane_width > 2.2):
-                t = park.transform
-                return (t.location.x, t.location.y, math.radians(t.rotation.yaw), park.lane_width / 2.0)
             t = wp.transform
             rv = t.get_right_vector()
             edge = max(0.0, wp.lane_width / 2.0 - self.PARK_CURB_MARGIN_M)
@@ -955,6 +1071,47 @@ class RoutePlanner:
             if wps[i].is_junction:
                 return round(dist, 1)
         return None
+
+    def pull_in_blocker(self, perception, route: Route, ego_x, ego_y, ego_yaw, footprint):
+        """The nearest thing standing still that the van's body would touch on the REST of the
+        route -- the whole pull-in, not the FOOTPRINT_STATIONARY_REACH_M the running check looks
+        ahead -- judged as filter_to_route_corridor judges it (the measured box when there is
+        one, a kerb at tyre clearance, a parked vehicle passable with care). (object, metres
+        away, the SweepHit, its centre (x, y), its ObstacleBox or None) or None. Asked before turning into a parking spot, while choosing another is still
+        possible: on 2026-09-11 the van turned in first and was stopped 12 degrees across the
+        lane by a bus shelter beside the spot."""
+        if footprint is None or not route or len(route.waypoints) < 2:
+            return None
+        wps = route.waypoints
+        cos_y, sin_y = math.cos(ego_yaw), math.sin(ego_yaw)
+        best = None
+        for obj in getattr(perception, "objects", None) or []:
+            if getattr(obj, "speed", 0.0) >= 0.5:
+                continue                     # moving things are the running check's business
+            wx = ego_x + cos_y * obj.x - sin_y * obj.y
+            wy = ego_y + sin_y * obj.x + cos_y * obj.y
+            box = obstacle_box_for(obj, ego_yaw)
+            where = (wx, wy)
+            if box is not None:
+                bdx = float(getattr(obj, "box_dx", 0.0) or 0.0)
+                bdy = float(getattr(obj, "box_dy", 0.0) or 0.0)
+                where = (wx + cos_y * bdx - sin_y * bdy, wy + sin_y * bdx + cos_y * bdy)
+            body = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
+                    if kerb_like(obj) else footprint)
+            radius = obstacle_radius_m(obj)
+            hit = sweep_conflict(wps, (ego_x, ego_y), body, where, obstacle_radius=radius,
+                                 horizon_m=1e4, obstacle_box=box)
+            if hit is None:
+                continue
+            if can_pass_with_care(obj):
+                tight = replace(footprint, safety_margin=min(footprint.safety_margin, PASS_CLEARANCE_M))
+                if sweep_conflict(wps, (ego_x, ego_y), tight, where, obstacle_radius=radius,
+                                  horizon_m=1e4, obstacle_box=box) is None:
+                    continue
+            d = math.hypot(wx - ego_x, wy - ego_y)
+            if best is None or d < best[1]:
+                best = (obj, d, hit, where, box)
+        return best
 
     def filter_to_route_corridor(self, perception, route: Route, ego_x, ego_y, ego_yaw,
                                  corridor_halfwidth_m=1.75, block_halfwidth_m=1.40,
@@ -1066,7 +1223,8 @@ class RoutePlanner:
 
         for obj in perception.objects:
             seen += 1
-            # ego frame (x fwd, y left) -> world
+            # the van's frame (x forward, y to the right, as camera_lidar_perception reports
+            # objects -- measured live 2026-09-11) -> world
             wx = ego_x + cos_y * obj.x - sin_y * obj.y
             wy = ego_y + sin_y * obj.x + cos_y * obj.y
             oarc, lat, oseg = arc_pos(wx, wy)
@@ -1469,14 +1627,42 @@ class RoutePlanner:
                             z=last.z, yaw=hd)
         return last
 
+    def route_left_m(self, route: Route, current_x, current_y) -> float:
+        """How far there is still to DRIVE along the route to its end, from the nearest point of
+        the route (found the way get_next_waypoint finds it)."""
+        wps = route.waypoints if route else None
+        if not wps:
+            return 999.0
+        if len(wps) < 2:
+            return math.hypot(wps[0].x - current_x, wps[0].y - current_y)
+        best_j, best_t, best_d2 = 0, 0.0, float("inf")
+        for j in range(len(wps) - 1):
+            ax, ay, bx, by = wps[j].x, wps[j].y, wps[j + 1].x, wps[j + 1].y
+            dx, dy = bx - ax, by - ay
+            seg2 = dx * dx + dy * dy
+            tt = 0.0 if seg2 <= 1e-12 else max(0.0, min(1.0, ((current_x - ax) * dx + (current_y - ay) * dy) / seg2))
+            d2 = (ax + tt * dx - current_x) ** 2 + (ay + tt * dy - current_y) ** 2
+            if d2 < best_d2:
+                best_j, best_t, best_d2 = j, tt, d2
+        left = (1.0 - best_t) * math.hypot(wps[best_j + 1].x - wps[best_j].x, wps[best_j + 1].y - wps[best_j].y)
+        for k in range(best_j + 1, len(wps) - 1):
+            left += math.hypot(wps[k + 1].x - wps[k].x, wps[k + 1].y - wps[k].y)
+        return left
+
     def distance_to_destination(self, route: Route, current_x, current_y) -> float:
-        """How far to the end of the route."""
+        """How far to the end of the route: by road, or in a straight line, whichever is more.
+
+        It used to be the straight line alone. A route that loops round a block passes close to
+        its own end long before it gets there: measured live on 2026-09-11, 19.5 m from it with
+        about 200 m still to drive, and 22.7 m from the parking spot on the wrong street. The van
+        slowed for its destination there, and the parking check stopped it and looked for a spot
+        hidden behind buildings -- then gave the spot up. At the end the two agree; past the end
+        (an overshoot) the straight line is the one that keeps growing."""
         if not route or not route.waypoints:
             return 999.0
         last = route.waypoints[-1]
-        dx = last.x - current_x
-        dy = last.y - current_y
-        return math.sqrt(dx**2 + dy**2)
+        straight = math.hypot(last.x - current_x, last.y - current_y)
+        return max(straight, self.route_left_m(route, current_x, current_y))
 
     def disable(self):
         self._enabled = False

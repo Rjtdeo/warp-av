@@ -48,6 +48,23 @@ class DrivingBehavior(Enum):
 LIGHT_MEANS_STOP = ("red", "yellow", "unknown")
 
 
+#: The front bumper stops this far short of the stop line.
+LIGHT_STOP_GAP_M = 0.5
+
+#: From the 0.6 m/s the last metre is crawled at, the van rolls about this much further once
+#: told to stop, so "stopped" is declared this much before the gap is reached.
+LIGHT_STOP_ROLL_M = 0.2
+
+#: The yellow-light choice, made once when a light stops being green: stop if the van can do
+#: it before the line braking at this rate, otherwise keep going. Braking hard and ending up
+#: IN the junction as it turns red is worse than going through on the yellow.
+COMFORT_DECEL_MPS2 = 2.5
+
+#: Where the front bumper is, ahead of the van's reported position, when nobody says.
+#: Measured on the Sprinter in CARLA: 2.947 m.
+DEFAULT_FRONT_OFFSET_M = 2.95
+
+
 def _light_words(state: str) -> str:
     """What to say about it, so an unreadable light does not read as a red one."""
     if state == "unknown":
@@ -117,8 +134,13 @@ class BehaviorSystem:
         # look for a moment, and only go when no moving vehicle is nearby.
         self.junction_stop_within_m = 12.0   # start handling the turn this close
         self.hold_line_m = 3.0               # give-way hold: centre this far from the crossing
-        self.light_hold_m = 2.6              # red light fallback: centre 2.6 m from the JUNCTION ENTRY (stop-bar junctions without zebra data) -> bumper ~0.25 m from the boundary
-        self.light_hold_line_m = 2.6         # centre 2.6 m from the PAINTED line -> bumper ~0.25 m before the paint (operator-tuned 2026-08-30)
+        # Traffic lights: the stop line comes from the map, measured from the FRONT BUMPER
+        # (see traffic_lights.stop_line_for_lane). The choice to stop or go is made once each
+        # time a light stops being green, and kept until it is green again.
+        self.front_offset_m = DEFAULT_FRONT_OFFSET_M
+        self._light_key = None               # which light the choice below is about
+        self._light_choice = None            # ("stop"|"go", why), or None while green / no light
+        self.light_status = None             # for the telemetry
         self.junction_dwell_s = 1.5          # mandatory look time even if clear
         self.junction_conflict_radius_m = 25.0
         self.junction_wait_timeout_s = 12.0  # then creep instead of deadlocking
@@ -159,11 +181,11 @@ class BehaviorSystem:
         destination_distance: Optional[float],
         safety_ok: bool,
         junction: Optional[dict] = None,
-        junction_ahead_m: Optional[float] = None,
         park_heading_ok: bool = True,
         park_position_ok: bool = True,
-        white_line_m: Optional[float] = None,
         predicted_conflict: Optional[dict] = None,
+        stop_line_m: Optional[float] = None,     # front bumper to the light's stop line, along the route
+        light_id: Optional[int] = None,          # which light that is
         world=None,                      # the day-7 world model, when the caller has one
         speed_cap_mps: Optional[float] = None,   # safety's cap while a sense is missing (day 8)
         blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
@@ -337,6 +359,11 @@ class BehaviorSystem:
         # the danger exists instead of braking when it does. Ranked below
         # physical blocks (a real thing in the path always wins) and above
         # the traffic light chain.
+        # What the light asks, worked out BEFORE the predicted-conflict branch below. That
+        # branch used to return "slowing to 2.5 m/s" without ever reaching the light, so a
+        # crosser predicted at a junction let the van roll through a red one.
+        light = self._traffic_light(perception, pose, stop_line_m, light_id)
+
         if predicted_conflict is not None:
             p_t = predicted_conflict.get("t", 0.0)
             p_along = predicted_conflict.get("along_m", 0.0)
@@ -347,6 +374,8 @@ class BehaviorSystem:
                     f"Yielding — {p_what} will cross our path {p_along:.0f}m ahead in {p_t:.1f}s",
                     speed=0.0, stop=True
                 )
+            if light is not None and (light[3] or light[2] < 2.5):
+                return self._decide(*light)       # the stricter of the two wins
             return self._decide(
                 DrivingBehavior.YIELDING_PREDICTED,
                 f"Slowing — {p_what} predicted in our path {p_along:.0f}m ahead in {p_t:.1f}s",
@@ -354,43 +383,10 @@ class BehaviorSystem:
             )
 
         # --- Traffic light (Troy #1): roll up to the stop line, hold there.
-        # Ranked below pedestrian/vehicle/obstacle stops (a closer physical
-        # hazard always wins) and above following/cruising. Green releases it
-        # automatically on the next tick.
-        # "unknown" is in here on purpose. If we KNOW a traffic-controlled stop line is
-        # coming and cannot read its colour, that is not permission to carry on. Before the
-        # map-based lookahead this could not arise -- the van either had a colour or knew
-        # nothing at all -- but now it can know a signal is 30 m ahead while the colour is
-        # missing or stale, and treating that as green would be the worst of both.
-        if perception.traffic_light in LIGHT_MEANS_STOP:
-            # Committed: already entering/inside the junction when the light
-            # changed — clear it, never freeze inside the box.
-            if junction_ahead_m is not None and junction_ahead_m < 1.0:
-                pass
-            else:
-                # Best reference first: the PAINTED white line (crosswalk
-                # polygon on our route) — hold with the bumper just before
-                # the paint. Then the junction entry (edge polygons sit
-                # metres before the paint at some junctions — operator/Troy
-                # complaint), then CARLA's early stop waypoints.
-                if white_line_m is not None:
-                    d, line, hold = white_line_m, "white line", self.light_hold_line_m
-                elif junction_ahead_m is not None:
-                    d, line, hold = junction_ahead_m, "junction edge", self.light_hold_m
-                else:
-                    d, line, hold = perception.traffic_light_distance_m, "stop line", self.light_hold_m
-                if d is not None and d > hold + 0.5:
-                    creep = max(0.6, min(3.0, 0.45 * (d - hold)))
-                    return self._decide(
-                        DrivingBehavior.FOLLOWING_ROUTE,
-                        f"{_light_words(perception.traffic_light)} ahead ({d:.0f} m to {line}) — rolling up",
-                        speed=creep, stop=False
-                    )
-                return self._decide(
-                    DrivingBehavior.STOPPED_RED_LIGHT,
-                    f"{_light_words(perception.traffic_light)} — holding at the {line}, waiting for green",
-                    speed=0.0, stop=True
-                )
+        # Ranked below pedestrian/vehicle/obstacle stops (a closer physical hazard always
+        # wins) and above following/cruising. See _traffic_light.
+        if light is not None:
+            return self._decide(*light)
 
         # --- Give way before turning at a junction ---
         if junction is None or junction.get("distance_m", 99) > 15.0:
@@ -489,6 +485,61 @@ class BehaviorSystem:
             speed=self.cruise_speed, stop=False
         )
 
+    def _traffic_light(self, perception, pose, stop_line_m, light_id):
+        """What the light ahead asks of the van: (behaviour, reason, speed, stop), or None when
+        it asks nothing -- no light, a green one, or the van is committed to going through.
+
+        Where to stop. `stop_line_m` is from the FRONT BUMPER to the lane's stop line in the
+        map. It used to be the zebra crossing or the junction edge, measured from the middle
+        of the van: the zebra starts up to 3.9 m past the paint, and the middle of the van
+        held 2.6 m short of it put the bumper 0.35 m past even that. Measured
+        against CARLA on 2026-09-11 the van crossed the stop line on red at three lights out
+        of four, stopping up to 3.8 m over it.
+
+        When to go on through. Decided ONCE, the first moment a light is not green, and kept
+        until it is green again:
+          * already over the line   -> go on and clear the junction
+          * yellow, and too close to stop braking at COMFORT_DECEL_MPS2 -> go on through
+          * anything else           -> stop, and stay stopped
+        Deciding once is what keeps a creep a few centimetres over the line at a red from
+        ever turning into "committed, carry on". The old rule -- carry on through any colour
+        once within 1 m of the junction edge -- let the van do exactly that.
+        """
+        state = perception.traffic_light
+        d = stop_line_m
+        if d is None and perception.traffic_light_distance_m is not None:
+            d = perception.traffic_light_distance_m - self.front_offset_m
+        if light_id != self._light_key:
+            self._light_key, self._light_choice = light_id, None
+        if state not in LIGHT_MEANS_STOP:
+            self._light_choice = None            # green, or no light: the next change is new
+            self.light_status = None if state in (None, "none") else {
+                "light_id": light_id, "state": state, "stop_line_m": d, "choice": "go",
+                "why": "green"}
+            return None
+        if self._light_choice is None:
+            speed = max(0.0, float(getattr(pose, "speed", 0.0) or 0.0))
+            if d is not None and d < 0.0:
+                self._light_choice = ("go", f"already {-d:.1f} m over the stop line when it changed")
+            elif (state == "yellow" and d is not None
+                  and speed * speed / (2.0 * COMFORT_DECEL_MPS2) > d):
+                self._light_choice = ("go", f"turned yellow {d:.1f} m from the line at "
+                                            f"{speed:.1f} m/s, too close to stop")
+            else:
+                self._light_choice = ("stop", "can stop before the line")
+        choice, why = self._light_choice
+        self.light_status = {"light_id": light_id, "state": state, "stop_line_m": d,
+                             "choice": choice, "why": why}
+        if choice == "go":
+            return None
+        words = _light_words(state)
+        if d is not None and d > LIGHT_STOP_GAP_M + LIGHT_STOP_ROLL_M:
+            creep = max(0.6, min(3.0, 0.45 * (d - LIGHT_STOP_GAP_M)))
+            return (DrivingBehavior.FOLLOWING_ROUTE,
+                    f"{words} ahead ({d:.1f} m to the stop line) — rolling up", creep, False)
+        return (DrivingBehavior.STOPPED_RED_LIGHT,
+                f"{words} — holding short of the stop line, waiting for green", 0.0, True)
+
     def _note_block(self, kind, distance):
         """Remember a CLOSE physical blocker so a one-tick detection blink
         cannot release the van instantly (release latch above).
@@ -575,6 +626,7 @@ class BehaviorSystem:
         self.has_mission = True
         self.mission_complete = False
         self._park_best_d = None
+        self._light_key, self._light_choice, self.light_status = None, None, None
         self.current_behavior = DrivingBehavior.IDLE
 
     def cancel_mission(self):

@@ -39,7 +39,7 @@ from .perception.camera_lidar_perception import CameraLidarPerception
 from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
-from .planning.planner import RoutePlanner, WaitingIsPointless
+from .planning.planner import RoutePlanner, Route, WaitingIsPointless
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -51,6 +51,7 @@ from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, cons
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
 from .planning.instrumentation import PhaseTimer, PlannerDecision
 from .planning.footprint_config import FootprintBlockingConfig
+from .planning.parking_check import spot_view, spot_counts, SPOT_DEFAULT_LEN_M, SPOT_DEFAULT_WID_M
 from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
 from .perception.bay_finder import why_no_kerb
 
@@ -59,6 +60,12 @@ from .world_model import build_world_model
 from .perception.traffic_lights import SignalMap, TrafficLightLookahead, carla_state_source
 from .perception.light_camera import CameraLightReader, LampMap, camera_lights_wanted
 from .sensor_health import HealthMonitor, read_sensors
+
+#: Confirming a parking spot with the van's own LiDAR (2026-09-11) -- see WarpAV._confirm_parking_spot.
+SPOT_CONFIRM_FROM_M = 28.0   # start looking this far from the spot (the LiDAR's map reaches 30 m)
+SPOT_FREE_LOOKS = 2          # seen free on this many looks in a row before the van turns in
+SPOT_WAIT_S = 3.0            # still unseen at the start of the pull-in: wait this long, then re-choose
+
 
 class WarpAV:
     """The complete autonomy system."""
@@ -174,8 +181,10 @@ class WarpAV:
                 return _sim(light_id)
 
             self._signal_lookahead = TrafficLightLookahead(smap, state_source=light_colour)
+            lanes = sum(len(s.lanes) for s in smap.signals.values())
+            lined = sum(len(s.lines) for s in smap.signals.values())
             print(f"[Signals] {len(smap)} traffic lights read from the map "
-                  f"in {smap.build_ms:.0f} ms")
+                  f"in {smap.build_ms:.0f} ms; stop lines worked out for {lined} of {lanes} lanes")
         except Exception as e:
             self._signal_lookahead = None
             self._light_reader = None
@@ -183,6 +192,13 @@ class WarpAV:
         # Planning V2: swept-path blocking, OFF by default. The van's real size
         # is read from the CARLA bounding box (fallback 2.96 x 0.99 m).
         self.footprint_blocking = FootprintBlockingConfig.from_vehicle(self.vehicle_adapter.vehicle)
+        # Where the front bumper is, ahead of the position localization reports: the van's own
+        # size, not knowledge of the world. The red-light stop is measured from it.
+        try:
+            bb = self.vehicle_adapter.vehicle.bounding_box
+            self.behavior.front_offset_m = float(bb.location.x) + float(bb.extent.x)
+        except Exception:
+            pass
         fb = self.footprint_blocking.state()
         print(f"[Planner] footprint {fb['vehicle_half_length_m']} x {fb['vehicle_half_width_m']} m "
               f"({fb['dimensions_source']}), margin {fb['safety_margin_m']} m, "
@@ -346,9 +362,26 @@ class WarpAV:
         self._parking_slots = None
         self._parking_rechecked = False
         # Bend the end of the route to a kerbside parking spot (Troy #7):
-        # finish pulled over on the right, not dead-centre on the road.
+        # finish pulled over on the right, not dead-centre on the road. The route is carried
+        # on past the pin first, so that where there is no room to pull in gently before it,
+        # the spot can be a little past it instead.
         try:
-            self._parking_spot = self.planner.apply_pullover(self._route, side="right")
+            pin_index = len(self._route.waypoints) - 1
+            self.planner.extend_past_pin(self._route, self.planner.PARK_PAST_PIN_M)
+            # The route as planned, before any pull-in is drawn on it: every later choice of
+            # spot is drawn afresh from this, not on top of the last one.
+            self._route_base = list(self._route.waypoints)
+            self._pin_index = pin_index
+            self._parking_rejected = []
+            self._parking_wait_since = None
+            self._parking_spot = self.planner.apply_pullover(self._route, side="right",
+                                                             pin_index=pin_index)
+            if self._parking_spot is None and self._route.waypoints:
+                # nowhere better: the pin itself, but still judged on being straight there
+                end = self._route.waypoints[-1]
+                self._parking_spot = {"x": end.x, "y": end.y, "yaw": end.yaw, "kind": "lane",
+                                      "offset_m": 0.0, "moved_back_m": 0, "confirmed": True,
+                                      "note": "no workable spot near the pin"}
         except Exception as e:
             print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
             self._parking_spot = None
@@ -359,8 +392,12 @@ class WarpAV:
         if self._parking_spot:
             moved = self._parking_spot.get("moved_back_m", 0)
             kind = self._parking_spot.get("kind", "kerb")
-            what = "PARKING BAY off the driving lane" if kind == "bay" else "kerb-hug inside the lane (no bay on this street)"
-            note = f", {moved} m before the pin" if moved > 1 else ""
+            what = {"bay": "PARKING BAY off the driving lane",
+                    "kerb": "kerb-hug inside the lane (no bay to pull into)",
+                    "lane": "straight in the lane (no bay or kerb to pull into)"}.get(kind, kind)
+            past = self._parking_spot.get("past_pin_m") or 0
+            note = (f", {moved} m before the pin" if moved > 1 else
+                    f", {past} m past the pin" if past > 1 else "")
             self._parking_note = (f"{what}: ({self._parking_spot['x']}, {self._parking_spot['y']}), "
                                   f"{self._parking_spot['offset_m']} m right of lane centre{note}")
             print(f"[Mission] parking spot: {self._parking_spot}")
@@ -379,7 +416,11 @@ class WarpAV:
         # dashboard shows them from the first metre. Falls back to the kerbside
         # spot when the street has no usable slots (or all are taken).
         try:
-            auto = self.api_find_parking()
+            sp0 = self._parking_spot or {}
+            px, py = self._pin_xy()
+            nearest = (math.hypot(sp0["x"] - px, sp0["y"] - py) + self.planner.SLOT_LEN_M
+                       if sp0.get("kind") == "bay" else None)
+            auto = self.api_find_parking(not_further_than_m=nearest)
             if not auto.get("success"):
                 print(f"[Parking] no slot targeted ({auto.get('reason')}) — using the kerbside spot")
         except Exception as e:
@@ -472,19 +513,26 @@ class WarpAV:
                 if self._signal_lookahead is not None else None
         except Exception:
             signal = None
+        if (self.perception_mode == "camera_lidar" and perception.healthy
+                and (signal is None or signal.light_id is None)
+                and self._signal_lookahead is not None):
+            # No signal on the route. The MAP says whether a light governs the lane we are
+            # actually in; the CAMERA says its colour. (This used to ask the simulator for the
+            # colour -- CARLA is now used for where lights and lines are, never what they show.)
+            try:
+                wp = self.vehicle_adapter.get_map().get_waypoint(
+                    carla.Location(x=pose.x, y=pose.y, z=pose.z))
+                lane = (int(wp.road_id), int(wp.lane_id)) if wp is not None else None
+                signal = self._signal_lookahead.on_lane(lane, pose.x, pose.y, pose.yaw)
+            except Exception:
+                pass
         self._signal_ahead = signal
+        self._stop_line_m = None
         if signal is not None and signal.light_id is not None:
             perception.traffic_light = signal.state
             perception.traffic_light_distance_m = signal.distance_m
-        elif self.perception_mode == "camera_lidar" and perception.healthy:
-            # no signal on the route: fall back to the old proximity answer, which at least
-            # catches a light on a road we are driving without a planned route
-            try:
-                tl_state, tl_dist = self.ground_truth_perception.current_light_state()
-                perception.traffic_light = tl_state
-                perception.traffic_light_distance_m = tl_dist
-            except Exception:
-                pass
+            if signal.distance_m is not None:
+                self._stop_line_m = signal.distance_m - self.behavior.front_offset_m
         _phase("traffic light")
 
         if self._route and driving_a_plan and perception.healthy and pose.healthy:
@@ -650,14 +698,6 @@ class WarpAV:
                     half_len, half_wid = 2.9, 1.0
                 park_position_ok, _, _ = self.planner.van_in_slot(
                     pose.x, pose.y, pose.yaw, half_len, half_wid, slot)
-        white_line = None
-        if perception.traffic_light in ("red", "yellow", "green"):
-            try:
-                white_line = self._white_line_ahead(pose, junction_ahead)
-            except Exception:
-                white_line = None
-        self._white_line_m = white_line
-
         _phase("route context")
 
         # Prediction: yield to crossers/cut-ins BEFORE they are in the path.
@@ -682,16 +722,16 @@ class WarpAV:
             destination_distance=dest_dist,
             safety_ok=safety_output.driving_allowed,
             junction=junction,
-            junction_ahead_m=junction_ahead,
             park_heading_ok=park_heading_ok,
             park_position_ok=park_position_ok,
-            white_line_m=white_line,
             predicted_conflict=predicted,
+            stop_line_m=getattr(self, "_stop_line_m", None),
+            light_id=(signal.light_id if signal is not None else None),
         )
 
         # Waiting is pointless when what blocks the way into the spot cannot move (fix 3).
         try:
-            self._maybe_give_up_on_the_spot(perception, behavior_output, dest_dist)
+            self._maybe_give_up_on_the_spot(perception, behavior_output, dest_dist, pose)
         except Exception as e:
             print(f"[Parking] give-up check failed: {e}")
 
@@ -727,10 +767,16 @@ class WarpAV:
                 print(f"[Parking] lidar approach re-scan failed: {e}")
         if rescan_now:
             self._parking_rechecked = True
+            if self.perception_mode != "camera_lidar":       # camera mode: _confirm_parking_spot
+                try:
+                    self._recheck_parking_on_approach(pose)
+                except Exception as e:
+                    print(f"[Parking] approach re-scan failed: {e}")
+        if self.perception_mode == "camera_lidar":
             try:
-                self._recheck_parking_on_approach(pose)
+                self._confirm_parking_spot(pose, behavior_output, dest_dist)
             except Exception as e:
-                print(f"[Parking] approach re-scan failed: {e}")
+                print(f"[Parking] could not check the spot: {e}")
 
         # Go-around: pass a vehicle that is genuinely dead in our lane.
         try:
@@ -836,9 +882,9 @@ class WarpAV:
                 if sp.get("kind") == "hold":
                     detail = (f"Held short of the taken bay, {d:.2f} m from the hold point "
                               f"(slot #{sp.get('slot_index')} was occupied, none free ahead)")
-                if sp.get("kind") == "short":
-                    detail = (f"Stopped {d:.1f} m short of the spot: the way in is blocked by a "
-                              f"{sp.get('blocked_by', 'fixed object')} that will not move")
+                if sp.get("kind") == "lane":
+                    detail = ("No free parking spot near the destination: stopped straight in the "
+                              f"lane, {d:.2f} m from the stop point")
                 _sl_list = getattr(self, "_parking_slots", None)
                 if (sp.get("kind") == "slot" and _sl_list
                         and sp.get("slot_index", 1 << 30) < len(_sl_list)):
@@ -1094,9 +1140,14 @@ class WarpAV:
                                         if self._light_reader is not None else None),
             "light_camera_ms": (round(self._light_reader.read_ms, 3)
                                 if self._light_reader is not None else None),
+            # stop_line_m: FRONT BUMPER to the stop line (negative once over it). choice: what the
+            # van decided when the light stopped being green -- "stop", or "go" and why.
             "traffic_light": {"state": perception.traffic_light,
-                              "stop_line_m": getattr(perception, "traffic_light_distance_m", None),
-                              "white_line_m": getattr(self, "_white_line_m", None)},
+                              "light_id": (self._signal_ahead.light_id
+                                           if self._signal_ahead is not None else None),
+                              "stop_line_m": (None if getattr(self, "_stop_line_m", None) is None
+                                              else round(self._stop_line_m, 2)),
+                              "choice": self.behavior.light_status},
             "collision": {"count": self._collision_count, "last": self._last_collision},
             "overtaking": self._overtake_point is not None,
             "predicted_conflict": getattr(self, "_predicted_conflict", None),
@@ -1997,7 +2048,7 @@ class WarpAV:
         spawned = 0
         if take_chosen:
             sp = getattr(self, "_parking_spot", None)
-            if sp and sp.get("kind") == "slot":
+            if sp and sp.get("kind") in ("slot", "bay"):
                 if park_at(sp["x"], sp["y"], math.degrees(sp["yaw"]), 0):
                     spawned += 1
 
@@ -2059,84 +2110,6 @@ class WarpAV:
         self._static_vehicle_pts = pts
         print(f"[Parking] static-layer parked vehicles known: {len(pts)}")
         return pts
-
-    def _crosswalk_polygons(self):
-        """2D polygons of every PAINTED crosswalk. CARLA returns all corner
-        points in one list; each zone is closed by repeating its first
-        point. Cached — paint never moves."""
-        polys = getattr(self, "_crosswalk_polys", None)
-        if polys is not None:
-            return polys
-        polys = []
-        try:
-            pts = self.vehicle_adapter.get_map().get_crosswalks()
-            cur = []
-            for p in pts:
-                if cur and abs(cur[0][0] - p.x) < 1e-3 and abs(cur[0][1] - p.y) < 1e-3:
-                    if len(cur) >= 3:
-                        polys.append(cur)
-                    cur = []
-                else:
-                    cur.append((p.x, p.y))
-        except Exception as e:
-            print(f"[Lights] crosswalk scan failed: {e}")
-        self._crosswalk_polys = polys
-        self._crosswalk_centroids = [
-            (sum(x for x, _ in poly) / len(poly), sum(y for _, y in poly) / len(poly))
-            for poly in polys]
-        print(f"[Lights] painted crosswalks known: {len(polys)}")
-        return polys
-
-    @staticmethod
-    def _point_in_poly(x, y, poly):
-        inside = False
-        j = len(poly) - 1
-        for i in range(len(poly)):
-            xi, yi = poly[i]
-            xj, yj = poly[j]
-            if (yi > y) != (yj > y) and \
-                    x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi:
-                inside = not inside
-            j = i
-        return inside
-
-    def _white_line_ahead(self, pose, junction_ahead):
-        """Along-route distance to the first PAINTED crosswalk this route
-        enters on the approach to the upcoming junction (the visual white
-        line the operator judges stops by). None when the approach has no
-        zebra — callers fall back to the junction edge."""
-        if not self._route or junction_ahead is None:
-            return None
-        polys = self._crosswalk_polygons()
-        if not polys:
-            return None
-        cents = self._crosswalk_centroids
-        wps = self._route.waypoints
-        n = len(wps)
-        if n < 2:
-            return None
-        ci = min(range(n), key=lambda i: (wps[i].x - pose.x) ** 2 + (wps[i].y - pose.y) ** 2)
-        arc = 0.0
-        prev_inside = False
-        limit = junction_ahead + 8.0
-        for i in range(ci, n - 1):
-            wp = wps[i]
-            step = math.hypot(wps[i + 1].x - wp.x, wps[i + 1].y - wp.y)
-            inside = False
-            for k, (cx, cy) in enumerate(cents):
-                if (wp.x - cx) ** 2 + (wp.y - cy) ** 2 < 15.0 ** 2 and \
-                        self._point_in_poly(wp.x, wp.y, polys[k]):
-                    inside = True
-                    break
-            if inside and not prev_inside:
-                # Only the zebra belonging to THIS junction's approach.
-                if junction_ahead - 12.0 <= arc <= junction_ahead + 6.0:
-                    return max(0.0, arc - step * 0.5)
-            prev_inside = inside
-            arc += step
-            if arc > limit:
-                break
-        return None
 
     def _lane_ok(self, x, y):
         """Is this position on a real driving lane? (overtake feasibility)"""
@@ -2233,7 +2206,20 @@ class WarpAV:
         return out
 
     def _mark_slot_occupancy(self, slots):
-        """A slot is taken if ANY PART of another vehicle overlaps it
+        """Which slots are taken. Camera mode: what the van's own LiDAR sees (_spot_view) --
+        a slot it has not seen is not taken, but it is not confirmed free either (slot["seen"]
+        says which). Ground-truth mode, a test mode where everything comes from the simulator:
+        the simulator's list of cars, as before."""
+        if self.perception_mode == "camera_lidar":
+            pose = self.localization.get_last_pose()
+            for sl in slots:
+                sl["seen"] = self._spot_view(sl, pose)
+                sl["occupied"] = sl["seen"] == "taken"
+            return
+        self._slots_taken_in_simulator(slots)
+
+    def _slots_taken_in_simulator(self, slots):
+        """GROUND-TRUTH MODE ONLY. A slot is taken if ANY PART of another vehicle overlaps it
         (centre + four bounding-box corners: straddlers claim every slot
         they touch). Covers live actors AND the map's baked-in parked cars."""
         try:
@@ -2261,10 +2247,17 @@ class WarpAV:
             sl["occupied"] = any(self.planner.point_in_slot(px, py, sl, inflate=0.25)
                                  for pts in others for px, py in pts)
 
-    def _maybe_give_up_on_the_spot(self, perception, behavior_output, dest_dist):
-        """Blocked on the way into the parking spot by something that will not move: stop
-        there and finish, instead of waiting for ever (fix 3, planner.WaitingIsPointless)."""
-        if not getattr(self, "_parking_spot", None):
+    def _maybe_give_up_on_the_spot(self, perception, behavior_output, dest_dist, pose):
+        """Blocked on the way into the parking spot by something that will not move
+        (planner.WaitingIsPointless). Before the pull-in has begun: choose another spot. Once
+        it has begun there is no way forward and no reverse gear -- the mission FAILS, saying
+        why, and the van stays where it is.
+
+        This used to finish the mission right there and call it parked: measured against
+        CARLA on 2026-09-11, that left the van 39 degrees across the driving lane, 4.1 m of
+        it inside the lane, 11.6 m from the spot, with the mission reported complete."""
+        sp = getattr(self, "_parking_spot", None)
+        if not sp:
             return
         if getattr(self, "_give_up", None) is None:
             self._give_up = WaitingIsPointless()
@@ -2276,19 +2269,180 @@ class WarpAV:
         what = self._give_up.update(blocked, dest_dist, obj, time.time())
         if what is None:
             return
-        sp = self._parking_spot
-        sp["kind"] = "short"
-        sp["blocked_by"] = what
-        behavior_output.behavior = DrivingBehavior.MISSION_COMPLETE
-        behavior_output.reason = f"Stopped short of the spot: the way in is blocked by a {what}, which will not move"
+        self._give_up = WaitingIsPointless()
+        turning_in = dest_dist is not None and dest_dist <= (sp.get("approach_m") or 0.0) + 1.0
+        if not turning_in:
+            self._rechoose_parking(pose, f"the way in is blocked by a {what} that will not move")
+            return
+        why = f"Could not get into the parking spot: a {what} blocks the way in (no reverse gear)"
+        self.mission_manager.fail_mission(why)
+        self.behavior.has_mission = False
+        behavior_output.behavior = DrivingBehavior.STOPPED_BLOCKED
+        behavior_output.reason = why
         behavior_output.should_stop = True
         behavior_output.desired_speed_mps = 0.0
-        self.behavior.mission_complete = True
-        self.behavior.has_mission = False
-        self.logger.log_event("parking_gave_up",
+        self.vehicle_adapter.disengage_autonomy()
+        self.logger.log_event("parking_failed",
                               f"a {what} {getattr(obj, 'distance', 0.0):.1f} m ahead blocked the way into the "
-                              f"spot for {WaitingIsPointless.AFTER_S:.0f} s, {dest_dist:.1f} m from it")
-        print(f"[Parking] the way into the spot is blocked by a {what} that will not move — stopping here")
+                              f"spot for {WaitingIsPointless.AFTER_S:.0f} s, {dest_dist:.1f} m from it, "
+                              f"already turning in")
+        self.logger.stop_mission_log()
+        print(f"[Parking] {why}")
+
+    # ---------------- parking: is the spot free? (the LiDAR, 2026-09-11) ----------------
+    def _spot_view(self, spot, pose):
+        """What the van's own LiDAR says about a parking spot: "taken", "free" or "unseen"
+        (planning/parking_check.spot_view). Ground-truth perception mode is a test mode with no
+        LiDAR map, where everything comes from the simulator; there the simulator's list of
+        cars stands in, as before."""
+        if self.perception_mode != "camera_lidar":
+            probe = [dict(spot, length=spot.get("length") or SPOT_DEFAULT_LEN_M,
+                          width=spot.get("width") or SPOT_DEFAULT_WID_M)]
+            self._slots_taken_in_simulator(probe)
+            return "taken" if probe[0].get("occupied") else "free"
+        if pose is None:
+            return "unseen"
+        return spot_view(getattr(self.perception, "grid", None), spot, pose.x, pose.y, pose.yaw)
+
+    def _pin_xy(self):
+        base = getattr(self, "_route_base", None)
+        pin = getattr(self, "_pin_index", None)
+        if base and pin is not None and pin < len(base):
+            return base[pin].x, base[pin].y
+        m = self.mission_manager.current_mission
+        return (m.destination_x, m.destination_y) if m else (0.0, 0.0)
+
+    def _retarget_from_base(self, slot):
+        """Point the route into `slot`, drawn afresh from the route as planned before any
+        pull-in (a slot further on than the current end of the route stays reachable)."""
+        base = getattr(self, "_route_base", None) or list(self._route.waypoints)
+        route = Route(waypoints=list(base), timestamp=self._route.timestamp)
+        got = self.planner.retarget_to_slot(route, slot)
+        if got:
+            self._route.waypoints = route.waypoints      # atomic swap, same route object
+        return got
+
+    def _confirm_parking_spot(self, pose, behavior_output, dest_dist):
+        """Camera mode. Before turning in, the van must SEE the spot free with its LiDAR.
+
+        Looked at from SPOT_CONFIRM_FROM_M out. Seen taken: another spot is chosen at once.
+        Still unseen when the van reaches the start of its pull-in: it waits there
+        SPOT_WAIT_S, then chooses another -- not being able to see into a spot is not
+        permission to drive into it."""
+        sp = getattr(self, "_parking_spot", None)
+        if (not sp or sp.get("kind") not in ("slot", "bay") or sp.get("confirmed")
+                or dest_dist is None or dest_dist > SPOT_CONFIRM_FROM_M):
+            return
+        area = self._pull_in_area(sp)
+        view = self._spot_view(area, pose)
+        sp["seen"] = view
+        if view != "free" and self.perception_mode == "camera_lidar" \
+                and time.time() - getattr(self, "_last_view_log", 0.0) > 1.0:
+            self._last_view_log = time.time()
+            counts = spot_counts(getattr(self.perception, "grid", None), area, pose.x, pose.y, pose.yaw)
+            self.logger.log_event("parking_view",
+                                  f"{view}: squares free/blocked/unseen {counts} over "
+                                  f"{area['length']:.1f} x {area['width']:.1f} m centred "
+                                  f"({area['x']:.1f}, {area['y']:.1f}); van at ({pose.x:.1f}, {pose.y:.1f}), "
+                                  f"{dest_dist:.1f} m from the spot")
+            print(f"[Parking] spot {view}: free/blocked/unseen {counts}, {dest_dist:.1f} m out")
+        if view == "free":
+            # ...and the planner's own test finds nothing standing still that the van's body
+            # would touch on the way in: a shelter at the kerb beside the spot is not IN the
+            # strip, but the van cannot pass it (2026-09-11)
+            in_way = self.planner.pull_in_blocker(getattr(self, "_last_perception", None), self._route,
+                                                  pose.x, pose.y, pose.yaw, self.footprint_blocking.footprint)
+            if in_way is not None:
+                obj, dist, hit, where, box = in_way
+                what = getattr(getattr(obj, "object_type", None), "value", "thing")
+                self.logger.log_event(
+                    "parking_way_in_blocked",
+                    f"{what} id {getattr(obj, 'id', None)} centred ({where[0]:.2f}, {where[1]:.2f}), "
+                    f"box {getattr(obj, 'box_length_m', 0):.2f} x {getattr(obj, 'box_width_m', 0):.2f} m "
+                    f"-> taken as {2 * box.half_length:.2f} x {2 * box.half_width:.2f} m" if box is not None else
+                    f"{what} id {getattr(obj, 'id', None)} centred ({where[0]:.2f}, {where[1]:.2f}), "
+                    f"no box, radius {getattr(obj, 'clearance_radius_m', None)}")
+                self.logger.log_event(
+                    "parking_way_in_blocked",
+                    f"touched with the van at ({hit.station_x:.2f}, {hit.station_y:.2f}) heading "
+                    f"{math.degrees(hit.heading):.1f} deg, {hit.along_m:.1f} m on; object {hit.lateral_m:+.2f} m "
+                    f"off the line; height {getattr(obj, 'height_m', 0):.2f} m, "
+                    f"{getattr(obj, 'motion_class', '?')} ({getattr(obj, 'motion_why', '')})")
+                self._rechoose_parking(pose, f"the way in passes too close to a {what} "
+                                             f"{dist:.0f} m ahead")
+                return
+            sp["free_looks"] = sp.get("free_looks", 0) + 1
+            if sp["free_looks"] >= SPOT_FREE_LOOKS:
+                sp["confirmed"] = True
+                self._parking_wait_since = None
+                self.logger.log_event("parking_confirmed",
+                                      f"the LiDAR sees the {sp['kind']} free, {dest_dist:.1f} m before it")
+                print(f"[Parking] the LiDAR sees the spot free, {dest_dist:.1f} m out — turning in")
+                return
+        else:
+            sp["free_looks"] = 0
+        if view == "taken":
+            self._rechoose_parking(pose, "the LiDAR sees something in it")
+            return
+        if dest_dist > (sp.get("approach_m") or 0.0) + 2.0:
+            return                              # still road to go before the pull-in starts
+        now = time.time()
+        if self._parking_wait_since is None:
+            self._parking_wait_since = now
+        if now - self._parking_wait_since >= SPOT_WAIT_S:
+            self._rechoose_parking(pose, f"the LiDAR could not see into it for {SPOT_WAIT_S:.0f} s")
+            return
+        behavior_output.behavior = DrivingBehavior.PARKING
+        behavior_output.reason = "Parking — checking the spot is free before turning in"
+        behavior_output.should_stop = True
+        behavior_output.desired_speed_mps = 0.0
+
+    def _pull_in_area(self, sp):
+        """The spot AND the stretch of strip the van sweeps while pulling in -- from where its
+        body first leaves the lane (planner.bay_needed_behind_m) to the spot's far end. A car
+        parked just behind the spot is in the way as surely as one in it."""
+        length = sp.get("length") or SPOT_DEFAULT_LEN_M
+        approach = sp.get("approach_m") or 0.0
+        straight = self.planner.PULL_IN_STRAIGHT_M
+        back = 0.7 * max(0.0, approach - straight) + straight if approach > 0 else length / 2.0
+        s0, s1 = -max(back, length / 2.0), length / 2.0
+        mid = (s0 + s1) / 2.0
+        return dict(sp, x=sp["x"] + mid * math.cos(sp["yaw"]), y=sp["y"] + mid * math.sin(sp["yaw"]),
+                    length=s1 - s0, width=sp.get("width") or SPOT_DEFAULT_WID_M)
+
+    def _rechoose_parking(self, pose, why):
+        """The spot we were heading for will not do. Choose again, from the route as planned
+        before any pull-in, skipping every spot already turned down, and only where the
+        pull-in starts ahead of the van. Nothing left: stop at the pin, straight, in the lane
+        -- or just ahead, if the pin is already behind."""
+        sp = self._parking_spot or {}
+        self._parking_rejected.append((sp.get("x", 0.0), sp.get("y", 0.0)))
+        self._parking_wait_since = None
+        self.behavior._park_best_d = None
+        base = getattr(self, "_route_base", None)
+        if not base:
+            return
+        route = Route(waypoints=list(base), timestamp=self._route.timestamp)
+        new = self.planner.apply_pullover(route, side="right", pin_index=self._pin_index,
+                                          avoid=self._parking_rejected, ahead_of=(pose.x, pose.y))
+        if new is not None:
+            self._route.waypoints = route.waypoints
+            self._parking_spot = new
+            msg = f"{why} — now heading for a {new['kind']} {new.get('from_pin_m')} m from the pin"
+        else:
+            wps = route.waypoints                       # cut back to the pin
+            here = min(range(len(base)), key=lambda k: (base[k].x - pose.x) ** 2 + (base[k].y - pose.y) ** 2)
+            if here + 2 >= len(wps):                    # the pin is behind us: stop just ahead
+                wps = list(base[:min(len(base), here + 4)])
+            self._route.waypoints = wps
+            last = wps[-1]
+            self._parking_spot = {"x": last.x, "y": last.y, "yaw": last.yaw, "kind": "lane",
+                                  "offset_m": 0.0, "moved_back_m": 0, "confirmed": True}
+            msg = f"{why} — no other spot near the destination: stopping straight in the lane"
+        if self._signal_lookahead is not None:
+            self._signal_lookahead.set_route(self._route)    # a new tail can cross a junction
+        self.logger.log_event("parking_rechosen", msg)
+        print(f"[Parking] {msg}")
 
     def _recheck_parking_on_approach(self, pose):
         """Entering the parking phase: occupancy may be stale (cars parked
@@ -2329,7 +2483,7 @@ class WarpAV:
             hold = hold_short_point(slots[idx], pose.x, pose.y, back_m=5.0)
             ahead = (hold["x"] - pose.x) * fwd[0] + (hold["y"] - pose.y) * fwd[1]
             self._hold_short_done = True
-            if ahead > 3.0 and self.planner.retarget_to_slot(self._route, hold):
+            if ahead > 3.0 and self._retarget_from_base(hold):
                 self._parking_spot = {"x": hold["x"], "y": hold["y"], "yaw": hold["yaw"],
                                       "offset_m": None, "moved_back_m": 0, "kind": "hold",
                                       "slot_index": idx}
@@ -2346,7 +2500,7 @@ class WarpAV:
         slots[idx]["chosen"] = False
         slots[new_idx]["chosen"] = True
         sl = slots[new_idx]
-        if self.planner.retarget_to_slot(self._route, sl):
+        if self._retarget_from_base(sl):
             self._parking_spot = {"x": sl["x"], "y": sl["y"], "yaw": sl["yaw"],
                                   "offset_m": None, "moved_back_m": 0, "kind": "slot",
                                   "slot_index": new_idx}
@@ -2408,7 +2562,7 @@ class WarpAV:
                                       f"approach re-scan #{n}: lidar slot rejected - {why} - keeping the map slot for now")
             return
         shift = math.hypot(sl["x"] - sp["x"], sl["y"] - sp["y"])
-        if not self.planner.retarget_to_slot(self._route, sl):
+        if not self._retarget_from_base(sl):
             self.logger.log_event("parking_lidar", "approach re-scan: could not retarget to the lidar slot")
             return
         for s_ in slots:
@@ -2612,12 +2766,20 @@ class WarpAV:
                                           f"lidar saw {len(slots)} bays beside the START, none within 40 m of the destination - using the map")
                     slots = []
             self.logger.log_event("parking_slots", "lidar saw no bay - falling back to the map")
-        slots = self.planner.find_parking_slots(self._route)
+        base = getattr(self, "_route_base", None)
+        back = 70.0
+        pin = getattr(self, "_pin_index", None)
+        if base and pin is not None and pin < len(base):
+            past = sum(math.hypot(base[i].x - base[i - 1].x, base[i].y - base[i - 1].y)
+                       for i in range(pin + 1, len(base)))
+            back = past + self.planner.PARK_MAX_PULLBACK_M
+        slots = self.planner.find_parking_slots(Route(waypoints=list(base)) if base else self._route,
+                                                search_back_m=back)
         for sl in slots:
             sl.setdefault("source", "map")
         return slots, "map"
 
-    def api_find_parking(self):
+    def api_find_parking(self, not_further_than_m=None):
         """FIND PARKING: slice the bays near the destination into van-sized
         slots, skip occupied ones, retarget the mission to the best free slot."""
         if not self._route or not self.mission_manager.current_mission:
@@ -2630,14 +2792,27 @@ class WarpAV:
         for sl in slots:
             sl["chosen"] = False
 
-        chosen_idx = self.planner.choose_free_slot(slots)
+        # Nearest the PIN first (the route may run on past it), and the first one with a gentle
+        # way in from our lane. Occupancy here is what the LiDAR can see from the start, which
+        # is usually nothing: a slot not yet seen is not taken, but not free either -- it is
+        # confirmed as the van arrives (_confirm_parking_spot) before the van turns in.
+        pin = self._pin_xy()
+        chosen_idx, approach = None, None
+        for i in self.planner.free_slots_by_distance(slots, pin):
+            if (not_further_than_m is not None
+                    and math.hypot(slots[i]["x"] - pin[0], slots[i]["y"] - pin[1]) > not_further_than_m):
+                break                            # the pull-over spot already chosen is nearer
+            approach = self._retarget_from_base(slots[i])
+            if approach:
+                chosen_idx = i
+                break
         if chosen_idx is None:
             self._parking_slots = slots
             free = sum(1 for x in slots if not x["occupied"])
             if free:
-                why = (f"{len(slots)} slots found, {free} free, but none the van can drive into "
-                       f"forwards (it needs {self.planner.APPROACH_BAY_BEHIND_M:.0f} m of free bay "
-                       f"behind the slot to turn in)")
+                why = (f"{len(slots)} slots found, {free} not seen taken, but none the van can drive "
+                       f"into forwards (it needs {self.planner.APPROACH_BAY_BEHIND_M:.0f} m of free bay "
+                       f"behind the slot and a gentle way in from its own lane)")
             else:
                 why = f"All {len(slots)} slots are occupied"
             self.logger.log_event("parking_slots", why)
@@ -2645,13 +2820,12 @@ class WarpAV:
             return {"success": False, "reason": why, "slots": slots}
 
         sl = slots[chosen_idx]
-        if not self.planner.retarget_to_slot(self._route, sl):
-            return {"success": False, "reason": "Could not retarget the route to the slot"}
         sl["chosen"] = True
         self._parking_slots = slots
         self._parking_spot = {"x": sl["x"], "y": sl["y"], "yaw": sl["yaw"],
+                              "length": sl.get("length"), "width": sl.get("width"),
                               "offset_m": None, "moved_back_m": 0, "kind": "slot",
-                              "slot_index": chosen_idx}
+                              "slot_index": chosen_idx, "approach_m": approach["approach_m"]}
         occ = sum(1 for x in slots if x["occupied"])
         msg = f"{len(slots)} slots on the bay, {occ} occupied — parking in slot #{chosen_idx}"
         self.logger.log_event("parking_slots", msg)

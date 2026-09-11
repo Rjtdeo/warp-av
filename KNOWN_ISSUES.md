@@ -58,8 +58,11 @@ simulator, once that estimate exists.
 
 **Current behaviour.** Two separate map dependencies, both from CARLA:
 
-* `SignalMap.from_world()` reads every light's stop waypoints, giving stop-line positions
-  and the `(road_id, lane_id)` pairs each light governs.
+* `SignalMap.from_world()` reads every light's stop waypoints and the `(road_id, lane_id)`
+  pairs each light governs, and works out each lane's stop LINE: the earliest of the light's
+  OpenDRIVE position, the lane's junction entry and its first zebra
+  (`traffic_lights.stop_line_for_lane`). CARLA's stop waypoint itself is the centre of the
+  light's trigger box, 1-7.8 m short of the paint on Town10HD, and is not used as the line.
 * `LampMap.from_world()` reads `traffic_light.get_light_boxes()` — the **exact 3D position
   and size of each lamp housing**. The camera colour reader projects that box into the
   image and classifies the pixels inside it.
@@ -90,7 +93,9 @@ light's true colour from the simulator. It is used when:
 
 In the default `camera_lidar` mode the colour comes from the camera. The choice is made
 per read (`main.py`, `light_colour()`), so switching perception mode at runtime switches
-the light source with it.
+the light source with it. When no light is matched to the route, camera mode asks the MAP
+which light governs the lane the van is in and the CAMERA its colour
+(`TrafficLightLookahead.on_lane`); it no longer asks the simulator.
 
 **Why it matters.** This path must not be mistaken for the camera path when reading
 results. Any measurement should state which source was live.
@@ -321,8 +326,6 @@ faults.
 * **Junction give-way is radius-based.** No lane-level right-of-way, so a vehicle driving
   *away* on the crossing road still counts as a conflict. Creep-on-timeout after 12 s is a
   pragmatic policy that needs review before real roads.
-* **Yellow is always a stop.** The distance to the line is now known, so dilemma-zone
-  handling is possible, but is not implemented.
 * **Passing parked cars close by depends on a good look at them.** The swept-path check now
   judges a stationary thing by a rectangle fitted to its points (`tracking.fit_rectangle`),
   kept on the map frame, and for a thing standing still the most complete view of it so far.
@@ -331,14 +334,15 @@ faults.
   268 readings). The near side comes out 0.04-0.19 m further from the van than CARLA's box
   (mirrors) -- covered by the 0.10 m pad. These figures are CARLA's; a real LiDAR must be
   measured again.
-* **The turn-in to a kerbside spot is sharp, and can end short of the spot.** The van has no
-  reverse gear, so it turns in from the lane, and the ramp (`_blend_tail_to`) turns at up to
-  34 degrees; the front corner swings close to the kerb line even in a long bay. When the
-  swept path meets the kerb the van now stops and finishes there
-  (`WaitingIsPointless`, "stopped short of the spot") instead of waiting: measured on
-  2026-09-10, 4 such finishes, 15-20 m short of the spot and 6-27 degrees off its line. A
-  gentler turn-in would reach the spot. `ROAD_BOUNDARY` exists as a planner reason but is
-  not produced yet.
+* **Parking into a strip is not yet reliable.** The pull-in is gentle and ends straight
+  (see Recently resolved), but on 2026-09-11 the check made just before turning in -- the
+  planner's own swept-body test over the whole way in, `planner.pull_in_blocker` -- once
+  refused a free strip because of a lamp post on the pavement about 1 m beyond it, where the
+  van would have passed with about 0.6 m to spare; the next run into the same strip parked.
+  When a spot is refused the fallback can be a stop at the kerb edge of the DRIVING lane,
+  which blocks the lane: it should move on to the next spot, or the next street, instead.
+  Along the slot the van can finish near its ends (0.02 m to spare front/back once).
+  `ROAD_BOUNDARY` exists as a planner reason but is not produced yet.
 
 ---
 
@@ -435,7 +439,10 @@ Kept short deliberately; this is not a history file.
   kerb-height thing (<= 0.20 m, still, unnamed) now needs tyre clearance only (0.10 m);
   (3) whatever still blocks the way in near the spot and will not move ends the mission there
   after 6 s. After: 4 of 5 completed, 0 contacts; the fifth waited behind a car parked 2.6 m
-  from the path (the parked-car item above).
+  from the path (the parked-car item above). (2026-09-11: (3) finished the mission 39 degrees
+  across the lane and called it parked -- it now chooses another spot before the pull-in
+  starts, and fails the mission, saying why, once already turning in. The bay needed behind a
+  slot is now 17 m, for the gentler ramp below.)
 * **Plain sky no longer reads as "something on the lens".** A clean front camera was called
   broken for 18-75 % of daytime driving (the sky, and the far end of the road, hardly change
   while driving), and each time the safety supervisor slowed the van to 2 m/s and then
@@ -451,4 +458,27 @@ Kept short deliberately; this is not a history file.
 * **Traffic-light lookahead is route-based and lane-matched**, replacing a proximity query
   that first reported a red light 2 m away.
 * **Parking-slot occupancy is re-checked on approach**, not only once when the slot is
-  chosen.
+  chosen -- and in camera mode it comes from the van's own LiDAR free-space map
+  (`planning/parking_check.py`), not the simulator's list of cars. A spot it has not seen is
+  not free: the van confirms the spot and the strip it will sweep before it turns in.
+* **Red lights: the van stops at the lane's stop line, with its front bumper.** Measured
+  against CARLA on 2026-09-11 it had crossed the stop line on red at light 11: it held at the
+  zebra (2.2-3.9 m PAST the painted bar on Town10HD), measured from the middle of the van (the
+  bumper ended 0.35 m past even that), and a predicted crosser returned "slowing" before the
+  light was looked at. The painted bars were measured from overhead pictures at all 15 lights
+  (`tools/measure_stop_bars.py` -> `tools/data/`), and every drive is now scored against the
+  paint (`tools/record_mission_truth.py`). Yellow is decided once, as it changes: go on only if
+  the van cannot stop before the line at 2.5 m/s2. Three live runs of an 11-light route: 0 red
+  runs, the bumper 1.9-2.7 m short of the paint.
+* **Parking ends straight, beside the lane it came in on.** The pull-in ramp is capped at 15
+  degrees, lies in one lane after a 10 m settle, and the spot moves up to 80 m past the pin --
+  across a junction if need be -- rather than squeeze it; it used to be squeezed into the
+  road left, and moved the van 6.5 m sideways in 6 m (57 degrees). The distance to the
+  destination is measured by road: a route round a block passed 22.7 m from its spot with
+  about 250 m still to drive, and the van slowed and checked for it on the wrong street.
+  Live, 11-light route: parked inside the slot, 0.4 m from the spot, 2 degrees off, no part in
+  the driving lane.
+* **A bus shelter is no longer called a vehicle.** A camera "vehicle" name is dropped for a
+  blob at least 2.3 m tall, 3 m long and 0.3 m clear of every lane
+  (`motion_class.vehicle_name_implausible`); on CARLA's answer key no real vehicle meets that,
+  even one step looser. Dropping a name never makes a thing static.

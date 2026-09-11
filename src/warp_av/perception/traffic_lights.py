@@ -76,6 +76,27 @@ STATE_STALE_S = 1.0
 #: junction lands within a metre or two. Six is generous.
 STOP_LINE_ON_ROUTE_M = 6.0
 
+#: How far past CARLA's stop point a lane is walked to find where it enters the junction and
+#: its first zebra, when working out where the van must stop. On Town10HD the farthest junction
+#: entry is 7.0 m past it and the farthest zebra 11.5 m.
+STOP_LINE_SEARCH_M = 20.0
+
+#: Step of that walk. The junction entry and the zebra are each taken as the last point still
+#: short of them, so this is also how much earlier than the truth the answer can be.
+STOP_LINE_STEP_M = 0.25
+
+#: A lane walk that turns more than this in one step has taken a branch onto another road:
+#: wp.next() returns a LIST at a junction, and taking the wrong one moves the walk to a
+#: different street without any error.
+LANE_WALK_MAX_TURN_DEG = 12.0
+
+#: With no signal on the planned route, a light still counts if the MAP says it governs the
+#: lane the van is in and its stop line is this close ahead...
+ON_LANE_WITHIN_M = 30.0
+
+#: ...and no further than this to the side of the van's line of travel.
+ON_LANE_SIDE_M = 3.0
+
 RED, YELLOW, GREEN, UNKNOWN, NONE = "red", "yellow", "green", "unknown", "none"
 
 #: Colours that mean "do not proceed". UNKNOWN is deliberately in here: at a stop line we
@@ -96,11 +117,146 @@ class SignalGeometry:
     stop_points: List[Tuple[float, float]] = field(default_factory=list)   # world x, y
     lanes: Set[Tuple[int, int]] = field(default_factory=set)               # (road_id, lane_id)
     actor: object = None                                                   # the CARLA actor
+    # Where the van must actually stop on each lane (see stop_line_for_lane), and what set it.
+    # Empty when it was never worked out: then the stop point itself is used. That point is
+    # the centre of CARLA's trigger box, always before the paint, so the fallback errs towards
+    # stopping short -- never towards running the light.
+    lines: Dict[Tuple[int, int], Tuple[float, float]] = field(default_factory=dict)
+    line_notes: Dict[Tuple[int, int], str] = field(default_factory=dict)
 
     def nearest_stop_point(self, x: float, y: float) -> Optional[Tuple[float, float]]:
         if not self.stop_points:
             return None
         return min(self.stop_points, key=lambda p: (p[0] - x) ** 2 + (p[1] - y) ** 2)
+
+    def line_for(self, lane: Tuple[int, int], x: float, y: float) -> Optional[Tuple[float, float]]:
+        """The stop line on this lane, or the nearest stop point when there is none."""
+        line = self.lines.get(lane)
+        return line if line is not None else self.nearest_stop_point(x, y)
+
+
+def crosswalk_polygons(carla_map) -> List[List[Tuple[float, float]]]:
+    """Every painted zebra as a 2D polygon. CARLA returns all the corners in one list and
+    closes each zebra by repeating its first corner."""
+    polys: List[List[Tuple[float, float]]] = []
+    cur: List[Tuple[float, float]] = []
+    for p in carla_map.get_crosswalks():
+        if cur and abs(cur[0][0] - p.x) < 1e-3 and abs(cur[0][1] - p.y) < 1e-3:
+            if len(cur) >= 3:
+                polys.append(cur)
+            cur = []
+        else:
+            cur.append((float(p.x), float(p.y)))
+    return polys
+
+
+def point_in_polygon(x: float, y: float, poly: Sequence[Tuple[float, float]]) -> bool:
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def crosswalk_test(polys: Sequence[Sequence[Tuple[float, float]]]) -> Callable[[float, float], bool]:
+    """A fast "is this point on a zebra?" for the given polygons."""
+    boxes = [(min(x for x, _ in q), min(y for _, y in q), max(x for x, _ in q), max(y for _, y in q))
+             for q in polys]
+
+    def on_zebra(x: float, y: float) -> bool:
+        for (x0, y0, x1, y1), poly in zip(boxes, polys):
+            if x0 <= x <= x1 and y0 <= y <= y1 and point_in_polygon(x, y, poly):
+                return True
+        return False
+    return on_zebra
+
+
+def _yaw_gap(a_deg: float, b_deg: float) -> float:
+    return abs((a_deg - b_deg + 180.0) % 360.0 - 180.0)
+
+
+def _next_along_lane(wp, step_m: float):
+    """The next waypoint straight on down this lane, or None where the lane turns off."""
+    try:
+        options = wp.next(step_m)
+    except Exception:
+        return None
+    if not options:
+        return None
+    yaw = wp.transform.rotation.yaw
+    best = min(options, key=lambda n: _yaw_gap(n.transform.rotation.yaw, yaw))
+    return best if _yaw_gap(best.transform.rotation.yaw, yaw) <= LANE_WALK_MAX_TURN_DEG else None
+
+
+def stop_line_for_lane(stop_wp, affected: Sequence = (),
+                       on_zebra: Optional[Callable[[float, float], bool]] = None,
+                       search_m: float = STOP_LINE_SEARCH_M,
+                       step_m: float = STOP_LINE_STEP_M) -> Tuple[float, float, float, str]:
+    """Where the van must stop on this lane: (x, y, metres past CARLA's stop point, what set it).
+
+    `stop_wp` is one of the light's get_stop_waypoints(). That is not a painted line: it is the
+    centre of the light's trigger box, between 1 and 7.8 m short of the paint on Town10HD. The
+    zebra is not the line either: it starts 2.2 to 3.9 m PAST the paint at every light measured
+    but one, where it is level with it. The van held at the zebra and crossed the stop line on
+    red at three lights out of four (measured against CARLA, 2026-09-11).
+
+    Measured from overhead pictures of the paint at all 15 lights (21 of the 30 lanes gave a
+    clean reading), the painted stop bar is never before the EARLIER of
+      * the light's own place in the map -- its OpenDRIVE signal, get_affected_lane_waypoints()
+      * the last point of the lane before it enters the junction
+    (level with it at worst, within 6 cm) and at most 3.6 m past it. So the line is the earliest
+    of those two, and of the first zebra, should any junction ever paint one first.
+    """
+    loc = stop_wp.transform.location
+    heading = math.radians(stop_wp.transform.rotation.yaw)
+    fx, fy = math.cos(heading), math.sin(heading)
+    found: List[Tuple[float, str]] = []
+
+    # The signal's own place, taken along our lane's direction: two lights on Town10HD list it
+    # on only one of their two lanes, a lane's width across and the same distance along.
+    mine = [b for b in affected
+            if b.road_id == stop_wp.road_id and b.lane_id == stop_wp.lane_id]
+    near = mine or list(affected)
+    if near:
+        b = min(near, key=lambda w: (w.transform.location.x - loc.x) ** 2
+                + (w.transform.location.y - loc.y) ** 2)
+        along = (b.transform.location.x - loc.x) * fx + (b.transform.location.y - loc.y) * fy
+        if 0.0 <= along <= search_m:
+            found.append((along, "the light's place in the map"))
+
+    # Walk the lane for the junction entry and the first zebra. Each is taken as the last
+    # point still short of it.
+    walked: List[Tuple[float, float, float]] = [(0.0, float(loc.x), float(loc.y))]
+    wp, d = stop_wp, 0.0
+    seen_junction = seen_zebra = False
+    while d <= search_m and not (seen_junction and seen_zebra):
+        here = wp.transform.location
+        if not seen_zebra and on_zebra is not None and on_zebra(here.x, here.y):
+            found.append((max(0.0, d - step_m), "the zebra crossing"))
+            seen_zebra = True
+        if not seen_junction and wp.is_junction:
+            found.append((max(0.0, d - step_m), "the junction entry"))
+            seen_junction = True
+        nxt = _next_along_lane(wp, step_m)
+        if nxt is None:
+            break
+        wp, d = nxt, d + step_m
+        walked.append((d, float(nxt.transform.location.x), float(nxt.transform.location.y)))
+
+    if not found:
+        return float(loc.x), float(loc.y), 0.0, "CARLA's stop point"
+    past, why = min(found, key=lambda f: f[0])
+    # the point on the lane at that distance; past the end of the walk, straight on
+    for (d0, x0, y0), (d1, x1, y1) in zip(walked, walked[1:]):
+        if d0 <= past <= d1:
+            k = 0.0 if d1 <= d0 else (past - d0) / (d1 - d0)
+            return x0 + k * (x1 - x0), y0 + k * (y1 - y0), past, why
+    d_end, x_end, y_end = walked[-1]
+    return x_end + fx * (past - d_end), y_end + fy * (past - d_end), past, why
 
 
 class SignalMap:
@@ -130,19 +286,38 @@ class SignalMap:
             lights = list(world.get_actors().filter("traffic.traffic_light*"))
         except Exception:
             lights = []
+        try:
+            in_zebra = crosswalk_test(crosswalk_polygons(world.get_map()))
+        except Exception:
+            in_zebra = None
         for tl in lights:
             pts: List[Tuple[float, float]] = []
             lanes: Set[Tuple[int, int]] = set()
+            lines: Dict[Tuple[int, int], Tuple[float, float]] = {}
+            notes: Dict[Tuple[int, int], str] = {}
             try:
-                for wp in tl.get_stop_waypoints():
-                    loc = wp.transform.location
-                    pts.append((float(loc.x), float(loc.y)))
-                    lanes.add((int(wp.road_id), int(wp.lane_id)))
+                stops = list(tl.get_stop_waypoints())
             except Exception:
                 continue
+            try:
+                affected = list(tl.get_affected_lane_waypoints())
+            except Exception:
+                affected = []
+            for wp in stops:
+                loc = wp.transform.location
+                lane = (int(wp.road_id), int(wp.lane_id))
+                pts.append((float(loc.x), float(loc.y)))
+                lanes.add(lane)
+                try:
+                    x, y, past, why = stop_line_for_lane(wp, affected, in_zebra)
+                    lines[lane] = (float(x), float(y))
+                    notes[lane] = f"{why}, {past:.2f} m past CARLA's stop point"
+                except Exception:
+                    pass           # no line: line_for() falls back to the (earlier) stop point
             if pts:
                 found[int(tl.id)] = SignalGeometry(light_id=int(tl.id), stop_points=pts,
-                                                   lanes=lanes, actor=tl)
+                                                   lanes=lanes, actor=tl, lines=lines,
+                                                   line_notes=notes)
         out = cls(found)
         out.build_ms = (time.perf_counter() - t0) * 1000.0
         return out
@@ -248,9 +423,12 @@ def route_signals(signal_map: SignalMap, waypoints: Sequence) -> List[RouteSigna
             # means stop.
             if best_d > STOP_LINE_ON_ROUTE_M:
                 continue
-            pt = sig.nearest_stop_point(waypoints[best_i].x, waypoints[best_i].y)
-            out.append(RouteSignal(light_id=light_id, along_m=along[best_i],
-                                   stop_point=pt, lane=lane))
+            # ...and where we must stop is the lane's stop LINE, measured along the route to
+            # where it sits beside it, not rounded to the nearest waypoint 2 m apart.
+            line = sig.line_for(lane, waypoints[best_i].x, waypoints[best_i].y)
+            out.append(RouteSignal(light_id=light_id,
+                                   along_m=_along_to_point(waypoints, along, idxs, line),
+                                   stop_point=line, lane=lane))
     # one entry per light, the earliest place we meet it
     first: Dict[int, RouteSignal] = {}
     for s in out:
@@ -395,6 +573,40 @@ class TrafficLightLookahead:
         return SignalAhead(state=state, distance_m=distance, light_id=nxt.light_id,
                            state_age_s=age, watching=True)
 
+    # ---- when the route has no signal for us ---------------------------------------
+    def on_lane(self, lane: Optional[Tuple[int, int]], x: float, y: float,
+                yaw_rad: float, within_m: float = ON_LANE_WITHIN_M) -> SignalAhead:
+        """No signal on the planned route: does the MAP say a light governs the lane the van is
+        actually in, with its stop line just ahead? A safety net for a route that failed to
+        match a light it passes.
+
+        The colour comes from the same place as every other read -- the camera, in camera
+        mode. This used to ask the simulator for the colour instead; CARLA is now used for the
+        map only (where lights and lines are), never for what colour a light is showing.
+        """
+        if lane is None:
+            return SignalAhead()
+        fx, fy = math.cos(yaw_rad), math.sin(yaw_rad)
+        best = None
+        for light_id in self.signal_map.by_lane.get(lane, ()):
+            line = self.signal_map.signals[light_id].line_for(lane, x, y)
+            if line is None:
+                continue
+            ahead = (line[0] - x) * fx + (line[1] - y) * fy
+            side = abs((line[1] - y) * fx - (line[0] - x) * fy)
+            if -PASSED_BY_M < ahead <= within_m and side <= ON_LANE_SIDE_M:
+                if best is None or ahead < best[1]:
+                    best = (light_id, ahead)
+        if best is None:
+            return SignalAhead()
+        try:
+            got = self.state_source(best[0])
+        except Exception:
+            got = None
+        return SignalAhead(state=got if got in (RED, YELLOW, GREEN) else UNKNOWN,
+                           distance_m=best[1], light_id=best[0], state_age_s=0.0,
+                           watching=True)
+
     # ---- for the telemetry ----------------------------------------------------------
     def as_dict(self) -> dict:
         return {"signals_on_route": len(self._signals),
@@ -409,16 +621,49 @@ class TrafficLightLookahead:
                                    if self._current is not None else None)}
 
 
+def _project(ax: float, ay: float, bx: float, by: float,
+             px: float, py: float) -> Tuple[float, float]:
+    """Where p falls on segment a-b: (fraction along it, 0..1; squared distance to it)."""
+    dx, dy = bx - ax, by - ay
+    seg2 = dx * dx + dy * dy
+    t = 0.0 if seg2 <= 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / seg2))
+    qx, qy = ax + t * dx, ay + t * dy
+    return t, (px - qx) ** 2 + (py - qy) ** 2
+
+
+def _along_to_point(waypoints: Sequence, along: Sequence[float], idxs: Sequence[int],
+                    pt: Tuple[float, float]) -> float:
+    """Distance along the route to where `pt` sits beside it, searching only the segments
+    next to the waypoints in `idxs` (one lane), so a far part of the route cannot claim it."""
+    best = None
+    n = len(waypoints)
+    for i in idxs:
+        for j in (i - 1, i):
+            if 0 <= j < n - 1:
+                a, b = waypoints[j], waypoints[j + 1]
+                t, d2 = _project(a.x, a.y, b.x, b.y, pt[0], pt[1])
+                if best is None or d2 < best[1]:
+                    best = (along[j] + t * (along[j + 1] - along[j]), d2)
+    return best[0] if best is not None else along[idxs[0]]
+
+
 def _along_route(waypoints: Sequence, x: float, y: float) -> float:
-    """How far along the route we are. Straight-line to the nearest waypoint, then its own
-    distance along -- the route is sampled every 2 m, so this is good to about a metre."""
-    best_i, best_d2 = 0, float("inf")
-    for i, wp in enumerate(waypoints):
-        d2 = (wp.x - x) ** 2 + (wp.y - y) ** 2
+    """How far along the route we are, projected onto the nearest piece of it.
+
+    It used to take the nearest WAYPOINT, and waypoints are 2 m apart, so the answer was only
+    good to about a metre. Stopping half a metre short of a stop line needs better than that.
+    """
+    if len(waypoints) < 2:
+        return 0.0
+    best_j, best_t, best_d2 = 0, 0.0, float("inf")
+    for j in range(len(waypoints) - 1):
+        a, b = waypoints[j], waypoints[j + 1]
+        t, d2 = _project(a.x, a.y, b.x, b.y, x, y)
         if d2 < best_d2:
-            best_i, best_d2 = i, d2
+            best_j, best_t, best_d2 = j, t, d2
     total = 0.0
-    for i in range(1, best_i + 1):
+    for i in range(1, best_j + 1):
         total += math.hypot(waypoints[i].x - waypoints[i - 1].x,
                             waypoints[i].y - waypoints[i - 1].y)
-    return total
+    a, b = waypoints[best_j], waypoints[best_j + 1]
+    return total + best_t * math.hypot(b.x - a.x, b.y - a.y)

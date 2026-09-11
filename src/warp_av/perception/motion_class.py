@@ -71,6 +71,35 @@ MIN_POINTS = 3                   # a 2-point blob is never judged
 IN_REACH_OF_ROAD_M = 12.0        # further off any lane than this: not labelled at all
 GAP_SAMPLE_POINTS = 24           # the gap is measured at up to this many of a blob's points
 
+# ---- a camera's "vehicle" that cannot be one (2026-09-11) ---------------------------------
+# A bus shelter on the pavement was named a VEHICLE by the camera, so it could never be
+# static, got a vehicle's width and was waited for as a road user: parking beside it, the
+# van stopped 12 degrees into its turn and waited for ever. Measured against CARLA's answer
+# key on both static_truth recordings (17,828 blobs): of every blob at least this tall, this
+# long and this far clear of every lane a vehicle can use, NOT ONE is a real vehicle -- nor
+# with any threshold one step looser (2.2 m / 2.8 m / 0.27 m). The vehicles that do stand off
+# the road are parked bicycles and motorbikes, 0.7-1.2 m tall, and bikes or a car glued to a
+# pole, 1.3-1.9 m long; a car glued to a pole and a sign sat 0.26 m clear.
+# Not one of those blobs is MOSTLY a vehicle, but 23 and 33 of them hold a few road-user
+# points (a person against a shop front, a motorbike in a hedge; learn_static_rules' own test,
+# 3 points). That is why only a VEHICLE name is ever dropped -- a person or cyclist name is
+# never questioned here -- and why dropping a name never makes a thing static: the rules
+# above still have to hold, and they let no such blob through.
+NOT_A_VEHICLE_MIN_HEIGHT_M = 2.3
+NOT_A_VEHICLE_MIN_LENGTH_M = 3.0
+NOT_A_VEHICLE_CLEAR_M = 0.3
+
+
+def vehicle_name_implausible(height_m: Optional[float], longest_m: Optional[float],
+                             gap_m: Optional[float]) -> bool:
+    """Would calling this blob a vehicle be implausible? Tall, long and wholly off the road:
+    street furniture -- a shelter, a kiosk -- not a vehicle. Unknown is never enough."""
+    if height_m is None or longest_m is None or gap_m is None or not math.isfinite(gap_m):
+        return False
+    return (height_m >= NOT_A_VEHICLE_MIN_HEIGHT_M and longest_m >= NOT_A_VEHICLE_MIN_LENGTH_M
+            and NOT_A_VEHICLE_CLEAR_M <= gap_m <= IN_REACH_OF_ROAD_M)
+
+
 # ---- earning it, and losing it ----------------------------------------------------------
 STATIC_AFTER_SIGHTINGS = 3
 STATIC_AFTER_S = 1.0

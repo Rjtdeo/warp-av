@@ -43,7 +43,9 @@ from .camera_model import (CameraModel, camera_models, box_contains, box_edges, 
                            cluster_point, ground_point)
 from .occupancy import OccupancyGrid
 from .road_edges import RoadEdges, find_road_edges
-from .motion_class import (carla_road_gap, high_share, sample_for_gap, shape_rules,
+from .motion_class import (NOT_A_VEHICLE_MIN_HEIGHT_M, NOT_A_VEHICLE_MIN_LENGTH_M,
+                           vehicle_name_implausible,
+                           carla_road_gap, high_share, sample_for_gap, shape_rules,
                            static_dynamic_wanted, STATIC)
 from .ground_filter import ROAD_EDGE_MIN_CENTRE_LATERAL_M
 from .detection_worker import DetectionWorker, yolox_inline_from_env
@@ -1041,6 +1043,7 @@ class CameraLidarPerception:
             ex0, ey0 = tf.location.x, tf.location.y
             road_gap = self._road_gap_reader() if self.static_dynamic else None
             candidates = 0
+            names_dropped = 0
             observations = []
             for c in clusters:
                 # Static or dynamic (Planning V2): the shape check is cheap and runs on every
@@ -1048,6 +1051,19 @@ class CameraLidarPerception:
                 # then only when its track asks (once, then reused -- see motion_class.py).
                 shapes, gap_fn = (), None
                 members = c.pop("members", None)
+                # a camera's VEHICLE that stands tall, long and wholly off the road is street
+                # furniture -- a bus shelter was named one (motion_class.vehicle_name_implausible)
+                if (c.get("cls") == "vehicle" and road_gap is not None and members
+                        and (c.get("height") or 0.0) >= NOT_A_VEHICLE_MIN_HEIGHT_M
+                        and max(c.get("length_m", 0.0), c.get("width_m", 0.0)) >= NOT_A_VEHICLE_MIN_LENGTH_M):
+                    idx = np.asarray(members, dtype=int)
+                    wpts = [(ex0 + px * cy - py * sy, ey0 + px * sy + py * cy)
+                            for px, py in sample_for_gap(sel[idx, :2])]
+                    if vehicle_name_implausible(c.get("height"),
+                                                max(c.get("length_m", 0.0), c.get("width_m", 0.0)),
+                                                road_gap.gap_m(wpts, tf.location.z)):
+                        c["cls"], c["cls_from"] = None, None
+                        names_dropped += 1
                 if road_gap is not None and members:
                     idx = np.asarray(members, dtype=int)
                     shapes = shape_rules(c.get("height") or 0.0,
@@ -1082,6 +1098,7 @@ class CameraLidarPerception:
                 })
             tracks = self.tracker.update(observations, now)
             self.last_static_candidates = candidates
+            self.last_vehicle_names_dropped = names_dropped
 
             # ---- tracks -> DetectedObjects (back to ego frame) ----
             objects = []
