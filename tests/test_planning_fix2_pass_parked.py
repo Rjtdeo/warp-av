@@ -202,3 +202,17 @@ def test_the_best_look_is_dropped_when_it_moves():
                              "box_len": 4.3, "box_wid": 1.7, "box_yaw_world_deg": 0.0, "distance": 8.0}], t)
         t += 0.1
     assert not tracks[0].stationary and tracks[0].best_box is None
+
+
+def test_one_odd_bigger_view_does_not_become_the_best():
+    """Live: a parked car measured 2.3 degrees off, then ONE merged, bigger view 19 off."""
+    tr = ObjectTracker()
+    good = {"wx": 10.0, "wy": 3.0, "length_m": 4.3, "width_m": 1.7, "height_m": 1.5, "yaw_deg": 0.0,
+            "yaw_world_deg": 0.0, "box_wx": 10.3, "box_wy": 3.4, "box_len": 4.3, "box_wid": 1.7,
+            "box_yaw_world_deg": 2.3, "distance": 11.0}
+    odd = dict(good, box_wx=10.6, box_wy=3.2, box_len=5.1, box_wid=2.3, box_yaw_world_deg=19.0)
+    t = 0.0
+    for view in [good] * 6 + [odd] + [good] * 4:
+        tracks = tr.update([dict(view)], t)
+        t += 0.1
+    assert tracks[0].best_box[5] == pytest.approx(2.3), "the odd view was never confirmed"

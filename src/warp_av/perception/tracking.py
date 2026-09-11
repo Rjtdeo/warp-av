@@ -448,7 +448,7 @@ class Track:
                  "length_m", "width_m", "height_m", "yaw_deg",
                  "_history", "_still", "range_m", "_sizes", "size_uncertain",
                  "cls_source", "_unnamed", "motion", "yaw_world_deg", "box_off",
-                 "box_len", "box_wid", "box_yaw_world_deg", "best_box")
+                 "box_len", "box_wid", "box_yaw_world_deg", "best_box", "_box_views")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -499,6 +499,7 @@ class Track:
         # degrees out, where from 4-7 m back it was 4.3 x 1.7 and 0-0.6 degrees. A parked car
         # does not change shape, so the best look stands; it is dropped the moment it moves.
         self.best_box = None
+        self._box_views = []       # the recent fitted views of it, for choosing best_box
 
     # ---- what the rest of the stack reads -------------------------------------------
     @property
@@ -739,18 +740,44 @@ def _note_motion(tr: "Track", o: dict, t: float) -> None:
                    wx=tr.wx, wy=tr.wy, t=t)
 
 
+#: A view becomes the best one only once other sightings agree with it -- the same heading,
+#: the same place, the same length. Taking the biggest view ever seen let ONE sighting of a
+#: parked car merged for a moment with something beside it stand for good: live, a car
+#: measured 2.3 degrees off was replaced by a 19-degrees-off view, and the van stopped for it.
+BOX_VIEWS_KEPT = 20
+BOX_AGREE_NEEDED = 3                # this many sightings, itself included
+BOX_AGREE_HEADING_DEG = 5.0
+BOX_AGREE_CENTRE_M = 0.5
+BOX_AGREE_LENGTH_M = 0.6
+
+
+def _agree(a, b) -> bool:
+    turn = abs((a[5] - b[5] + 90.0) % 180.0 - 90.0)
+    return (turn <= BOX_AGREE_HEADING_DEG and math.hypot(a[1] - b[1], a[2] - b[2]) <= BOX_AGREE_CENTRE_M
+            and abs(a[3] - b[3]) <= BOX_AGREE_LENGTH_M)
+
+
 def _note_best_box(tr: "Track", o: dict) -> None:
-    """Keep the most complete fitted view of a thing standing still (Track.best_box)."""
+    """Keep the most complete fitted view of a thing standing still (Track.best_box): the
+    biggest view that at least BOX_AGREE_NEEDED sightings agree on."""
     if not getattr(tr, "stationary", False):
         tr.best_box = None
+        tr._box_views = []
         return
     blen, bwid = float(o.get("box_len", 0.0) or 0.0), float(o.get("box_wid", 0.0) or 0.0)
     if blen <= 0.0 or "box_wx" not in o or o.get("box_yaw_world_deg") is None:
         return
-    area = blen * max(bwid, 0.05)
-    if tr.best_box is None or area > tr.best_box[0]:
-        tr.best_box = (area, float(o["box_wx"]), float(o["box_wy"]), blen, bwid,
-                       float(o["box_yaw_world_deg"]))
+    view = (blen * max(bwid, 0.05), float(o["box_wx"]), float(o["box_wy"]), blen, bwid,
+            float(o["box_yaw_world_deg"]))
+    tr._box_views.append(view)
+    if len(tr._box_views) > BOX_VIEWS_KEPT:
+        tr._box_views.pop(0)
+    confirmed = [v for v in tr._box_views
+                 if sum(1 for w in tr._box_views if _agree(v, w)) >= BOX_AGREE_NEEDED]
+    if confirmed:
+        best = max(confirmed, key=lambda v: v[0])
+        if tr.best_box is None or best[0] > tr.best_box[0]:
+            tr.best_box = best
 
 
 def _take_shape_from(tr: "Track", sighting) -> None:
