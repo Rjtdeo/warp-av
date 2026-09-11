@@ -746,6 +746,18 @@ class WarpAV:
             light_id=(signal.light_id if signal is not None else None),
         )
 
+        # Every change of what the van is doing goes in the mission log, so a drive can be
+        # read afterwards as a list of changes and reasons (P3).
+        try:
+            seen = getattr(self, "_changes_logged", 0)
+            if self.behavior.transitions.total > seen:
+                for change in self.behavior.transitions.recent(
+                        self.behavior.transitions.total - seen):
+                    self.logger.log_event("behaviour", str(change))
+                self._changes_logged = self.behavior.transitions.total
+        except Exception:
+            pass
+
         # Waiting is pointless when what blocks the way into the spot cannot move (fix 3).
         try:
             self._maybe_give_up_on_the_spot(perception, behavior_output, dest_dist, pose)
@@ -957,6 +969,10 @@ class WarpAV:
                      "yaw": round(math.degrees(pose.yaw), 1), "speed": round(pose.speed, 1)},
             "behavior": behavior_output.behavior.value,
             "behavior_reason": behavior_output.reason,
+            # ...and the same thing as one code from a fixed list, with the changes so far
+            # (Planning V2 P3: behavior/transitions.py)
+            "behavior_why": behavior_output.why,
+            "behavior_changes": self.behavior.transitions.as_dict(),
             "command": {"steer": round(cmd.steering, 3), "throttle": round(cmd.throttle, 3),
                         "brake": round(cmd.brake, 3)},
             "safety": {"state": safety_output.state.value, "reason": safety_output.reason,

@@ -22,6 +22,14 @@ from typing import Optional
 
 from ..perception.perception import PerceptionOutput, ObjectType, VULNERABLE_TYPES
 from ..localization.localization import Pose, LocalizationQuality
+from .transitions import (TransitionLog, SAFETY_HOLD, LOCALIZATION_LOST, PERCEPTION_LOST,
+                          NO_MISSION, VRU_IN_PATH, VEHICLE_IN_PATH, OBSTACLE_IN_PATH,
+                          ROUTE_BLOCKED_TOO_LONG, CONFIRMING_CLEAR, FOLLOWING_LEAD,
+                          OBJECT_AHEAD_SLOW, ROUTE_CLEAR, PREDICTED_CROSSER_STOP,
+                          PREDICTED_CROSSER_SLOW, LIGHT_ROLL_UP, LIGHT_HOLD,
+                          JUNCTION_ROLL_UP, JUNCTION_PAUSE, JUNCTION_GIVE_WAY,
+                          JUNCTION_TIMEOUT, DESTINATION_NEAR, PARKING_PULL_IN, PARKED,
+                          PARKED_OVERSHOT)
 
 
 class DrivingBehavior(Enum):
@@ -96,6 +104,7 @@ class BehaviorOutput:
     """What the behavior layer decided to do and WHY."""
     behavior: DrivingBehavior = DrivingBehavior.IDLE
     reason: str = ""                    # THE KEY FIELD — human-readable explanation
+    why: str = ""                       # ...and the same thing as one of transitions.ALL_WHY
     desired_speed_mps: float = 0.0
     should_stop: bool = False
     timestamp: float = field(default_factory=time.time)
@@ -112,6 +121,9 @@ class BehaviorSystem:
     def __init__(self):
         self.current_behavior = DrivingBehavior.NO_MISSION
         self.current_reason = "No mission assigned"
+        self.current_why = NO_MISSION
+        #: every change of state, in order, each with one reason code (P3)
+        self.transitions = TransitionLog()
         self.has_mission = False
         self.mission_complete = False
 
@@ -208,7 +220,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
                 "Safety supervisor commanded stop",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=SAFETY_HOLD
             )
 
         # --- No mission ---
@@ -216,7 +228,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.NO_MISSION,
                 "No mission assigned — waiting for destination",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=NO_MISSION
             )
 
         # --- Localization lost ---
@@ -224,7 +236,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
                 f"Localization unhealthy: {pose.reason}",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=LOCALIZATION_LOST
             )
 
         # --- Perception unhealthy ---
@@ -232,7 +244,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
                 f"Perception unhealthy: {perception.reason}",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=PERCEPTION_LOST
             )
 
         # Track the closest we ever got to the spot: if we start moving AWAY
@@ -251,7 +263,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.MISSION_COMPLETE,
                 f"Parked (overshot the spot by {destination_distance - self._park_best_d:.1f} m)",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=PARKED_OVERSHOT
             )
 
         # --- Parked at the spot (close, nearly stopped, straight, IN the box) ---
@@ -265,7 +277,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.MISSION_COMPLETE,
                 f"Parked — {destination_distance:.1f} m from the spot",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=PARKED
             )
 
         # --- Persistent blocked route ---
@@ -298,7 +310,7 @@ class BehaviorSystem:
                         f"— replan or operator action required"
                     ),
                     speed=0.0,
-                    stop=True
+                    stop=True, why=ROUTE_BLOCKED_TOO_LONG
                 )
         else:
             self._blocked_since = None
@@ -312,7 +324,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_PEDESTRIAN,
                 f"{who} in path at {perception.closest_obstacle_distance:.1f}m — stopped",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=VRU_IN_PATH
             )
 
         # --- Path blocked by vehicle ---
@@ -322,7 +334,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_VEHICLE,
                 f"VEHICLE blocking path at {perception.closest_obstacle_distance:.1f}m — stopped",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=VEHICLE_IN_PATH
             )
 
         # --- Path blocked by obstacle ---
@@ -332,7 +344,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.STOPPED_OBSTACLE,
                 f"OBSTACLE in path at {perception.closest_obstacle_distance:.1f}m — stopped",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=OBSTACLE_IN_PATH
             )
 
         # --- Release latch: a close blocker that BLINKS out of detection for
@@ -350,7 +362,7 @@ class BehaviorSystem:
                 kind,
                 f"Path just cleared (was blocked {dist:.1f}m ahead) — confirming for "
                 f"{self.block_release_s:.0f}s before moving",
-                speed=0.0, stop=True
+                speed=0.0, stop=True, why=CONFIRMING_CLEAR
             )
         self._block_memory = None
 
@@ -372,14 +384,14 @@ class BehaviorSystem:
                 return self._decide(
                     DrivingBehavior.YIELDING_PREDICTED,
                     f"Yielding — {p_what} will cross our path {p_along:.0f}m ahead in {p_t:.1f}s",
-                    speed=0.0, stop=True
+                    speed=0.0, stop=True, why=PREDICTED_CROSSER_STOP
                 )
             if light is not None and (light[3] or light[2] < 2.5):
                 return self._decide(*light)       # the stricter of the two wins
             return self._decide(
                 DrivingBehavior.YIELDING_PREDICTED,
                 f"Slowing — {p_what} predicted in our path {p_along:.0f}m ahead in {p_t:.1f}s",
-                speed=2.5, stop=False
+                speed=2.5, stop=False, why=PREDICTED_CROSSER_SLOW
             )
 
         # --- Traffic light (Troy #1): roll up to the stop line, hold there.
@@ -403,7 +415,7 @@ class BehaviorSystem:
                 return self._decide(
                     DrivingBehavior.WAITING_AT_JUNCTION,
                     f"Approaching {direction} turn — rolling up to the crossing ({jdist:.0f} m)",
-                    speed=creep, stop=False
+                    speed=creep, stop=False, why=JUNCTION_ROLL_UP
                 )
             now = time.time()
             if self._junction_wait_started is None:
@@ -416,19 +428,19 @@ class BehaviorSystem:
                 return self._decide(
                     DrivingBehavior.WAITING_AT_JUNCTION,
                     f"Give-way timeout at {direction} turn ({waited:.0f}s) — proceeding carefully",
-                    speed=self.junction_creep_mps, stop=False
+                    speed=self.junction_creep_mps, stop=False, why=JUNCTION_TIMEOUT
                 )
             if waited < self.junction_dwell_s:
                 return self._decide(
                     DrivingBehavior.WAITING_AT_JUNCTION,
                     f"Approaching {direction} turn — pausing to check for traffic",
-                    speed=0.0, stop=True
+                    speed=0.0, stop=True, why=JUNCTION_PAUSE
                 )
             if conflict is not None:
                 return self._decide(
                     DrivingBehavior.WAITING_AT_JUNCTION,
                     f"Giving way at {direction} turn — moving vehicle {conflict:.0f} m away",
-                    speed=0.0, stop=True
+                    speed=0.0, stop=True, why=JUNCTION_GIVE_WAY
                 )
             self._junction_done = True
             self._junction_wait_started = None
@@ -450,7 +462,7 @@ class BehaviorSystem:
                 DrivingBehavior.FOLLOWING_VEHICLE,
                 f"Following vehicle: gap {gap:.1f}m (want {desired_gap:.1f}m), "
                 f"lead {lead:.1f} m/s — target {target:.1f} m/s",
-                speed=target, stop=False
+                speed=target, stop=False, why=FOLLOWING_LEAD
             )
 
         # --- Object ahead, slow down ---
@@ -458,7 +470,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.FOLLOWING_ROUTE,
                 f"Object detected at {perception.closest_obstacle_distance:.1f}m — slowing to {self.slow_speed:.1f} m/s",
-                speed=self.slow_speed, stop=False
+                speed=self.slow_speed, stop=False, why=OBJECT_AHEAD_SLOW
             )
 
         # --- Final approach: park at the kerb ---
@@ -467,7 +479,7 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.PARKING,
                 f"Parking — pulling over, {destination_distance:.1f} m to the spot",
-                speed=creep, stop=False
+                speed=creep, stop=False, why=PARKING_PULL_IN
             )
 
         # --- Approaching destination ---
@@ -475,18 +487,18 @@ class BehaviorSystem:
             return self._decide(
                 DrivingBehavior.APPROACHING_DESTINATION,
                 f"Approaching destination ({destination_distance:.1f}m) — slowing",
-                speed=self.slow_speed, stop=False
+                speed=self.slow_speed, stop=False, why=DESTINATION_NEAR
             )
 
         # --- All clear, drive normally ---
         return self._decide(
             DrivingBehavior.FOLLOWING_ROUTE,
             f"Route clear — cruising at {self.cruise_speed:.1f} m/s",
-            speed=self.cruise_speed, stop=False
+            speed=self.cruise_speed, stop=False, why=ROUTE_CLEAR
         )
 
     def _traffic_light(self, perception, pose, stop_line_m, light_id):
-        """What the light ahead asks of the van: (behaviour, reason, speed, stop), or None when
+        """What the light ahead asks of the van: (behaviour, reason, speed, stop, why), or None when
         it asks nothing -- no light, a green one, or the van is committed to going through.
 
         Where to stop. `stop_line_m` is from the FRONT BUMPER to the lane's stop line in the
@@ -536,9 +548,11 @@ class BehaviorSystem:
         if d is not None and d > LIGHT_STOP_GAP_M + LIGHT_STOP_ROLL_M:
             creep = max(0.6, min(3.0, 0.45 * (d - LIGHT_STOP_GAP_M)))
             return (DrivingBehavior.FOLLOWING_ROUTE,
-                    f"{words} ahead ({d:.1f} m to the stop line) — rolling up", creep, False)
+                    f"{words} ahead ({d:.1f} m to the stop line) — rolling up", creep, False,
+                    LIGHT_ROLL_UP)
         return (DrivingBehavior.STOPPED_RED_LIGHT,
-                f"{words} — holding short of the stop line, waiting for green", 0.0, True)
+                f"{words} — holding short of the stop line, waiting for green", 0.0, True,
+                LIGHT_HOLD)
 
     def _note_block(self, kind, distance):
         """Remember a CLOSE physical blocker so a one-tick detection blink
@@ -556,7 +570,7 @@ class BehaviorSystem:
         if now - self._block_run_since >= self.block_latch_after_s:
             self._block_memory = (now, kind, distance)
 
-    def _decide(self, behavior, reason, speed, stop) -> BehaviorOutput:
+    def _decide(self, behavior, reason, speed, stop, why) -> BehaviorOutput:
         # Every cap can only ever slow the van down, never speed it up, and none of them can
         # turn a stop into driving. The tightest one wins.
         caps = []
@@ -571,20 +585,25 @@ class BehaviorSystem:
             caps.append((stopping_speed_for(float(blind)),
                          f"cannot see past {float(blind):.1f} m beside the lane"))
         if caps:
-            cap, why = min(caps, key=lambda cw: cw[0])
+            cap, capped_by = min(caps, key=lambda cw: cw[0])
             if speed > cap:
                 speed = max(0.0, cap)
-                reason = f"{reason} (held to {speed:.1f} m/s: {why})"
+                reason = f"{reason} (held to {speed:.1f} m/s: {capped_by})"
                 if speed == 0.0:
                     stop = True
-        # Log when behavior CHANGES (important for debugging)
-        if behavior != self.current_behavior:
-            print(f"[Behavior] {self.current_behavior.value} → {behavior.value}: {reason}")
+        # Every change of state, with its reason code, kept in order (P3): one line of a
+        # drive's story. Same state and same reason next tick is not a change.
+        change = self.transitions.note(was=self.current_behavior.value, now=behavior.value,
+                                       why=why, said=reason, speed_mps=speed, stopping=stop)
+        if change is not None and change.was != change.now:
+            print(f"[Behavior] {change.was} → {change.now} ({why}): {reason}")
         self.current_behavior = behavior
         self.current_reason = reason
+        self.current_why = why
         return BehaviorOutput(
             behavior=behavior,
             reason=reason,
+            why=why,
             desired_speed_mps=speed,
             should_stop=stop
         )

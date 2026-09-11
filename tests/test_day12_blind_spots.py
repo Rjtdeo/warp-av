@@ -11,6 +11,7 @@ import pytest
 from warp_av.perception.occupancy import (OccupancyGrid, FREE, OCCUPIED, UNKNOWN,
                                           DEFAULT_LANE_HALF_M, DEFAULT_BLIND_REACH_M,
                                           DEFAULT_BLIND_LOOK_M, EGO_NOSE_M)
+from warp_av.behavior.transitions import ROUTE_CLEAR
 from warp_av.behavior.behavior import (stopping_speed_for, BLIND_REACTION_S, BLIND_DECEL_MPS2)
 
 
@@ -138,7 +139,7 @@ def decide(speed=8.0, stop=False, blind=None, sensor_cap=None):
     b = BehaviorSystem()
     b._speed_cap_mps = sensor_cap
     b._blind_spot_m = blind
-    return b._decide(DrivingBehavior.FOLLOWING_ROUTE, "cruising", speed, stop)
+    return b._decide(DrivingBehavior.FOLLOWING_ROUTE, "cruising", speed, stop, ROUTE_CLEAR)
 
 
 def test_with_nothing_hidden_the_van_is_not_slowed():
