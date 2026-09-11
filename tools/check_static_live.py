@@ -233,6 +233,8 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--show", action="store_true", help="label everything in the CARLA window")
     ap.add_argument("--period", type=float, default=None, help="seconds between readings")
+    ap.add_argument("--parked-clearance", type=float, default=ROUTE_CLEARANCE_M,
+                    help="how far a parked vehicle's nearest corner must be from the route line")
     ap.add_argument("--give-up-stuck", type=float, default=45.0,
                     help="end the run after the van has been held this long in one place")
     a = ap.parse_args()
@@ -273,7 +275,7 @@ def main():
         it there."""
         x, y, h, hl, hw, _ = box_of_actor(act)
         worst = min(route.project(cx, cy)[1] for cx, cy in _corners(x, y, h, hl, hw))
-        return worst >= ROUTE_CLEARANCE_M
+        return worst >= a.parked_clearance
 
     walker_bps = list(bl.filter("walker.pedestrian.*"))
     four = [b for b in bl.filter("vehicle.*") if int(b.get_attribute("number_of_wheels")) == 4

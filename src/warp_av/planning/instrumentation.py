@@ -183,6 +183,9 @@ class PlannerDecision:
     route_points_used: int = 0
     #: set when the swept-body check decided it, rather than the centre-line bands
     used_footprint: bool = False
+    #: a parked vehicle the van is passing slowly instead of stopping for (fix 2)
+    passing_id: Optional[int] = None
+    passing_lateral_m: Optional[float] = None
     #: everything the planner weighed, only when WARP_PLAN_DEBUG is on
     candidates: list = field(default_factory=list)
 
@@ -202,7 +205,10 @@ class PlannerDecision:
                "objects_considered": self.objects_considered,
                "objects_in_corridor": self.objects_in_corridor,
                "route_points_used": self.route_points_used,
-               "used_footprint": self.used_footprint}
+               "used_footprint": self.used_footprint,
+               "passing_id": self.passing_id,
+               "passing_lateral_m": (None if self.passing_lateral_m is None
+                                     else round(self.passing_lateral_m, 2))}
         if self.candidates:
             out["candidates"] = self.candidates
         return out

@@ -323,12 +323,14 @@ faults.
   pragmatic policy that needs review before real roads.
 * **Yellow is always a stop.** The distance to the line is now known, so dilemma-zone
   handling is possible, but is not implemented.
-* **The van will not pass a car parked on the shoulder.** Measured live 2026-09-10: a car
-  parked on a Town10HD shoulder lane, its centre 2.5-2.6 m from the route line, held the van
-  for over two minutes (`blocked_swept_path`). The LiDAR sees only the car's near side, so its
-  measured middle sits nearer the lane than the car really is, and the swept-path rule (on by
-  default since 2026-09-10) judges that the van would touch it. There is no pass-with-care or
-  overtake behaviour to fall back on.
+* **Passing parked cars close by depends on a good look at them.** The swept-path check now
+  judges a stationary thing by a rectangle fitted to its points (`tracking.fit_rectangle`),
+  kept on the map frame, and for a thing standing still the most complete view of it so far.
+  Measured on a car passed at 0.51 m: heading 0.5 deg off at the median, 2.7 deg at the 90th
+  percentile, 17 deg at worst; when only a car's rear is visible the fit is the bumper (7 of
+  268 readings). The near side comes out 0.04-0.19 m further from the van than CARLA's box
+  (mirrors) -- covered by the 0.10 m pad. These figures are CARLA's; a real LiDAR must be
+  measured again.
 * **The turn-in to a kerbside spot is sharp, and can end short of the spot.** The van has no
   reverse gear, so it turns in from the lane, and the ramp (`_blend_tail_to`) turns at up to
   34 degrees; the front corner swings close to the kerb line even in a long bay. When the
@@ -411,6 +413,19 @@ Kept short deliberately; this is not a history file.
   following works in camera mode.
 * **Sensor health is wired to the safety supervisor** and produces degraded-speed and stop
   behaviour, including picture-quality faults (dark, frozen, covered, rain-blocked tiles).
+* **The van passes a car parked beside its path.** It waited 65 s beside one with 0.96 m
+  of real room (WAV-0228), and over 2 minutes behind another. Two measuring faults, checked
+  against CARLA's truth: the car's box was drawn round the AVERAGE of its points -- which a
+  car seen from its corner piles on the van's side, 0.9 m from the true centre -- and its
+  heading came from the spread of those points, which an L of side-and-end bends (9-20 deg
+  off), kept in the van's frame from an older sighting. Now the planner judges a fitted
+  rectangle, on the map frame, from the best view of a thing standing still; and a parked
+  vehicle that only the safety margin is in the way of is passed slowly (PASS_CLEARANCE_M
+  0.15 m instead of 0.30 m) rather than waited behind. Live, parked car beside a straight
+  lane: 0.81 m gap passed with no stop, 0.51 m passed slowly, 0.15 m waited and then
+  overtook (2.8 m). WAV-0228 now parks; a 657 m mission with cars parked 1.9 m from the route
+  completed with one 1.5 s hesitation. People, cyclists, unknown things and static posts
+  keep the full margin.
 * **The van no longer waits for ever at a kerb when pulling in.** 4 of 5 pedestrian
   scenarios ended with it parked in front of a kerb piece until the run timed out. Three
   causes, each fixed and measured: (1) it chose bays one slot long -- its body leaves the

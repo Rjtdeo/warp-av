@@ -1072,6 +1072,13 @@ class CameraLidarPerception:
                     "width_m": c.get("width_m", 0.0),
                     "height_m": c.get("height") or 0.0,
                     "yaw_deg": c.get("yaw_deg", 0.0),
+                    # the same heading on the map, so it stays right after the van turns, and
+                    # where the rectangle itself is centred (fix 2)
+                    "yaw_world_deg": float(c.get("yaw_deg", 0.0) or 0.0) + tf.rotation.yaw,
+                    "box_wx": ex0 + c.get("box_x", c["x"]) * cy - c.get("box_y", c["y"]) * sy,
+                    "box_wy": ey0 + c.get("box_x", c["x"]) * sy + c.get("box_y", c["y"]) * cy,
+                    "box_len": c.get("box_len", 0.0), "box_wid": c.get("box_wid", 0.0),
+                    "box_yaw_world_deg": float(c.get("box_yaw_deg", c.get("yaw_deg", 0.0)) or 0.0) + tf.rotation.yaw,
                 })
             tracks = self.tracker.update(observations, now)
             self.last_static_candidates = candidates
@@ -1098,6 +1105,21 @@ class CameraLidarPerception:
                          else ObjectType.VEHICLE if kind == "vehicle"
                          else ObjectType.OBSTACLE)
                 vx_w, vy_w = self.tracker.reported_velocity(tr)
+                # heading in the van's frame NOW, from the map-frame one (fix 2): the sighting
+                # it came from may be from before the van turned
+                yaw_now = getattr(tr, "yaw_deg", 0.0)
+                if getattr(tr, "yaw_world_deg", None) is not None:
+                    yaw_now = (tr.yaw_world_deg - tf.rotation.yaw + 180.0) % 360.0 - 180.0
+                ox, oy = getattr(tr, "box_off", (0.0, 0.0))
+                box_len, box_wid = getattr(tr, "box_len", 0.0), getattr(tr, "box_wid", 0.0)
+                box_yaw_world = getattr(tr, "box_yaw_world_deg", None)
+                best = getattr(tr, "best_box", None) if getattr(tr, "stationary", False) else None
+                if best is not None:             # standing still: its most complete look (fix 2)
+                    ox, oy = best[1] - tr.wx, best[2] - tr.wy
+                    box_len, box_wid, box_yaw_world = best[3], best[4], best[5]
+                box_yaw_now = 0.0
+                if box_yaw_world is not None:
+                    box_yaw_now = (box_yaw_world - tf.rotation.yaw + 180.0) % 360.0 - 180.0
                 objects.append(DetectedObject(
                     object_type=otype, x=ex, y=ey, distance=dist,
                     speed=self.tracker.reported_speed(tr),
@@ -1105,7 +1127,10 @@ class CameraLidarPerception:
                     # a track built only from 2-point far sightings is reported, but with low confidence
                     confidence=(tr.confidence if tr.cls else 0.65) if not getattr(tr, "weak_only", False) else 0.35,
                     length_m=getattr(tr, "length_m", 0.0), width_m=getattr(tr, "width_m", 0.0),
-                    height_m=getattr(tr, "height_m", 0.0), yaw_deg=getattr(tr, "yaw_deg", 0.0),
+                    height_m=getattr(tr, "height_m", 0.0), yaw_deg=yaw_now,
+                    box_dx=ox * cy + oy * sy, box_dy=-ox * sy + oy * cy,
+                    box_length_m=box_len, box_width_m=box_wid,
+                    box_yaw_deg=box_yaw_now,
                     stationary=bool(getattr(tr, "stationary", True)),
                     size_uncertain=bool(getattr(tr, "size_uncertain", False)),
                     clearance_radius_m=clearance_radius_m(tr.cls, getattr(tr, "length_m", 0.0),

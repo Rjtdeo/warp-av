@@ -145,6 +145,12 @@ def reach_toward_us_m(obj) -> float:
 # the box is widened by what an error this size would swing its ends through. For a 3.5 m
 # kerb strip that is 0.24 m -- plenty, and still a tenth of the 1.75 m the circle claimed.
 YAW_TOLERANCE_DEG = 8.0
+#: ... for a rectangle perception FITTED (tracking.fit_rectangle) and kept on the map frame,
+#: the heading is far better: measured live on a parked car passed at 0.55 m, 268 readings,
+#: edge direction off by 0.5 deg at the median and 2.7 deg at the 90th percentile (the
+#: spread-of-points heading: 16.6 and 21.0). 5 deg covers ~94% of single readings, and the
+#: track takes its heading from its median-length sighting, not from a stray one.
+YAW_TOLERANCE_FITTED_DEG = 5.0
 #: Every side of an obstacle box is grown by this much. The LiDAR sees a thing's near face
 #: only, so what it measures is a lower bound on the thing -- never let the box be smaller.
 OBSTACLE_BOX_PAD_M = 0.10
@@ -181,6 +187,26 @@ def kerb_like(obj) -> bool:
     if not (0.0 < height <= KERB_LIKE_MAX_HEIGHT_M):
         return False
     return bool(getattr(obj, "stationary", False))
+
+
+# Pass a parked vehicle with care instead of waiting behind it for ever (fix 2, 2026-09-10).
+# A car parked on the shoulder, its middle 2.5-2.6 m off the van's line, held the van for
+# minutes in two live runs. The real gap was about 0.7 m; the check added 0.30 m for a
+# heading the car might have, 0.10 m because the LiDAR sees only its near side, and the
+# van's own 0.30 m margin -- 0.70 m -- and called it a touch. The padding stays: it is
+# right to be unsure of a car's heading. What changes is the answer when only the MARGIN
+# is in the way: the van then passes with PASS_CLEARANCE_M instead of 0.30 m, slowly (it is
+# reported as the nearest obstacle, so the behaviour's 3 m/s slow zone applies).
+#
+# Vehicles only, standing still. A person or anything unnamed keeps the full margin --
+# unknown is not free. A static post keeps it too: it stands at the height of the van's
+# mirrors, which reach past the body the footprint describes; a car's roof is below them.
+PASS_CLEARANCE_M = 0.15
+
+
+def can_pass_with_care(obj) -> bool:
+    kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+    return kind == "vehicle" and bool(getattr(obj, "stationary", False))
 
 
 class WaitingIsPointless:
@@ -261,8 +287,11 @@ def obstacle_box_for(obj, ego_yaw: float):
     end-on comes out 1.8 x 0.5 m, so a vehicle never gets a half-width under 0.9 m however
     thin it measured; a person never under 0.3 m.
     """
-    length = getattr(obj, "length_m", None) or 0.0
-    width = getattr(obj, "width_m", None) or 0.0
+    # the smallest rectangle round its points when perception fitted one (fix 2): the spread
+    # of a car's points seen from its corner runs diagonally and gets the heading wrong
+    fitted = float(getattr(obj, "box_length_m", 0.0) or 0.0) > 0.0
+    length = (getattr(obj, "box_length_m", None) if fitted else getattr(obj, "length_m", None)) or 0.0
+    width = (getattr(obj, "box_width_m", None) if fitted else getattr(obj, "width_m", None)) or 0.0
     try:
         length, width = float(length), float(width)
     except (TypeError, ValueError):
@@ -276,8 +305,9 @@ def obstacle_box_for(obj, ego_yaw: float):
     half_w = max(0.5 * width, floor)
     half_l = max(0.5 * length, half_w)
     # cover a heading error by what it would swing the ends through
-    half_w += half_l * math.sin(math.radians(YAW_TOLERANCE_DEG))
-    yaw_obj = math.radians(float(getattr(obj, "yaw_deg", 0.0) or 0.0))
+    half_w += half_l * math.sin(math.radians(YAW_TOLERANCE_FITTED_DEG if fitted else YAW_TOLERANCE_DEG))
+    yaw_obj = math.radians(float((getattr(obj, "box_yaw_deg", 0.0) if fitted
+                                  else getattr(obj, "yaw_deg", 0.0)) or 0.0))
     return ObstacleBox(half_length=half_l + OBSTACLE_BOX_PAD_M,
                        half_width=half_w + OBSTACLE_BOX_PAD_M,
                        heading=ego_yaw + yaw_obj)
@@ -1025,6 +1055,7 @@ class RoutePlanner:
         in_corridor = 0     # ... of those, how many sat inside the slow band
         why = None          # which rule said "blocked", for the first blocker found
         blocker = None      # and the object it said it about
+        passing_obj = None  # a parked vehicle being passed with care: (obj, along, lat)
         detail = []
 
         def _note_block(rule, obj_, along_, lat_):
@@ -1147,14 +1178,40 @@ class RoutePlanner:
                 # The measured rectangle when there is one; the circle only when there is not.
                 # See ObstacleBox for what the circle did to a kerb strip.
                 box = obstacle_box_for(obj, ego_yaw)
+                # the rectangle's own centre, not the average of its points (fix 2): the two
+                # are 0.9 m apart for a car seen from its corner
+                where = (wx, wy)
+                if box is not None:
+                    bdx = float(getattr(obj, "box_dx", 0.0) or 0.0)
+                    bdy = float(getattr(obj, "box_dy", 0.0) or 0.0)
+                    where = (wx + cos_y * bdx - sin_y * bdy, wy + sin_y * bdx + cos_y * bdy)
                 # a kerb needs tyre clearance, not the full safety margin (KERB_CLEARANCE_M)
                 body = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
                         if kerb_like(obj) else footprint)
-                hit = sweep_conflict(wps, (ego_x, ego_y), body, (wx, wy),
+                hit = sweep_conflict(wps, (ego_x, ego_y), body, where,
                                      obstacle_radius=radius,
                                      horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length,
                                      obstacle_box=box)
-                if hit is not None:
+                passing = False
+                if hit is not None and can_pass_with_care(obj):
+                    # only the margin in the way? then pass it slowly (PASS_CLEARANCE_M)
+                    tight = replace(footprint, safety_margin=min(footprint.safety_margin, PASS_CLEARANCE_M))
+                    passing = sweep_conflict(wps, (ego_x, ego_y), tight, where,
+                                             obstacle_radius=radius,
+                                             horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length,
+                                             obstacle_box=box) is None
+                if passing:
+                    # seen, and the nearest thing ahead, so the slow zone applies -- not a stop
+                    found = True
+                    dist = max(0.0, along)
+                    if dist < closest:
+                        closest = dist
+                        closest_type = obj.object_type
+                        closest_speed = obj.speed
+                        closest_lat = round(lat, 2)
+                    if passing_obj is None or dist < passing_obj[1]:
+                        passing_obj = (obj, dist, lat)
+                elif hit is not None:
                     found = True
                     dist = max(0.0, along)
                     if dist < closest:
@@ -1196,6 +1253,9 @@ class RoutePlanner:
             # blocked with nothing recorded should be impossible; say so rather than
             # reporting a clear path.
             decision.reason = BLOCKED_TRACKED_OBJECT
+        if passing_obj is not None and not blocked:
+            decision.passing_id = int(getattr(passing_obj[0], "id", 0) or 0) or None
+            decision.passing_lateral_m = passing_obj[2]
         self.last_decision = decision
         return perception
 

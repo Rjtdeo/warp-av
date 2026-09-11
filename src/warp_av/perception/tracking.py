@@ -15,6 +15,8 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+
 from warp_av.perception.motion_class import MotionMemory
 
 
@@ -120,6 +122,73 @@ MERGE_MAX_LENGTH_M = 5.5      # a car or a van; wider than this and it is two th
                               # something beside it and be called a vehicle.
 
 
+# The rectangle the PLANNER judges a thing by (fix 2). The blob's length, width and heading
+# come from the spread of its points, which a car seen from its corner bends: the LiDAR sees
+# an L -- the near side and one end -- and the spread of an L runs diagonally. A clean
+# 4.6 x 2.0 m L came out 13 degrees off and its rectangle 0.5 m off-centre; live, a parked car
+# read 9 degrees and 0.9 m wrong, and the van waited beside it for 65 s with 0.96 m of room.
+#
+# The fit tries every heading and keeps the one whose rectangle has the points ON ITS EDGES
+# (the "closeness" criterion of search-based L-shape fitting). Not the smallest rectangle:
+# round an L that is a coin toss -- a rectangle along the L's diagonal has the same area as
+# the right one (it is a right triangle's two legs), and it was picked 23.5 degrees wrong
+# for half the headings tried. Only the planner reads the fit, so everything tuned on the
+# spread -- the static rules, the naming, the kerb rules -- is untouched; and only near the
+# van and near its path, where the planner looks and a thing has points enough to fit.
+BOX_FIT_RANGE_M = 20.0
+BOX_FIT_MAX_SIDEWAYS_M = 10.0   # the swept-path check works on plain road near the path only
+BOX_FIT_MIN_POINTS = 4
+BOX_FIT_STEP_DEG = 2.0
+BOX_FIT_REFINE_DEG = 0.5
+BOX_FIT_NEAR_EDGE_M = 0.05      # a point this close to an edge counts as on it (LiDAR noise)
+_FIT_HEADINGS = np.radians(np.arange(0.0, 90.0, BOX_FIT_STEP_DEG))
+
+
+BOX_FIT_MAX_POINTS = 150        # a bigger blob is thinned evenly: the fit barely moves
+BOX_FIT_TIE = 0.99              # scores this close are a tie, and the smaller rectangle wins
+
+
+def _best(p, headings):
+    """The heading whose rectangle has the points on its edges; among near-ties (a thin line
+    is 'on an edge' at 0 and at 1.5 degrees alike) the smaller rectangle. Returns
+    (index, along, across)."""
+    c, s = np.cos(headings), np.sin(headings)
+    along = p[:, :1] * c + p[:, 1:2] * s
+    across = -p[:, :1] * s + p[:, 1:2] * c
+    a_lo, a_hi = along.min(axis=0), along.max(axis=0)
+    c_lo, c_hi = across.min(axis=0), across.max(axis=0)
+    d_along = np.minimum(along - a_lo, a_hi - along)
+    d_across = np.minimum(across - c_lo, c_hi - across)
+    d = np.maximum(np.minimum(d_along, d_across), BOX_FIT_NEAR_EDGE_M)
+    score = (1.0 / d).sum(axis=0)
+    area = (a_hi - a_lo) * (c_hi - c_lo)
+    ties = np.where(score >= BOX_FIT_TIE * score.max())[0]
+    return int(ties[np.argmin(area[ties])]), along, across
+
+
+def fit_rectangle(points_xy):
+    """The rectangle with the points on its edges: (centre_x, centre_y, length, width,
+    heading of the long side in degrees). A rectangle repeats every 90 degrees, so 0-90 in
+    BOX_FIT_STEP_DEG steps is every heading there is; the best is then refined."""
+    p = np.asarray(points_xy, dtype=float)[:, :2]
+    if len(p) > BOX_FIT_MAX_POINTS:
+        p = p[np.linspace(0, len(p) - 1, BOX_FIT_MAX_POINTS).astype(int)]
+    k, _, _ = _best(p, _FIT_HEADINGS)
+    fine = _FIT_HEADINGS[k] + np.radians(np.arange(-BOX_FIT_STEP_DEG, BOX_FIT_STEP_DEG + 1e-9,
+                                                   BOX_FIT_REFINE_DEG))
+    k, along, across = _best(p, fine)
+    th = float(fine[k])
+    a_lo, a_hi = float(along[:, k].min()), float(along[:, k].max())
+    c_lo, c_hi = float(across[:, k].min()), float(across[:, k].max())
+    a_mid, c_mid = 0.5 * (a_lo + a_hi), 0.5 * (c_lo + c_hi)
+    cx = a_mid * math.cos(th) - c_mid * math.sin(th)
+    cy = a_mid * math.sin(th) + c_mid * math.cos(th)
+    length, width = a_hi - a_lo, c_hi - c_lo
+    if width > length:
+        length, width, th = width, length, th + math.pi / 2.0
+    return cx, cy, length, width, math.degrees(math.atan2(math.sin(th), math.cos(th)))
+
+
 def merge_split_clusters(clusters, gap_base=None, gap_per_m=None,
                          height_tol=None, max_length=None):
     """Join blobs that are plainly two views of one thing. Returns a new list."""
@@ -161,6 +230,13 @@ def merge_split_clusters(clusters, gap_base=None, gap_per_m=None,
                     "weak": bool(a.get("weak") and b.get("weak")),
                 }
                 merged["distance"] = math.hypot(merged["x"], merged["y"])
+                if "box_x" in a and "box_x" in b:        # one thing seen as two: between the halves
+                    merged["box_x"] = 0.5 * (a["box_x"] + b["box_x"])
+                    merged["box_y"] = 0.5 * (a["box_y"] + b["box_y"])
+                    big = a if a["n"] >= b["n"] else b
+                    merged["box_len"] = max(a.get("box_len", 0.0), b.get("box_len", 0.0), span * 0.9)
+                    merged["box_wid"] = max(a.get("box_wid", 0.0), b.get("box_wid", 0.0))
+                    merged["box_yaw_deg"] = big.get("box_yaw_deg", merged["yaw_deg"])
                 if "members" in a and "members" in b:
                     merged["members"] = list(a["members"]) + list(b["members"])
                 out[i] = merged
@@ -253,16 +329,30 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
         across = [-(p[0] - mx) * st + (p[1] - my) * ct for p in pts]
         length_m = max(along) - min(along)
         width_m = max(across) - min(across)
+        # The rectangle the planner judges it by (fit_rectangle): near the van, the smallest
+        # one round the points; further off, the spread's own rectangle -- centred on ITS
+        # middle, not on the average of the points, which a side-on car piles at one corner.
+        a_mid = 0.5 * (max(along) + min(along))
+        c_mid = 0.5 * (max(across) + min(across))
+        box_x = mx + a_mid * ct - c_mid * st
+        box_y = my + a_mid * st + c_mid * ct
+        box_len, box_wid, box_yaw = length_m, width_m, None
+        if (len(pts) >= BOX_FIT_MIN_POINTS and math.hypot(mx, my) <= BOX_FIT_RANGE_M
+                and abs(my) <= BOX_FIT_MAX_SIDEWAYS_M):
+            box_x, box_y, box_len, box_wid, box_yaw = fit_rectangle([(p[0], p[1]) for p in pts])
         if width_m > length_m:                       # keep 'length' the longer side
             length_m, width_m = width_m, length_m
             theta += math.pi / 2
+        yaw_deg = math.degrees(math.atan2(math.sin(theta), math.cos(theta)))
         c = {"x": mx, "y": my,
              "distance": math.hypot(mx, my),
              "n": len(pts), "extent": extent,
              "height": height, "length": 2.0 * extent,
              "axis_deg": axis_deg,
              "length_m": length_m, "width_m": width_m,
-             "yaw_deg": math.degrees(math.atan2(math.sin(theta), math.cos(theta))),
+             "box_x": box_x, "box_y": box_y, "box_len": box_len, "box_wid": box_wid,
+             "box_yaw_deg": yaw_deg if box_yaw is None else box_yaw,
+             "yaw_deg": yaw_deg,
              "weak": len(pts) < min_points}
         if return_members:
             c["members"] = [p[3] for p in pts]
@@ -357,7 +447,8 @@ class Track:
                  "last_seen", "hits", "strong_hits",
                  "length_m", "width_m", "height_m", "yaw_deg",
                  "_history", "_still", "range_m", "_sizes", "size_uncertain",
-                 "cls_source", "_unnamed", "motion")
+                 "cls_source", "_unnamed", "motion", "yaw_world_deg", "box_off",
+                 "box_len", "box_wid", "box_yaw_world_deg", "best_box")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -391,6 +482,23 @@ class Track:
         self.size_uncertain = False   # True when those sightings disagree badly
         # can it move? dynamic until it has earned static (Planning V2, motion_class.py)
         self.motion = MotionMemory()
+        # The long side's heading ON THE MAP, and the box centre's offset from the track's
+        # position (map frame). yaw_deg is kept in the van's frame AT the sighting it came
+        # from, so once the van turns it is out by that much -- 9 degrees on a parked car at
+        # a bend, live 2026-09-10. None/zero when the sighting did not say.
+        self.yaw_world_deg = None
+        self.box_off = (0.0, 0.0)
+        # the planner's rectangle (fit_rectangle): size, and heading on the map. 0 = none.
+        self.box_len = 0.0
+        self.box_wid = 0.0
+        self.box_yaw_world_deg = None
+        # For a thing standing still, the most complete view of it so far, on the map:
+        # (area, centre_x, centre_y, length, width, heading). Driving past a parked car the
+        # view alongside is the worst one -- the van's own body hides the car's side from the
+        # LiDAR on its roof: measured live, width 1.4 m instead of 1.9 and the heading 5-7
+        # degrees out, where from 4-7 m back it was 4.3 x 1.7 and 0-0.6 degrees. A parked car
+        # does not change shape, so the best look stands; it is dropped the moment it moves.
+        self.best_box = None
 
     # ---- what the rest of the stack reads -------------------------------------------
     @property
@@ -593,7 +701,15 @@ def _note_size(tr: Track, o: dict) -> None:
         # measurement away, but admit that the van is now unsure rather than saying nothing.
         tr.size_uncertain = True
         return
-    tr._sizes.append((lm, wm, hm, float(o.get("yaw_deg", 0.0) or 0.0)))
+    yaw_world = o.get("yaw_world_deg")
+    box_off = ((float(o["box_wx"]) - float(o["wx"]), float(o["box_wy"]) - float(o["wy"]))
+               if "box_wx" in o and "box_wy" in o else (0.0, 0.0))
+    box_yaw_world = o.get("box_yaw_world_deg")
+    _note_best_box(tr, o)
+    tr._sizes.append((lm, wm, hm, float(o.get("yaw_deg", 0.0) or 0.0),
+                      None if yaw_world is None else float(yaw_world), box_off,
+                      float(o.get("box_len", 0.0) or 0.0), float(o.get("box_wid", 0.0) or 0.0),
+                      None if box_yaw_world is None else float(box_yaw_world)))
     if len(tr._sizes) > SIZE_HISTORY:
         tr._sizes.pop(0)
     if len(tr._sizes) < SIZE_MIN_FOR_MEDIAN:
@@ -602,14 +718,15 @@ def _note_size(tr: Track, o: dict) -> None:
         tr.width_m = max(tr.width_m, wm)
         tr.height_m = max(tr.height_m, hm)
         if lm >= tr.length_m:
-            tr.yaw_deg = float(o.get("yaw_deg", 0.0) or 0.0)
+            _take_shape_from(tr, tr._sizes[-1])
         return
     lengths = [s[0] for s in tr._sizes]
     tr.length_m = _median(lengths)
     tr.width_m = _median([s[1] for s in tr._sizes])
     tr.height_m = _median([s[2] for s in tr._sizes])
-    # the heading of the sighting nearest that middle length, so it matches the shape reported
-    tr.yaw_deg = min(tr._sizes, key=lambda s: abs(s[0] - tr.length_m))[3]
+    # the heading (and box) of the sighting nearest that middle length, so it matches the
+    # shape reported
+    _take_shape_from(tr, min(tr._sizes, key=lambda s: abs(s[0] - tr.length_m)))
     spread = max(lengths) - min(lengths)
     tr.size_uncertain = bool(spread > expected_size_spread_m(tr.range_m))
 
@@ -620,6 +737,29 @@ def _note_motion(tr: "Track", o: dict, t: float) -> None:
     tr.motion.note(o.get("static_shapes") or (), o.get("road_gap_fn"),
                    named=tr.cls is not None, stationary=tr.stationary,
                    wx=tr.wx, wy=tr.wy, t=t)
+
+
+def _note_best_box(tr: "Track", o: dict) -> None:
+    """Keep the most complete fitted view of a thing standing still (Track.best_box)."""
+    if not getattr(tr, "stationary", False):
+        tr.best_box = None
+        return
+    blen, bwid = float(o.get("box_len", 0.0) or 0.0), float(o.get("box_wid", 0.0) or 0.0)
+    if blen <= 0.0 or "box_wx" not in o or o.get("box_yaw_world_deg") is None:
+        return
+    area = blen * max(bwid, 0.05)
+    if tr.best_box is None or area > tr.best_box[0]:
+        tr.best_box = (area, float(o["box_wx"]), float(o["box_wy"]), blen, bwid,
+                       float(o["box_yaw_world_deg"]))
+
+
+def _take_shape_from(tr: "Track", sighting) -> None:
+    """The heading and the box centre of one sighting: kept together, because they describe
+    the same rectangle."""
+    tr.yaw_deg = sighting[3]
+    tr.yaw_world_deg = sighting[4]
+    tr.box_off = sighting[5]
+    tr.box_len, tr.box_wid, tr.box_yaw_world_deg = sighting[6], sighting[7], sighting[8]
 
 
 def expected_size_spread_m(range_m: float) -> float:

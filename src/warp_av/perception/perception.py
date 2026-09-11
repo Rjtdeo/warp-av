@@ -70,6 +70,16 @@ class DetectedObject:
     motion_class: str = "dynamic"
     static_rule: str = ""
     motion_why: str = ""        # why it is what it is, in words ("moving", "named a road user", ...)
+    # where the measured rectangle is centred, relative to (x, y) in the same van frame. The
+    # position is the average of the points, which sits on the van's side of a car seen
+    # side-on; the rectangle is not. 0.0 = the same place (or not measured).
+    box_dx: float = 0.0
+    box_dy: float = 0.0
+    # ... and that rectangle itself: the smallest round the points (tracking.fit_rectangle),
+    # which the planner judges it by. 0.0 = not fitted; the planner then uses length/width/yaw.
+    box_length_m: float = 0.0
+    box_width_m: float = 0.0
+    box_yaw_deg: float = 0.0
     timestamp: float = field(default_factory=time.time)
 
 

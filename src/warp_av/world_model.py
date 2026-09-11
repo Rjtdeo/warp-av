@@ -65,6 +65,11 @@ class WorldObject:
     motion_class: str = "dynamic"
     static_rule: str = ""
     motion_why: str = ""
+    box_dx: float = 0.0                # where its rectangle is centred, from x/y (van frame)
+    box_dy: float = 0.0
+    box_length_m: float = 0.0          # the fitted rectangle itself (0 = not fitted)
+    box_width_m: float = 0.0
+    box_yaw_deg: float = 0.0
 
     @property
     def is_vehicle(self) -> bool:
@@ -119,6 +124,9 @@ class WorldObject:
             "clearance_radius_m": round(self.clearance_radius_m, 2),
             "motion_class": self.motion_class, "static_rule": self.static_rule,
             "motion_why": self.motion_why,
+            "box_dx": round(self.box_dx, 2), "box_dy": round(self.box_dy, 2),
+            "box_length_m": round(self.box_length_m, 2), "box_width_m": round(self.box_width_m, 2),
+            "box_yaw_deg": round(self.box_yaw_deg, 1),
         }
 
 
@@ -273,6 +281,11 @@ def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_
             motion_class=str(getattr(o, "motion_class", "dynamic") or "dynamic"),
             static_rule=str(getattr(o, "static_rule", "") or ""),
             motion_why=str(getattr(o, "motion_why", "") or ""),
+            box_dx=float(getattr(o, "box_dx", 0.0) or 0.0),
+            box_dy=float(getattr(o, "box_dy", 0.0) or 0.0),
+            box_length_m=float(getattr(o, "box_length_m", 0.0) or 0.0),
+            box_width_m=float(getattr(o, "box_width_m", 0.0) or 0.0),
+            box_yaw_deg=float(getattr(o, "box_yaw_deg", 0.0) or 0.0),
         ))
 
     closest = perception.closest_obstacle_distance
