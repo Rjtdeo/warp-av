@@ -41,6 +41,9 @@ from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
                               nothing_is_standing_there)
+from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
+                                   SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
+                                   GROUND_SEEN_FREE)
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -422,6 +425,7 @@ class WarpAV:
         self.logger.log_event("mission_started", f"Destination: ({dest_x}, {dest_y})")
         if getattr(self, "_parking_note", None):
             self.logger.log_event("parking_spot", self._parking_note)
+            self._note_move(SPOT_CHOSEN, self._parking_note)
 
         # Slot parking is the DEFAULT: find the boxes near the destination now,
         # skip occupied ones, and aim the mission into the best free box. The
@@ -821,6 +825,7 @@ class WarpAV:
                     self.logger.log_event("overtake", "pass complete — back in lane")
                 except Exception:
                     pass
+                self._note_move(GO_AROUND_DONE, "pass complete — back in lane")
                 print("[Overtake] pass complete — back in lane")
             else:
                 # Belt and braces: any body within 1.6 m while passing —
@@ -2177,6 +2182,7 @@ class WarpAV:
                 self._overtake_why_at = now
                 print(f"[Overtake] waiting: {why}")
             self._overtake_retry_at = now + 10.0
+            self._note_move(GO_AROUND_WAIT, why)
 
         if perception.traffic_light in ("red", "yellow"):
             return                       # that's a queue, not a dead car
@@ -2219,6 +2225,9 @@ class WarpAV:
                 f"lead vehicle dead for 10 s — passing on the left, rejoining {self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
         except Exception:
             pass
+        self._note_move(GO_AROUND_START,
+                        f"dead vehicle at {lead_d:.1f} m — passing on the left, rejoining "
+                        f"{self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
         print(f"[Overtake] dead vehicle at {lead_d:.1f} m — passing on the left")
 
     def _static_vehicle_objects(self, pose):
@@ -2318,12 +2327,23 @@ class WarpAV:
         behavior_output.should_stop = True
         behavior_output.desired_speed_mps = 0.0
         self.vehicle_adapter.disengage_autonomy()
+        self._note_move(SPOT_GIVEN_UP, why)
         self.logger.log_event("parking_failed",
                               f"a {what} {getattr(obj, 'distance', 0.0):.1f} m ahead blocked the way into the "
                               f"spot for {WaitingIsPointless.AFTER_S:.0f} s, {dest_dist:.1f} m from it, "
                               f"already turning in")
         self.logger.stop_mission_log()
         print(f"[Parking] {why}")
+
+    def _note_move(self, what, said):
+        """Put a move the van decided to make into the drive's story, beside the changes of
+        state (behavior/transitions.py). The tick loop copies new entries into the mission
+        log, so this is also how a move reaches the log."""
+        try:
+            self.behavior.transitions.note_move(what, said,
+                                                state=self.behavior.current_behavior.value)
+        except Exception:
+            pass
 
     def _unblock_if_the_ground_is_seen_free(self, perception, pose):
         """A second opinion on something standing in the way: the laser's own free-space map
@@ -2357,6 +2377,9 @@ class WarpAV:
                 f"the corridor check says a {what} is in the way {blocker_m:.1f} m ahead, but the "
                 f"laser has seen all {free} squares of the next {look:.1f} m of ground empty "
                 f"-- driving on")
+            self._note_move(GROUND_SEEN_FREE,
+                            f"a {what} said to be in the way {blocker_m:.1f} m ahead, but all "
+                            f"{free} squares of the next {look:.1f} m of ground are seen empty")
             print(f"[FreeSpace] a {what} at {blocker_m:.1f} m, but the next {look:.1f} m of ground "
                   f"is seen empty -- driving on")
 
@@ -2436,6 +2459,9 @@ class WarpAV:
                     self._parking_wait_since = None
                     self.logger.log_event("parking_confirmed",
                                           f"the LiDAR sees the {sp['kind']} free, {dest_dist:.1f} m before it")
+                    self._note_move(SPOT_CONFIRMED,
+                                    f"the laser sees the {sp['kind']} free, {dest_dist:.1f} m "
+                                    f"before it — turning in")
                     print(f"[Parking] the LiDAR sees the spot free, {dest_dist:.1f} m out — turning in")
                     return
             else:
@@ -2547,6 +2573,7 @@ class WarpAV:
         if self._signal_lookahead is not None:
             self._signal_lookahead.set_route(self._route)    # a new tail can cross a junction
         self.logger.log_event("parking_rechosen", msg)
+        self._note_move(SPOT_RECHOSEN, msg)
         print(f"[Parking] {msg}")
 
     def _recheck_parking_on_approach(self, pose):

@@ -205,3 +205,89 @@ def test_but_something_in_the_WAY_still_stops_a_pull_in():
     b = van()
     out = drive(b, blocked_by(ObjectType.OBSTACLE, distance=3.9), destination_distance=10.0)
     assert out.behavior == DrivingBehavior.STOPPED_OBSTACLE and out.should_stop
+
+
+# ---- the manoeuvres are in the same story (P3 step 3) ------------------------------------
+
+def test_a_move_is_not_a_change_of_state():
+    """Going round a dead car is still "following the route"; the story needs it anyway."""
+    log = T.TransitionLog()
+    move = log.note_move(T.GO_AROUND_START, "dead vehicle at 9.0 m — passing on the left",
+                         state="following_route")
+    assert move.kind == T.MOVE and move.was == move.now == "following_route"
+    assert str(move) == ("* go_around_start (while following_route): dead vehicle at 9.0 m "
+                         "— passing on the left")
+    assert log.as_dict()["counts"][T.GO_AROUND_START] == 1
+
+
+def test_saying_the_same_thing_again_is_not_a_new_move():
+    """The go-around repeats why it is still waiting every ten seconds."""
+    log = T.TransitionLog()
+    log.note_move(T.GO_AROUND_WAIT, "car coming up behind in the passing lane, 22 m back")
+    assert log.note_move(T.GO_AROUND_WAIT, "car coming up behind in the passing lane, 22 m back") is None
+    assert log.note_move(T.GO_AROUND_WAIT, "junction only 20 m ahead") is not None
+
+
+def test_a_made_up_move_is_refused():
+    with pytest.raises(ValueError):
+        T.TransitionLog().note_move("teleport", "somewhere else")
+
+
+def test_moves_and_states_keep_their_order():
+    b = van()
+    drive(b, clear())
+    b.transitions.note_move(T.GO_AROUND_START, "passing on the left", state="following_route")
+    drive(b, blocked_by(ObjectType.VEHICLE))
+    story = [(c.kind, c.why) for c in b.transitions.recent(3)]
+    assert story == [(T.STATE, T.ROUTE_CLEAR), (T.MOVE, T.GO_AROUND_START),
+                     (T.STATE, T.VEHICLE_IN_PATH)]
+
+
+def test_the_van_puts_every_manoeuvre_it_makes_into_the_story():
+    """A drive read afterwards must not have holes where the big decisions were."""
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    for move in (T.GO_AROUND_START, T.GO_AROUND_WAIT, T.GO_AROUND_DONE, T.SPOT_CHOSEN,
+                 T.SPOT_CONFIRMED, T.SPOT_RECHOSEN, T.SPOT_GIVEN_UP, T.GROUND_SEEN_FREE):
+        name = move.upper()
+        assert f"self._note_move({name}" in src, f"{move} never reaches the story"
+
+
+# ---- steadiness: one object may not change the van's mind nine times (P3 step 4) ---------
+
+def in_sight(metres):
+    return PerceptionOutput(closest_obstacle_distance=metres, closest_obstacle_type=ObjectType.OBSTACLE,
+                            path_blocked=False)
+
+
+def test_a_thing_hovering_on_the_slowing_line_is_not_argued_about():
+    """Live 2026-09-11: route_clear -> object_ahead_slow -> route_clear nine times in a minute,
+    4.0 -> 2.0 -> 4.0 m/s each time, as one object crossed the 20 m line back and forth."""
+    b = van()
+    for metres in (19.5, 20.5, 19.8, 21.0, 19.9, 20.4):
+        drive(b, in_sight(metres))
+    whys = [c.why for c in b.transitions.recent(10)]
+    assert whys == [T.OBJECT_AHEAD_SLOW]                    # one decision, not six
+
+
+def test_but_it_lets_go_once_the_thing_is_well_clear():
+    b = van()
+    drive(b, in_sight(19.0))
+    assert b.transitions.last.why == T.OBJECT_AHEAD_SLOW
+    out = drive(b, in_sight(b.slow_distance + b.slow_release_m + 1.0))
+    assert out.why == T.ROUTE_CLEAR
+
+
+def test_and_lets_go_after_a_moment_even_just_past_the_line():
+    b = van()
+    drive(b, in_sight(19.0))
+    b._slowing_since -= b.slow_hold_s + 0.1                 # a moment later
+    assert drive(b, in_sight(21.0)).why == T.ROUTE_CLEAR
+
+
+def test_nothing_holds_a_stop_once_the_way_is_clear():
+    """The other half of steadiness is deliberately NOT done: holding a stop after the path
+    cleared cost 62% of the van's obstacle-stopped time on 2026-09-10 (see the release latch,
+    which arms only for a blocker that has been there 0.6 s)."""
+    b = van()
+    assert drive(b, blocked_by(ObjectType.OBSTACLE, distance=5.0)).should_stop
+    assert not drive(b, clear()).should_stop

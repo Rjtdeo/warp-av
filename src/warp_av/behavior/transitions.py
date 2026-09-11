@@ -54,6 +54,22 @@ PARKING_PULL_IN = "parking_pull_in"
 PARKED = "parked"
 PARKED_OVERSHOT = "parked_overshot"         # went past the spot and stopped rather than hunt
 
+#: ...and the manoeuvres, which are not states. The van going round a dead car is still
+#: "following the route"; choosing another parking spot is still "parking". They belong in
+#: the same story all the same -- without them a drive reads with holes in it -- so they are
+#: kept in the same list, marked as moves rather than changes of state.
+GO_AROUND_START = "go_around_start"
+GO_AROUND_WAIT = "go_around_wait"           # why it may not go round yet
+GO_AROUND_DONE = "go_around_done"
+SPOT_CHOSEN = "spot_chosen"
+SPOT_CONFIRMED = "spot_confirmed"           # the laser has seen it free: turning in
+SPOT_RECHOSEN = "spot_rechosen"
+SPOT_GIVEN_UP = "spot_given_up"
+GROUND_SEEN_FREE = "ground_seen_free"       # a body the corridor check drew on empty ground
+
+ALL_MOVES = (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
+             SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP, GROUND_SEEN_FREE)
+
 ALL_WHY = (
     SAFETY_HOLD, LOCALIZATION_LOST, PERCEPTION_LOST, NO_MISSION,
     VRU_IN_PATH, VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG, CONFIRMING_CLEAR,
@@ -65,9 +81,12 @@ ALL_WHY = (
 )
 
 
+STATE, MOVE = "state", "move"
+
+
 @dataclass(frozen=True)
 class Transition:
-    """One change of what the van is doing."""
+    """One line of the drive's story: a change of state, or a move the van made."""
     t: float
     was: str                # the state it left
     now: str                # the state it moved to
@@ -77,13 +96,16 @@ class Transition:
     stopping: bool = False
     rule: str = ""          # which rule answered (BehaviorSystem.RULES)
     rank: int = 0           # and where it sits in that order: 1 is asked first
+    kind: str = STATE       # STATE: what it is doing changed. MOVE: what it decided to do.
 
     def as_dict(self) -> dict:
-        return {"t": round(self.t, 2), "was": self.was, "now": self.now, "why": self.why,
-                "said": self.said, "speed_mps": round(self.speed_mps, 2),
+        return {"t": round(self.t, 2), "kind": self.kind, "was": self.was, "now": self.now,
+                "why": self.why, "said": self.said, "speed_mps": round(self.speed_mps, 2),
                 "stopping": self.stopping, "rule": self.rule, "rank": self.rank}
 
     def __str__(self) -> str:
+        if self.kind == MOVE:
+            return f"* {self.why} (while {self.now}): {self.said}"
         place = f" [rule {self.rank} {self.rule}]" if self.rule else ""
         return f"{self.was} -> {self.now} ({self.why}){place}: {self.said}"
 
@@ -115,6 +137,25 @@ class TransitionLog:
         self.counts[why] = self.counts.get(why, 0) + 1
         self.total += 1
         return change
+
+    def note_move(self, what: str, said: str, state: str = "", t: Optional[float] = None
+                  ) -> Optional[Transition]:
+        """A move the van decided to make, in the same story as the changes of state.
+
+        Not a state: going round a dead car is still "following the route". Repeating itself
+        word for word is not a new move -- the go-around says why it is still waiting every
+        ten seconds -- but the same move for a new reason is."""
+        if what not in ALL_MOVES:
+            raise ValueError(f"unknown move: {what!r}")
+        if self.changes and self.changes[-1].kind == MOVE and self.changes[-1].why == what \
+                and self.changes[-1].said == said:
+            return None
+        move = Transition(t=t if t is not None else time.time(), was=state, now=state, why=what,
+                          said=said, kind=MOVE)
+        self.changes.append(move)
+        self.counts[what] = self.counts.get(what, 0) + 1
+        self.total += 1
+        return move
 
     @property
     def last(self) -> Optional[Transition]:

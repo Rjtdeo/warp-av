@@ -326,6 +326,16 @@ faults.
   van is more than about 2.2 m from its planned route. Measured: with a barrel at 6 m the
   van detects it at every lateral offset and still reports a clear path. This caused a
   mailbox strike on a long route.
+* **The behaviour is a list of rules, and it says which one answered.** Every decision
+  carries one reason code from a closed set (`behavior/transitions.py`, 24 of them), the 18
+  rules are asked in a written order (`BehaviorSystem.RULES`), and every change of state or
+  reason -- plus the moves the van makes, the go-around and the parking choices -- is kept in
+  order and published (`behavior_changes`, the mission log, and the operator page). What is
+  NOT done: the rules are still a first-match-wins list rather than a state machine with
+  allowed transitions, so nothing forbids a change (parking -> junction, say) that should
+  never happen; and a rule cannot say "I nearly fired", so what came SECOND is never
+  recorded. Traffic lights deliberately stay with the behaviour rather than becoming the
+  planner's `blocked_signal` (see planning/instrumentation.py).
 * **Only a dead CAR is passed.** The go-around plans the path round a stopped vehicle and
   slides the van's body along it before taking it (`planner.plan_overtake` +
   `pull_in_blocker`, with moving traffic judged by `planner.overtake_blocker`, which also

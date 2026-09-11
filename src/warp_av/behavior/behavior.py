@@ -195,6 +195,20 @@ class BehaviorSystem:
         # A real blocker earns that within two thirds of a second, while it is already stopped.
         self.block_latch_after_s = 0.6
         self._block_run_since = None         # when the current run of blocked frames began
+        # Slowing for something in sight is steadied: once slowing, keep slowing until it is
+        # well beyond the line, or a moment has passed. Live on 2026-09-11 one object crossing
+        # the 20 m line made the van change its mind nine times in a minute.
+        #
+        # Nothing steadies a BLOCK the same way, on purpose. Holding a stop after the path is
+        # clear was measured on 2026-09-10 and cost 62% of the van's obstacle-stopped time
+        # with nothing in front of it (see the release latch above, which only arms for a
+        # blocker that has been there 0.6 s). A brief stop for a brief block is honest: when
+        # one thing is called in the way, then in sight, then in the way -- three times in the
+        # last 15 m of a pull-in on 2026-09-11 -- the fault is in the corridor check that
+        # keeps changing its mind, not in the behaviour that believes it.
+        self.slow_release_m = 4.0
+        self.slow_hold_s = 1.5
+        self._slowing_since = 0.0
         self.destination_threshold = 1.5 # meters — parked when this close to the SPOT (was 5.0 anywhere on the road)
         self.parked_max_speed = 0.8      # ...and slower than this
         self.park_zone_m = 15.0          # final approach: taper to walking pace
@@ -525,14 +539,23 @@ class BehaviorSystem:
         return None
 
     def _rule_object_ahead(self, now):
-        """Something in sight but not in the way: slow down."""
-        if now.perception.closest_obstacle_distance < self.slow_distance:
-            return self._decide(
-                DrivingBehavior.FOLLOWING_ROUTE,
-                f"Object detected at {now.perception.closest_obstacle_distance:.1f}m — slowing to {self.slow_speed:.1f} m/s",
-                speed=self.slow_speed, stop=False, why=OBJECT_AHEAD_SLOW
-            )
-        return None
+        """Something in sight but not in the way: slow down.
+
+        Once slowing, keep slowing until it is well past the line (slow_release_m) or a moment
+        has gone by (slow_hold_s). One object crossing the 20 m line back and forth made the
+        van change its mind nine times in a minute, 4.0 -> 2.0 -> 4.0 m/s each time."""
+        seen = now.perception.closest_obstacle_distance
+        near = seen < self.slow_distance
+        if near:
+            self._slowing_since = time.time()
+        elif not (seen < self.slow_distance + self.slow_release_m
+                  and time.time() - self._slowing_since < self.slow_hold_s):
+            return None
+        return self._decide(
+            DrivingBehavior.FOLLOWING_ROUTE,
+            f"Object detected at {seen:.1f}m — slowing to {self.slow_speed:.1f} m/s",
+            speed=self.slow_speed, stop=False, why=OBJECT_AHEAD_SLOW
+        )
 
     def _rule_parking(self, now):
         """The final approach: park at the kerb.

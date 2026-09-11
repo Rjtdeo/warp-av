@@ -161,7 +161,13 @@ NO_ROUTE = "no_route"                               # nothing to judge against
 BLOCKED_OCCUPANCY = "blocked_occupancy"             # P2: the free-space map disagrees
 UNKNOWN_SPACE = "unknown_space"                     # P2: too much unseen where we must go
 ROAD_BOUNDARY = "road_boundary"                     # P2: kerb or road edge
-BLOCKED_SIGNAL = "blocked_signal"                   # P3: a traffic light, owned by behaviour today
+#: A traffic light. It stays with the behaviour on purpose (decided in P3, 2026-09-11): the
+#: light is a rule of the road, not a body in the way, and the behaviour already owns where
+#: the van stops for one, the once-per-spell go/stop choice and the comfort braking behind
+#: it -- proven live at 0 red runs. Moving it here would either duplicate that or rewrite it
+#: for a label. The behaviour says light_hold / light_roll_up in its own list of reasons
+#: (behavior/transitions.py), which is where a reader looks for it.
+BLOCKED_SIGNAL = "blocked_signal"
 
 ALL_REASONS = (CLEAR, BLOCKED_TRACKED_OBJECT, BLOCKED_SWEPT_PATH, BLOCKED_SCRAPE,
                BLOCKED_VRU, NO_ROUTE, BLOCKED_OCCUPANCY, UNKNOWN_SPACE, ROAD_BOUNDARY,

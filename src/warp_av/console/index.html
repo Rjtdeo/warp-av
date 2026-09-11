@@ -506,6 +506,41 @@ body {
     margin-top: 6px;
 }
 
+/* the drive's story: what changed, and why (behavior/transitions.py) */
+.story-box {
+    background: var(--panel-2);
+    border-left: 2px solid var(--muted);
+    padding: 12px 14px;
+    margin-top: 10px;
+}
+
+.story-list {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.story-line {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.story-line b {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.story-line.story-move b {
+    color: var(--green);
+}
+
+.story-when {
+    opacity: 0.6;
+}
+
 /* ============================================================
    CONTROLS
    ============================================================ */
@@ -2716,6 +2751,11 @@ body.demo-mode .metric-value {
                             </div>
                         </div>
 
+                        <div class="story-box">
+                            <div class="small-label">WHAT CHANGED, AND WHY</div>
+                            <div class="story-list" id="behaviorStory"></div>
+                        </div>
+
                     </div>
 
                 </section>
@@ -4319,6 +4359,59 @@ function humanAction(value) {
 }
 
 
+function humanWhy(why) {
+
+    /* the reason codes the behaviour hands over (behavior/transitions.py), in words */
+    const words = {
+
+        safety_hold: 'the safety supervisor said stop',
+        localization_lost: 'it does not know where it is',
+        perception_lost: 'it cannot see',
+        no_mission: 'no trip to drive',
+        vru_in_path: 'a person in the way',
+        vehicle_in_path: 'a vehicle in the way',
+        obstacle_in_path: 'something in the way',
+        route_blocked_too_long: 'the road has stayed blocked',
+        confirming_clear: 'checking the way really is clear',
+        following_lead: 'keeping back from the car ahead',
+        object_ahead_slow: 'something in sight: slowing',
+        route_clear: 'the road is clear',
+        predicted_crosser_stop: 'something is about to cross',
+        predicted_crosser_slow: 'something may cross: slowing',
+        light_roll_up: 'a light that is not green: rolling up',
+        light_hold: 'holding at the stop line',
+        junction_roll_up: 'rolling up to the junction',
+        junction_pause: 'pausing to look at the junction',
+        junction_give_way: 'giving way at the junction',
+        junction_timeout: 'waited long enough: creeping out',
+        destination_near: 'the destination is near',
+        parking_pull_in: 'pulling into the spot',
+        parked: 'parked',
+        parked_overshot: 'went past the spot and stopped',
+
+        go_around_start: 'going round a stopped vehicle',
+        go_around_wait: 'not going round yet',
+        go_around_done: 'back in lane after the pass',
+        spot_chosen: 'chose a parking spot',
+        spot_confirmed: 'the laser sees the spot free',
+        spot_rechosen: 'chose another parking spot',
+        spot_given_up: 'gave up on the spot',
+        ground_seen_free: 'the ground ahead is seen empty: driving on'
+    };
+
+    return words[why] ||
+        String(why || '')
+            .replaceAll('_', ' ');
+}
+
+
+function escapeHtml(text) {
+    const box = document.createElement('div');
+    box.textContent = String(text == null ? '' : text);
+    return box.innerHTML;
+}
+
+
 function humanReason(reason) {
 
     if (!reason)
@@ -5105,6 +5198,34 @@ function updateDashboard(s) {
 
     document.getElementById('systemDecision').textContent =
         humanReason(s.behavior_reason);
+
+    /* ...and the last few changes, newest first: what it changed to, and why. A "move" is
+       something the van decided to DO (going round a dead car, choosing another spot) rather
+       than a change of what it is doing. */
+    const story = document.getElementById('behaviorStory');
+    if (story) {
+        const changes = (s.behavior_changes && s.behavior_changes.recent) || [];
+        story.innerHTML = '';
+        if (!changes.length) {
+            const empty = document.createElement('div');
+            empty.className = 'story-line';
+            empty.textContent = 'nothing yet';
+            story.appendChild(empty);
+        }
+        changes.slice(-8).reverse().forEach(function (c) {
+            const line = document.createElement('div');
+            const move = c.kind === 'move';
+            line.className = 'story-line' + (move ? ' story-move' : '');
+            const when = Math.max(0, Math.round(Date.now() / 1000 - Number(c.t)));
+            const head = move
+                ? humanWhy(c.why)
+                : humanAction(c.now).toUpperCase() + ' — ' + humanWhy(c.why);
+            line.innerHTML = '<span class="story-when">' + when + 's</span> <b>'
+                + escapeHtml(head) + '</b>';
+            line.title = c.said || '';
+            story.appendChild(line);
+        });
+    }
 
 
     /* VEHICLE */
