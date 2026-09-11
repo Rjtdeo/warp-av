@@ -53,7 +53,8 @@ def test_every_decision_in_the_code_hands_over_a_reason():
             depth += (src[i] == "(") - (src[i] == ")")
             i += 1
         args = src[m.end():i - 1]
-        assert "why=" in args or args.strip() == "*light", f"a decision with no reason: {args[:60]}"
+        # a splatted answer (the light rule) carries its own code inside the tuple
+        assert "why=" in args or args.strip().startswith("*"), f"a decision with no reason: {args[:60]}"
 
 
 def test_the_light_branch_hands_its_own_code_up():
@@ -151,3 +152,56 @@ def test_the_van_publishes_the_changes():
     assert '"behavior_why": behavior_output.why' in src
     assert '"behavior_changes": self.behavior.transitions.as_dict()' in src
     assert 'self.logger.log_event("behaviour", str(change))' in src
+
+
+# ---- the order the questions are asked in (P3 step 2) ------------------------------------
+
+def test_the_order_is_written_down_and_is_the_one_we_mean():
+    names = [name for name, _rule, _place in BehaviorSystem.RULES]
+    assert names == [
+        "safety", "no_mission", "localization", "perception", "parked", "blocked_too_long",
+        "vru_in_path", "vehicle_in_path", "obstacle_in_path", "confirming_clear",
+        "predicted_crosser", "traffic_light", "junction", "parking", "following_lead",
+        "object_ahead", "approaching", "cruise",
+    ]
+    for name, rule, place in BehaviorSystem.RULES:
+        assert callable(rule) and place, f"{name} has no rule or no reason to sit there"
+
+
+def test_what_matters_most_is_asked_first():
+    order = {name: i for i, (name, _r, _p) in enumerate(BehaviorSystem.RULES)}
+    assert order["safety"] == 0                                  # nothing beats the supervisor
+    assert order["vru_in_path"] < order["vehicle_in_path"] < order["obstacle_in_path"]
+    assert order["obstacle_in_path"] < order["traffic_light"]    # a thing in the way beats the law
+    assert order["predicted_crosser"] < order["traffic_light"]   # ...and the light is read there
+    assert order["parked"] < order["blocked_too_long"]           # a parked van is parked
+    assert order["parking"] < order["object_ahead"]              # see the flapping below
+    assert order["cruise"] == len(BehaviorSystem.RULES) - 1      # and the road is clear
+
+
+def test_the_change_says_which_rule_answered():
+    b = van()
+    drive(b, clear())
+    last = b.transitions.last
+    assert (last.rule, last.rank) == ("cruise", len(BehaviorSystem.RULES))
+    drive(b, blocked_by(ObjectType.PEDESTRIAN))
+    assert b.transitions.last.rule == "vru_in_path"
+    assert "[rule 7 vru_in_path]" in str(b.transitions.last)
+
+
+def test_something_in_sight_no_longer_takes_the_state_away_from_a_pull_in():
+    """Live 2026-09-11: through the last 15 m the state flapped parking -> object_ahead_slow
+    -> stopped_obstacle -> parking five times. In sight is not in the way."""
+    b = van()
+    in_sight = PerceptionOutput(closest_obstacle_distance=9.0, closest_obstacle_type=ObjectType.OBSTACLE,
+                                path_blocked=False)
+    out = drive(b, in_sight, destination_distance=10.0)
+    assert out.behavior == DrivingBehavior.PARKING and out.why == T.PARKING_PULL_IN
+    assert out.desired_speed_mps <= b.slow_speed                 # but no faster for it
+    assert "in sight at 9.0 m" in out.reason
+
+
+def test_but_something_in_the_WAY_still_stops_a_pull_in():
+    b = van()
+    out = drive(b, blocked_by(ObjectType.OBSTACLE, distance=3.9), destination_distance=10.0)
+    assert out.behavior == DrivingBehavior.STOPPED_OBSTACLE and out.should_stop

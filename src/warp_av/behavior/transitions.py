@@ -75,13 +75,17 @@ class Transition:
     said: str               # the sentence the behaviour wrote at the time
     speed_mps: float = 0.0  # what it asked for
     stopping: bool = False
+    rule: str = ""          # which rule answered (BehaviorSystem.RULES)
+    rank: int = 0           # and where it sits in that order: 1 is asked first
 
     def as_dict(self) -> dict:
         return {"t": round(self.t, 2), "was": self.was, "now": self.now, "why": self.why,
-                "said": self.said, "speed_mps": round(self.speed_mps, 2), "stopping": self.stopping}
+                "said": self.said, "speed_mps": round(self.speed_mps, 2),
+                "stopping": self.stopping, "rule": self.rule, "rank": self.rank}
 
     def __str__(self) -> str:
-        return f"{self.was} -> {self.now} ({self.why}): {self.said}"
+        place = f" [rule {self.rank} {self.rule}]" if self.rule else ""
+        return f"{self.was} -> {self.now} ({self.why}){place}: {self.said}"
 
 
 @dataclass
@@ -98,13 +102,15 @@ class TransitionLog:
     total: int = 0                          # every change ever, not just the ones still kept
 
     def note(self, was: str, now: str, why: str, said: str, speed_mps: float = 0.0,
-             stopping: bool = False, t: Optional[float] = None) -> Optional[Transition]:
+             stopping: bool = False, t: Optional[float] = None, rule: str = "",
+             rank: int = 0) -> Optional[Transition]:
         if why not in ALL_WHY:
             raise ValueError(f"unknown reason for a change of behaviour: {why!r}")
         if self.changes and self.changes[-1].now == now and self.changes[-1].why == why:
             return None
         change = Transition(t=t if t is not None else time.time(), was=was, now=now, why=why,
-                            said=said, speed_mps=float(speed_mps), stopping=bool(stopping))
+                            said=said, speed_mps=float(speed_mps), stopping=bool(stopping),
+                            rule=rule, rank=int(rank))
         self.changes.append(change)
         self.counts[why] = self.counts.get(why, 0) + 1
         self.total += 1

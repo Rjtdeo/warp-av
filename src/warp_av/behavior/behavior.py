@@ -99,7 +99,25 @@ def stopping_speed_for(distance_m: float) -> float:
 
 
 @dataclass
+class Situation:
+    """Everything one decision is made from, in one place, so a rule reads the situation
+    instead of being handed fourteen arguments."""
+    perception: PerceptionOutput
+    pose: Pose
+    destination_distance: Optional[float] = None
+    safety_ok: bool = True
+    junction: Optional[dict] = None
+    park_heading_ok: bool = True
+    park_position_ok: bool = True
+    predicted_conflict: Optional[dict] = None
+    stop_line_m: Optional[float] = None
+    light_id: Optional[int] = None
+    world: object = None
+    #: what the light asks: worked out by the crosser rule, read by the light rule below it
+    light: Optional[tuple] = None
 
+
+@dataclass
 class BehaviorOutput:
     """What the behavior layer decided to do and WHY."""
     behavior: DrivingBehavior = DrivingBehavior.IDLE
@@ -122,6 +140,7 @@ class BehaviorSystem:
         self.current_behavior = DrivingBehavior.NO_MISSION
         self.current_reason = "No mission assigned"
         self.current_why = NO_MISSION
+        self._rule_now = (0, "")         # which rule is being asked (RULES), for the record
         #: every change of state, in order, each with one reason code (P3)
         self.transitions = TransitionLog()
         self.has_mission = False
@@ -202,51 +221,74 @@ class BehaviorSystem:
         speed_cap_mps: Optional[float] = None,   # safety's cap while a sense is missing (day 8)
         blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
     ) -> BehaviorOutput:
-        """
-        One decision cycle.
+        """One decision cycle: ask the rules in RULES, in order, until one answers.
 
         Your rover did:
             if front < 20: STOP
             elif front < 50: TURN
             else: FORWARD
 
-        This does the same thing but with richer states and always a reason.
+        This does the same thing but with richer states, always a reason, and the order of
+        the questions written down (RULES) instead of left to the order the lines happen to
+        sit in the file.
         """
-
-        # --- Safety override (highest priority) ---
         self._speed_cap_mps = speed_cap_mps
         self._blind_spot_m = blind_spot_m
-        if not safety_ok:
+        now = Situation(perception=perception, pose=pose,
+                        destination_distance=destination_distance, safety_ok=safety_ok,
+                        junction=junction, park_heading_ok=park_heading_ok,
+                        park_position_ok=park_position_ok, predicted_conflict=predicted_conflict,
+                        stop_line_m=stop_line_m, light_id=light_id, world=world)
+        for rank, (name, rule, _place) in enumerate(self.RULES, start=1):
+            self._rule_now = (rank, name)
+            answer = rule(self, now)
+            if answer is not None:
+                return answer
+        raise AssertionError("the last rule always answers")   # pragma: no cover
+
+    # ---------------------------------------------------------------- the rules, in order
+
+    def _rule_safety(self, now):
+        if not now.safety_ok:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
                 "Safety supervisor commanded stop",
                 speed=0.0, stop=True, why=SAFETY_HOLD
             )
+        return None
 
-        # --- No mission ---
+    def _rule_no_mission(self, now):
         if not self.has_mission:
             return self._decide(
                 DrivingBehavior.NO_MISSION,
                 "No mission assigned — waiting for destination",
                 speed=0.0, stop=True, why=NO_MISSION
             )
+        return None
 
-        # --- Localization lost ---
+    def _rule_localization(self, now):
+        pose = now.pose
         if not pose.healthy or pose.quality == LocalizationQuality.LOST:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
                 f"Localization unhealthy: {pose.reason}",
                 speed=0.0, stop=True, why=LOCALIZATION_LOST
             )
+        return None
 
-        # --- Perception unhealthy ---
-        if not perception.healthy:
+    def _rule_perception(self, now):
+        if not now.perception.healthy:
             return self._decide(
                 DrivingBehavior.STOPPED_SAFETY,
-                f"Perception unhealthy: {perception.reason}",
+                f"Perception unhealthy: {now.perception.reason}",
                 speed=0.0, stop=True, why=PERCEPTION_LOST
             )
+        return None
 
+    def _rule_parked(self, now):
+        """Is the mission over? Asked before anything about the road: a van that is parked is
+        parked, whatever is standing beside the spot."""
+        destination_distance, pose = now.destination_distance, now.pose
         # Track the closest we ever got to the spot: if we start moving AWAY
         # again at parking speed, we overshot — stop there rather than creep
         # off down the road hunting perfection.
@@ -270,8 +312,8 @@ class BehaviorSystem:
         if (destination_distance is not None
                 and destination_distance < self.destination_threshold
                 and pose.speed < self.parked_max_speed
-                and (park_heading_ok or destination_distance < 0.5)
-                and (park_position_ok or destination_distance < 0.30)):
+                and (now.park_heading_ok or destination_distance < 0.5)
+                and (now.park_position_ok or destination_distance < 0.30)):
             self.mission_complete = True
             self.has_mission = False
             return self._decide(
@@ -279,13 +321,12 @@ class BehaviorSystem:
                 f"Parked — {destination_distance:.1f} m from the spot",
                 speed=0.0, stop=True, why=PARKED
             )
+        return None
 
-        # --- Persistent blocked route ---
-        #
-        # A pedestrian or stopped vehicle is a temporary road situation,
-        # not automatically a "blocked route".
-        #
-        # Only static/other obstacles can become a persistent blocked road.
+    def _rule_blocked_too_long(self, now):
+        """A pedestrian or stopped vehicle is a temporary road situation, not automatically a
+        blocked route. Only static/other obstacles can become a persistent blocked road."""
+        perception = now.perception
         if (
             perception.path_blocked
             and perception.closest_obstacle_type
@@ -314,9 +355,11 @@ class BehaviorSystem:
                 )
         else:
             self._blocked_since = None
+        return None
 
-        # (helper for the release latch below)
-        # --- Path blocked by a person on foot or on a bike (ALWAYS stop) ---
+    def _rule_vru_in_path(self, now):
+        """A person on foot or on a bike: ALWAYS stop."""
+        perception = now.perception
         if perception.path_blocked and perception.closest_obstacle_type in VULNERABLE_TYPES:
             self._note_block(DrivingBehavior.STOPPED_PEDESTRIAN,
                              perception.closest_obstacle_distance)
@@ -326,8 +369,10 @@ class BehaviorSystem:
                 f"{who} in path at {perception.closest_obstacle_distance:.1f}m — stopped",
                 speed=0.0, stop=True, why=VRU_IN_PATH
             )
+        return None
 
-        # --- Path blocked by vehicle ---
+    def _rule_vehicle_in_path(self, now):
+        perception = now.perception
         if perception.path_blocked and perception.closest_obstacle_type == ObjectType.VEHICLE:
             self._note_block(DrivingBehavior.STOPPED_VEHICLE,
                              perception.closest_obstacle_distance)
@@ -336,8 +381,10 @@ class BehaviorSystem:
                 f"VEHICLE blocking path at {perception.closest_obstacle_distance:.1f}m — stopped",
                 speed=0.0, stop=True, why=VEHICLE_IN_PATH
             )
+        return None
 
-        # --- Path blocked by obstacle ---
+    def _rule_obstacle_in_path(self, now):
+        perception = now.perception
         if perception.path_blocked:
             self._note_block(DrivingBehavior.STOPPED_OBSTACLE,
                              perception.closest_obstacle_distance)
@@ -346,16 +393,17 @@ class BehaviorSystem:
                 f"OBSTACLE in path at {perception.closest_obstacle_distance:.1f}m — stopped",
                 speed=0.0, stop=True, why=OBSTACLE_IN_PATH
             )
+        return None
 
-        # --- Release latch: a close blocker that BLINKS out of detection for
-        # a moment must not release the van instantly. In a dense-traffic
-        # brawl the verdict flapped every 1-3 s and the van crept half a
-        # metre per blink into a shrinking gap (two contacts). Stay stopped
-        # until the path has been continuously clear for block_release_s.
+    def _rule_confirming_clear(self, now):
+        """A close blocker that BLINKS out of detection for a moment must not release the van
+        instantly. In a dense-traffic brawl the verdict flapped every 1-3 s and the van crept
+        half a metre per blink into a shrinking gap (two contacts). Stay stopped until the
+        path has been continuously clear for block_release_s."""
         # nothing is blocking this frame, so the run of blocked frames is over
         self._block_run_since = None
         if (self._block_memory is not None
-                and pose.speed < 1.2
+                and now.pose.speed < 1.2
                 and time.time() - self._block_memory[0] < self.block_release_s):
             kind, dist = self._block_memory[1], self._block_memory[2]
             return self._decide(
@@ -365,17 +413,19 @@ class BehaviorSystem:
                 speed=0.0, stop=True, why=CONFIRMING_CLEAR
             )
         self._block_memory = None
+        return None
 
-        # --- Predicted conflict: someone OUTSIDE our lane is about to be
-        # IN it (crosser at a junction, cut-in from the side). Yield before
-        # the danger exists instead of braking when it does. Ranked below
-        # physical blocks (a real thing in the path always wins) and above
-        # the traffic light chain.
-        # What the light asks, worked out BEFORE the predicted-conflict branch below. That
-        # branch used to return "slowing to 2.5 m/s" without ever reaching the light, so a
-        # crosser predicted at a junction let the van roll through a red one.
-        light = self._traffic_light(perception, pose, stop_line_m, light_id)
+    def _rule_predicted_crosser(self, now):
+        """Someone OUTSIDE our lane is about to be IN it (crosser at a junction, cut-in from
+        the side). Yield before the danger exists instead of braking when it does. Ranked
+        below physical blocks (a real thing in the path always wins) and above the light.
 
+        What the light asks is worked out HERE, before the yield, and handed to the light rule
+        below: this branch used to return "slowing to 2.5 m/s" without ever reaching the light,
+        so a crosser predicted at a junction let the van roll through a red one.
+        """
+        now.light = self._traffic_light(now.perception, now.pose, now.stop_line_m, now.light_id)
+        predicted_conflict, light = now.predicted_conflict, now.light
         if predicted_conflict is not None:
             p_t = predicted_conflict.get("t", 0.0)
             p_along = predicted_conflict.get("along_m", 0.0)
@@ -393,14 +443,19 @@ class BehaviorSystem:
                 f"Slowing — {p_what} predicted in our path {p_along:.0f}m ahead in {p_t:.1f}s",
                 speed=2.5, stop=False, why=PREDICTED_CROSSER_SLOW
             )
+        return None
 
-        # --- Traffic light (Troy #1): roll up to the stop line, hold there.
-        # Ranked below pedestrian/vehicle/obstacle stops (a closer physical hazard always
-        # wins) and above following/cruising. See _traffic_light.
-        if light is not None:
-            return self._decide(*light)
+    def _rule_traffic_light(self, now):
+        """Roll up to the stop line, hold there (Troy #1). Ranked below pedestrian/vehicle/
+        obstacle stops (a closer physical hazard always wins) and above following/cruising.
+        See _traffic_light, which the rule above has already asked."""
+        if now.light is not None:
+            return self._decide(*now.light)
+        return None
 
-        # --- Give way before turning at a junction ---
+    def _rule_junction(self, now):
+        """Give way before turning at a junction."""
+        perception, junction = now.perception, now.junction
         if junction is None or junction.get("distance_m", 99) > 15.0:
             self._junction_done = False      # next junction is a fresh decision
         if (junction is not None
@@ -417,11 +472,11 @@ class BehaviorSystem:
                     f"Approaching {direction} turn — rolling up to the crossing ({jdist:.0f} m)",
                     speed=creep, stop=False, why=JUNCTION_ROLL_UP
                 )
-            now = time.time()
+            moment = time.time()
             if self._junction_wait_started is None:
-                self._junction_wait_started = now
-            waited = now - self._junction_wait_started
-            conflict = self._junction_conflict(perception, world)
+                self._junction_wait_started = moment
+            waited = moment - self._junction_wait_started
+            conflict = self._junction_conflict(perception, now.world)
             if waited >= self.junction_wait_timeout_s:
                 self._junction_done = True
                 self._junction_wait_started = None
@@ -448,8 +503,11 @@ class BehaviorSystem:
         elif self._junction_wait_started is not None and (
                 junction is None or junction.get("distance_m", 99) > self.junction_stop_within_m):
             self._junction_wait_started = None
+        return None
 
-        # --- Moving vehicle ahead: follow at a time gap instead of stop-and-go ---
+    def _rule_following_lead(self, now):
+        """A moving vehicle ahead: follow at a time gap instead of stop-and-go."""
+        perception = now.perception
         if (perception.closest_obstacle_type == ObjectType.VEHICLE
                 and perception.closest_obstacle_speed > self.follow_min_lead_mps
                 and perception.closest_obstacle_distance < self.follow_engage_m):
@@ -464,38 +522,92 @@ class BehaviorSystem:
                 f"lead {lead:.1f} m/s — target {target:.1f} m/s",
                 speed=target, stop=False, why=FOLLOWING_LEAD
             )
+        return None
 
-        # --- Object ahead, slow down ---
-        if perception.closest_obstacle_distance < self.slow_distance:
+    def _rule_object_ahead(self, now):
+        """Something in sight but not in the way: slow down."""
+        if now.perception.closest_obstacle_distance < self.slow_distance:
             return self._decide(
                 DrivingBehavior.FOLLOWING_ROUTE,
-                f"Object detected at {perception.closest_obstacle_distance:.1f}m — slowing to {self.slow_speed:.1f} m/s",
+                f"Object detected at {now.perception.closest_obstacle_distance:.1f}m — slowing to {self.slow_speed:.1f} m/s",
                 speed=self.slow_speed, stop=False, why=OBJECT_AHEAD_SLOW
             )
+        return None
 
-        # --- Final approach: park at the kerb ---
+    def _rule_parking(self, now):
+        """The final approach: park at the kerb.
+
+        Asked BEFORE following a lead car and before slowing for something in sight, because
+        the van in the last metres of a pull-in is parking, whatever else it can see. Live on
+        2026-09-11 those two rules kept taking the state away from it: through the last 15 m
+        the van flapped parking -> object_ahead_slow -> stopped_obstacle -> parking five
+        times, and the log of the drive said nothing true about what it was doing. It still
+        never goes FASTER for that: anything in sight holds it to the slowing speed, and
+        anything in the WAY is three rules above this one and stops it."""
+        destination_distance = now.destination_distance
         if destination_distance is not None and destination_distance < self.park_zone_m:
             creep = max(0.5, min(2.5, 0.35 * destination_distance))
+            seen = now.perception.closest_obstacle_distance
+            if seen is not None and seen < self.slow_distance:
+                creep = min(creep, self.slow_speed)
+                return self._decide(
+                    DrivingBehavior.PARKING,
+                    f"Parking — pulling over, {destination_distance:.1f} m to the spot "
+                    f"(something in sight at {seen:.1f} m: {creep:.1f} m/s)",
+                    speed=creep, stop=False, why=PARKING_PULL_IN
+                )
             return self._decide(
                 DrivingBehavior.PARKING,
                 f"Parking — pulling over, {destination_distance:.1f} m to the spot",
                 speed=creep, stop=False, why=PARKING_PULL_IN
             )
+        return None
 
-        # --- Approaching destination ---
+    def _rule_approaching(self, now):
+        destination_distance = now.destination_distance
         if destination_distance is not None and destination_distance < 25.0:
             return self._decide(
                 DrivingBehavior.APPROACHING_DESTINATION,
                 f"Approaching destination ({destination_distance:.1f}m) — slowing",
                 speed=self.slow_speed, stop=False, why=DESTINATION_NEAR
             )
+        return None
 
-        # --- All clear, drive normally ---
+    def _rule_cruise(self, now):
+        """Nothing to report: drive. The last rule, and the only one that always answers."""
         return self._decide(
             DrivingBehavior.FOLLOWING_ROUTE,
             f"Route clear — cruising at {self.cruise_speed:.1f} m/s",
             speed=self.cruise_speed, stop=False, why=ROUTE_CLEAR
         )
+
+    #: What the van may be doing, in the order the questions are asked. The first rule with
+    #: an answer wins and the rest are never asked, so this list IS the priority order --
+    #: written down here instead of left to the order the lines happen to sit in the file.
+    #: (name, the rule, why it sits where it does)
+    RULES = (
+        ("safety", _rule_safety, "the supervisor's stop beats every rule of the road"),
+        ("no_mission", _rule_no_mission, "nowhere to go: stay put"),
+        ("localization", _rule_localization, "not knowing WHERE it is beats knowing what it sees"),
+        ("perception", _rule_perception, "blind is stopped"),
+        ("parked", _rule_parked, "a van at its spot is parked, whatever stands beside it"),
+        ("blocked_too_long", _rule_blocked_too_long, "a road blocked this long is an operator's problem"),
+        ("vru_in_path", _rule_vru_in_path, "a person or a rider in the way beats everything below"),
+        ("vehicle_in_path", _rule_vehicle_in_path, "then a vehicle in the way"),
+        ("obstacle_in_path", _rule_obstacle_in_path, "then anything else in the way"),
+        ("confirming_clear", _rule_confirming_clear, "a blocker that blinked out of sight is still there"),
+        ("predicted_crosser", _rule_predicted_crosser,
+         "what is ABOUT to be in the way, before it is -- and the light is read here, so a "
+         "crosser cannot hide a red one"),
+        ("traffic_light", _rule_traffic_light, "the law, once nothing physical is in the way"),
+        ("junction", _rule_junction, "give way before turning across traffic"),
+        ("parking", _rule_parking, "the last few metres to the spot: nothing in sight takes "
+         "the state away from a van that is parking (it still slows for it)"),
+        ("following_lead", _rule_following_lead, "a moving car ahead is followed, not stopped for"),
+        ("object_ahead", _rule_object_ahead, "something in sight but not in the way: slow down"),
+        ("approaching", _rule_approaching, "slow down near the destination"),
+        ("cruise", _rule_cruise, "nothing to report: drive"),
+    )
 
     def _traffic_light(self, perception, pose, stop_line_m, light_id):
         """What the light ahead asks of the van: (behaviour, reason, speed, stop, why), or None when
@@ -593,8 +705,10 @@ class BehaviorSystem:
                     stop = True
         # Every change of state, with its reason code, kept in order (P3): one line of a
         # drive's story. Same state and same reason next tick is not a change.
+        rank, rule = getattr(self, "_rule_now", (0, ""))
         change = self.transitions.note(was=self.current_behavior.value, now=behavior.value,
-                                       why=why, said=reason, speed_mps=speed, stopping=stop)
+                                       why=why, said=reason, speed_mps=speed, stopping=stop,
+                                       rule=rule, rank=rank)
         if change is not None and change.was != change.now:
             print(f"[Behavior] {change.was} → {change.now} ({why}): {reason}")
         self.current_behavior = behavior
