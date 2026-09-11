@@ -87,7 +87,7 @@ def _size(obj, field):
         return None
 
 
-def _could_use_a_road(obj) -> bool:
+def could_use_a_road(obj) -> bool:
     """Could this thing be a road user at all?
 
     Two questions. Is it the right SIZE -- asked only of things the camera could not name,
@@ -183,7 +183,7 @@ def predict_route_conflict(objects, route_wps, ego_x, ego_y, ego_yaw, ego_speed)
         vy = getattr(obj, "vy_world", 0.0)
         if math.hypot(vx, vy) < MIN_SPEED:
             continue
-        if not _could_use_a_road(obj):
+        if not could_use_a_road(obj):
             continue          # a 10 cm post is not about to walk into the road
         # ego frame -> world (same transform the corridor uses)
         wx = ego_x + cos_y * obj.x - sin_y * obj.y
@@ -214,3 +214,6 @@ def predict_route_conflict(objects, route_wps, ego_x, ego_y, ego_yaw, ego_speed)
                     break
             t += STEP_S
     return best
+
+
+_could_use_a_road = could_use_a_road     # the old private name, kept for anything still using it

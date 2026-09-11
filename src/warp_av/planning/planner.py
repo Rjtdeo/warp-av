@@ -25,6 +25,9 @@ from .instrumentation import (PlannerDecision, debug_planning_enabled,
 # body is checked against a STATIONARY object it is given a radius by type.
 # Half a car for vehicles; a bin/pole/planter for other things.
 DEFAULT_OBSTACLE_RADIUS_M = {"vehicle": 0.9, "pedestrian": 0.4, "obstacle": 0.5, "unknown": 0.5}
+#: A bay spot needs this much bay AHEAD of its centre: the van's nose (2.95 m) and a margin.
+BAY_AHEAD_OF_SPOT_M = 3.6
+
 FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary objects this far ahead
 # ...and never further off the line than this. The swept body exists to catch what the
 # centre-line bands miss: "a parked car 1.6 m off the line still blocks, a planter at 1.9 m
@@ -276,6 +279,30 @@ class WaitingIsPointless:
         return None
 
 
+#: How much more ground a fitted rectangle may claim than the points it was fitted to.
+#: Some slack is fair -- the rectangle is the smallest one round the points, and a turned
+#: rectangle round a spread measured along the van's own axes can be a little larger.
+FIT_AREA_SLACK = 1.3
+
+
+def fit_is_believable(obj) -> bool:
+    """Is perception's fitted rectangle a rectangle round the points, or over empty ground?
+
+    Two faces of a building met at a corner fit one rectangle over the whole corner, nearly
+    all of it ground no laser ever touched. Live on 2026-09-11 a facade whose points spread
+    51.1 x 2.8 m came out as a 22.6 x 12.4 m block -- 281 square metres of "body" from 144
+    of points -- centred inside the building, reaching across the pavement into the van's
+    way. The van gave up a parking spot for it. When the fit claims that much more ground
+    than the points, it is not describing the thing: fall back to the measured spread."""
+    fit = (float(getattr(obj, "box_length_m", 0.0) or 0.0)
+           * float(getattr(obj, "box_width_m", 0.0) or 0.0))
+    points = (float(getattr(obj, "length_m", 0.0) or 0.0)
+              * float(getattr(obj, "width_m", 0.0) or 0.0))
+    if fit <= 0.0 or points <= 0.0:
+        return True                      # no rectangle fitted, or nothing to judge it against
+    return fit <= FIT_AREA_SLACK * points
+
+
 def obstacle_box_for(obj, ego_yaw: float):
     """The obstacle as the rectangle perception measured, in the world frame -- or None.
 
@@ -289,7 +316,8 @@ def obstacle_box_for(obj, ego_yaw: float):
     """
     # the smallest rectangle round its points when perception fitted one (fix 2): the spread
     # of a car's points seen from its corner runs diagonally and gets the heading wrong
-    fitted = float(getattr(obj, "box_length_m", 0.0) or 0.0) > 0.0
+    believable = fit_is_believable(obj)
+    fitted = believable and float(getattr(obj, "box_length_m", 0.0) or 0.0) > 0.0
     length = (getattr(obj, "box_length_m", None) if fitted else getattr(obj, "length_m", None)) or 0.0
     width = (getattr(obj, "box_width_m", None) if fitted else getattr(obj, "width_m", None)) or 0.0
     try:
@@ -304,13 +332,114 @@ def obstacle_box_for(obj, ego_yaw: float):
     floor = 0.0 if kerb_like(obj) else SCRAPE_HALF_WIDTH_FLOOR_M.get(kind, DEFAULT_SCRAPE_HALF_WIDTH_M)
     half_w = max(0.5 * width, floor)
     half_l = max(0.5 * length, half_w)
-    # cover a heading error by what it would swing the ends through
-    half_w += half_l * math.sin(math.radians(YAW_TOLERANCE_FITTED_DEG if fitted else YAW_TOLERANCE_DEG))
+    # cover a heading error by what it would swing the ends through -- but a long thin line of
+    # points cannot be far wrong about which way it lies: it could only tilt within its own
+    # thickness. Without that, an 8 degree allowance on a 51 m facade swung its ends through
+    # 3.5 m of road (2026-09-11).
+    tol = float(YAW_TOLERANCE_FITTED_DEG if fitted else YAW_TOLERANCE_DEG)
+    if length > 0.0 and width > 0.0:
+        tol = min(tol, math.degrees(math.atan2(width, length)))
+    half_w += half_l * math.sin(math.radians(tol))
     yaw_obj = math.radians(float((getattr(obj, "box_yaw_deg", 0.0) if fitted
                                   else getattr(obj, "yaw_deg", 0.0)) or 0.0))
     return ObstacleBox(half_length=half_l + OBSTACLE_BOX_PAD_M,
                        half_width=half_w + OBSTACLE_BOX_PAD_M,
-                       heading=ego_yaw + yaw_obj)
+                       heading=ego_yaw + yaw_obj,
+                       dx=float(getattr(obj, "box_dx", 0.0) or 0.0) if believable else 0.0,
+                       dy=float(getattr(obj, "box_dy", 0.0) or 0.0) if believable else 0.0)
+
+
+#: The lane the pass swings into, and our own, as sideways bands (objects: y to the RIGHT).
+PASSING_LANE_BAND_M = (-6.5, -0.8)
+OUR_LANE_BAND_M = (-1.6, 1.6)
+#: How far back along the passing lane traffic is looked for, and ahead of the dead lead.
+PASS_LOOK_BACK_M = 40.0
+PASS_LOOK_PAST_LEAD_M = 45.0
+
+
+def body_centre(obj):
+    """Where a thing's body is centred, in the van frame (x ahead, y to the right).
+
+    Its (x, y) is the average of the laser points on it, and those are all on the side facing
+    the van: live on 2026-09-11 an SUV parked in the oncoming lane, beside the van, averaged
+    6.2 m to its left while its measured box -- and the SUV -- stood at 7.0 m."""
+    return (float(obj.x) + float(getattr(obj, "box_dx", 0.0) or 0.0),
+            float(obj.y) + float(getattr(obj, "box_dy", 0.0) or 0.0))
+
+
+def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: float) -> Optional[str]:
+    """Why MOVING traffic says the van may not swing out past a dead lead vehicle now, or None.
+
+    Judged by where it is and where it is going:
+      * the passing lane ahead -- anything moving there
+      * our own lane ahead -- anything moving within the room needed to pull back in
+      * the passing lane BEHIND -- traffic coming up it would meet us as we pull out
+    Things standing still are not judged here but by the path itself: RoutePlanner.
+    pull_in_blocker slides the van's body along the planned way round and asks what it would
+    touch. A band only guesses at that: the SUV parked in the oncoming lane beside the van
+    (body_centre) sat inside the old "standing in the passing lane" band and held the van
+    behind a dead car for three minutes, 1.4 m clear of the path it never took.
+    "Moving traffic anywhere ahead" used to veto the pass: live on 2026-09-11 it kept the van
+    behind a parked car for four minutes, the "moving vehicle" being a second parked car 35 m
+    past the first, half hidden behind it, whose visible pieces slid about -- in our lane, far
+    beyond where the van pulls back in. And nothing at all looked behind. "Moving" also needs
+    the tracker to have given up calling it parked, and a shape that could use a road
+    (prediction.could_use_a_road): kerb fragments slide along the kerb too."""
+    from .prediction import could_use_a_road
+    c, s = math.cos(ego_yaw), math.sin(ego_yaw)
+    for obj in objects or []:
+        moving = (float(getattr(obj, "speed", 0.0) or 0.0) > 0.3
+                  and not getattr(obj, "stationary", False) and could_use_a_road(obj))
+        if not moving:
+            continue
+        x, y = body_centre(obj)
+        dist = math.hypot(x, y)
+        kind = getattr(getattr(obj, "object_type", None), "value", "thing")
+        in_passing = PASSING_LANE_BAND_M[0] < y < PASSING_LANE_BAND_M[1]
+        in_ours = OUR_LANE_BAND_M[0] <= y <= OUR_LANE_BAND_M[1]
+        if x >= -2.0:
+            if in_passing and dist < lead_d + PASS_LOOK_PAST_LEAD_M:
+                return f"moving {kind} in the passing lane {dist:.0f} m ahead"
+            if in_ours and x > 0.0 and dist < rejoin_room_m:
+                return f"no room to pull back in: moving {kind} {dist:.0f} m ahead"
+        elif in_passing and dist < PASS_LOOK_BACK_M:
+            along = (float(getattr(obj, "vx_world", 0.0) or 0.0) * c
+                     + float(getattr(obj, "vy_world", 0.0) or 0.0) * s)
+            if along > 0.3:
+                return f"{kind} coming up behind in the passing lane, {dist:.0f} m back"
+    return None
+
+
+#: A second opinion on a thing standing in the way: how much of the ground the van's body is
+#: about to cover must have been SEEN empty before the van drives on, and how still the thing
+#: must be for the question to be asked at all.
+SEEN_FREE_SHARE = 0.97
+SEEN_FREE_STILL_MPS = 0.3
+
+
+def nothing_is_standing_there(kind: str, speed_mps: float, counts) -> bool:
+    """Does the laser's own free-space map say the corridor check drew a body on empty ground?
+
+    counts is (free, blocked, unseen) squares over the ground the van's body is about to cover
+    (perception.occupancy.OccupancyGrid.strip_ahead). A square is FREE only where a beam went
+    through it and carried on, so ground seen free is not ground a lamp post stands on.
+
+    UNSEEN is never free -- one unseen square in thirty and the van still stops -- and the
+    question is never even asked about a person, a rider, or anything that is moving.
+
+    Live on 2026-09-11, both on one run: a line of street furniture beside a parking bay
+    (measured 6.3 x 0.84 m, fitted 8.0 x 2.3 m, named a vehicle by the camera) failed a
+    parking 3.6 m short of the spot while the map ahead was clear for 21 m; and a "VEHICLE
+    blocking path at 11.6 m" that CARLA says was never there held the van for 33 s."""
+    if kind in ("pedestrian", "cyclist"):
+        return False
+    if abs(float(speed_mps or 0.0)) > SEEN_FREE_STILL_MPS:
+        return False
+    if counts is None:
+        return False
+    free, blocked, unseen = counts
+    total = free + blocked + unseen
+    return total > 0 and blocked == 0 and free >= SEEN_FREE_SHARE * total
 
 
 def would_scrape(obj, lat_m: float) -> bool:
@@ -582,6 +711,8 @@ class RoutePlanner:
                                 # the two turns: 27 degrees in the closed-loop test, 12 without
     PARK_PAST_PIN_M = 80.0      # how far on past the pin a spot may be -- across a junction if need
                                 # be: a pin on a stop line has none before it (2026-09-11, light 21)
+    PARK_FAR_PAST_PIN_M = 150.0 # ...and, when no strip spot there will do, how far it looks on for
+                                # one before stopping in the lane at all (vehicles behind would wait)
     PARK_KERB_PENALTY_M = 15.0  # choosing: a kerb stop in the lane counts as this much further off
     PARK_LANE_PENALTY_M = 40.0  # ...and a plain stop in the lane as this much (bays are for parking)
     LANE_STOP_STRAIGHT_M = 6.0  # a stop in the lane needs this much straight lane before it...
@@ -642,7 +773,24 @@ class RoutePlanner:
             return None
         if needs_bay and not self._bay_runs_back(wps, k, self.bay_needed_behind_m(lat)):
             return None
+        if needs_bay and not self._bay_runs_ahead(a, BAY_AHEAD_OF_SPOT_M):
+            return None
         return k, i0, tx, ty, tyaw, lat, ramp
+
+    def _bay_runs_ahead(self, at, need_m: float) -> bool:
+        """Does the bay carry on for need_m past the spot? The van's nose ends half its length
+        ahead of the spot's centre. Checked only behind, a spot was chosen at the very end of a
+        strip on 2026-09-11: the kerb corner stopped the van 8.8 degrees into its turn."""
+        c, s = math.cos(at.yaw), math.sin(at.yaw)
+        d = 1.0
+        while d <= need_m + 1e-9:
+            try:
+                if self._right_bay(at.x + c * d, at.y + s * d, at.z) is None:
+                    return False
+            except Exception:
+                return False
+            d += 1.0
+        return True
 
     def extend_past_pin(self, route: Route, metres: float) -> int:
         """Carry the route on past its last point for up to `metres`, straight on -- through a
@@ -701,7 +849,8 @@ class RoutePlanner:
                 return True
         return False
 
-    def apply_pullover(self, route: Route, side="right", pin_index=None, avoid=(), ahead_of=None):
+    def apply_pullover(self, route: Route, side="right", pin_index=None, avoid=(), ahead_of=None,
+                       past_pin_m=None, in_lane_ok=True):
         """
         Choose where the mission ends, and bend the route into it. In order of preference:
           * "bay"  -- a real Parking/Shoulder strip beside the lane, pulled into gently
@@ -720,6 +869,9 @@ class RoutePlanner:
         `avoid`: spots already turned down (x, y) -- nothing within 6 m of one is chosen again.
         `ahead_of`: the van's (x, y) when choosing again on the way; the pull-in must start
         ahead of it, since it cannot back up to start one it has already driven past.
+        `past_pin_m`: how far past the pin to look (PARK_PAST_PIN_M when not given).
+        `in_lane_ok`: False leaves out the two options that stop in the driving lane -- a van
+        stopped in the lane makes everything behind it wait (Rajat, 2026-09-11).
         """
         if not route or len(route.waypoints) < 4:
             return None
@@ -729,8 +881,9 @@ class RoutePlanner:
         arc = [0.0] * len(wps)
         for k in range(1, len(wps)):
             arc[k] = arc[k - 1] + math.hypot(wps[k].x - wps[k - 1].x, wps[k].y - wps[k - 1].y)
+        past = self.PARK_PAST_PIN_M if past_pin_m is None else float(past_pin_m)
         window = [k for k in range(3, len(wps))
-                  if -self.PARK_MAX_PULLBACK_M <= arc[k] - arc[pin] <= self.PARK_PAST_PIN_M
+                  if -self.PARK_MAX_PULLBACK_M <= arc[k] - arc[pin] <= past
                   and not wps[k].is_junction]
         first_i0 = 1
         if ahead_of is not None:
@@ -758,6 +911,8 @@ class RoutePlanner:
             if bay is not None:
                 consider(self._pull_in_plan(wps, k, bay[0], bay[1], bay[2], needs_bay=True),
                          "bay", 0.0, width=bay[3])
+            if not in_lane_ok:
+                continue
             tx, ty, tyaw, off = self._pullover_target(wps[k])
             if off > 0.1:
                 consider(self._pull_in_plan(wps, k, tx, ty, tyaw, needs_bay=False),
@@ -928,6 +1083,17 @@ class RoutePlanner:
         return (abs(lx) <= slot["length"] / 2.0 + inflate
                 and abs(ly) <= slot["width"] / 2.0 + inflate)
 
+    #: Parked in a slot means centred in it, not just inside it: the van (5.9 m) in a 7 m slot has
+    #: 0.55 m to spare at each end when centred. Counting it parked the moment it was wholly
+    #: inside stopped it with 0.02 m to spare at one end (2026-09-11).
+    SLOT_END_MARGIN_M = 0.25
+
+    @classmethod
+    def parked_in_slot(cls, vx, vy, vyaw, half_len, half_wid, slot) -> bool:
+        """Inside the slot, with at least SLOT_END_MARGIN_M to spare at both ends."""
+        inside, m_along, m_side = cls.van_in_slot(vx, vy, vyaw, half_len, half_wid, slot)
+        return inside and m_along >= cls.SLOT_END_MARGIN_M
+
     @staticmethod
     def van_in_slot(vx, vy, vyaw, half_len, half_wid, slot):
         """(inside, margin_along_m, margin_side_m) for the van's rectangle."""
@@ -1072,14 +1238,16 @@ class RoutePlanner:
                 return round(dist, 1)
         return None
 
-    def pull_in_blocker(self, perception, route: Route, ego_x, ego_y, ego_yaw, footprint):
+    def pull_in_blocker(self, perception, route: Route, ego_x, ego_y, ego_yaw, footprint,
+                        horizon_m: float = 1e4):
         """The nearest thing standing still that the van's body would touch on the REST of the
         route -- the whole pull-in, not the FOOTPRINT_STATIONARY_REACH_M the running check looks
         ahead -- judged as filter_to_route_corridor judges it (the measured box when there is
         one, a kerb at tyre clearance, a parked vehicle passable with care). (object, metres
         away, the SweepHit, its centre (x, y), its ObstacleBox or None) or None. Asked before turning into a parking spot, while choosing another is still
         possible: on 2026-09-11 the van turned in first and was stopped 12 degrees across the
-        lane by a bus shelter beside the spot."""
+        lane by a bus shelter beside the spot. The go-around asks it of the path round a dead
+        vehicle before taking it, looking only as far as horizon_m (where it is back in lane)."""
         if footprint is None or not route or len(route.waypoints) < 2:
             return None
         wps = route.waypoints
@@ -1093,20 +1261,19 @@ class RoutePlanner:
             box = obstacle_box_for(obj, ego_yaw)
             where = (wx, wy)
             if box is not None:
-                bdx = float(getattr(obj, "box_dx", 0.0) or 0.0)
-                bdy = float(getattr(obj, "box_dy", 0.0) or 0.0)
-                where = (wx + cos_y * bdx - sin_y * bdy, wy + sin_y * bdx + cos_y * bdy)
+                where = (wx + cos_y * box.dx - sin_y * box.dy,
+                         wy + sin_y * box.dx + cos_y * box.dy)
             body = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
                     if kerb_like(obj) else footprint)
             radius = obstacle_radius_m(obj)
             hit = sweep_conflict(wps, (ego_x, ego_y), body, where, obstacle_radius=radius,
-                                 horizon_m=1e4, obstacle_box=box)
+                                 horizon_m=horizon_m, obstacle_box=box)
             if hit is None:
                 continue
             if can_pass_with_care(obj):
                 tight = replace(footprint, safety_margin=min(footprint.safety_margin, PASS_CLEARANCE_M))
                 if sweep_conflict(wps, (ego_x, ego_y), tight, where, obstacle_radius=radius,
-                                  horizon_m=1e4, obstacle_box=box) is None:
+                                  horizon_m=horizon_m, obstacle_box=box) is None:
                     continue
             d = math.hypot(wx - ego_x, wy - ego_y)
             if best is None or d < best[1]:
@@ -1340,9 +1507,8 @@ class RoutePlanner:
                 # are 0.9 m apart for a car seen from its corner
                 where = (wx, wy)
                 if box is not None:
-                    bdx = float(getattr(obj, "box_dx", 0.0) or 0.0)
-                    bdy = float(getattr(obj, "box_dy", 0.0) or 0.0)
-                    where = (wx + cos_y * bdx - sin_y * bdy, wy + sin_y * bdx + cos_y * bdy)
+                    where = (wx + cos_y * box.dx - sin_y * box.dy,
+                             wy + sin_y * box.dx + cos_y * box.dy)
                 # a kerb needs tyre clearance, not the full safety margin (KERB_CLEARANCE_M)
                 body = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
                         if kerb_like(obj) else footprint)

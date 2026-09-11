@@ -63,6 +63,11 @@ class ObstacleBox:
     half_length: float
     half_width: float
     heading: float
+    # where this rectangle's centre is, from the object's reported position, in the van's
+    # frame (x ahead, y right). The position is the average of the laser points, which sits
+    # on the van's side of a car seen from its corner; the rectangle's centre does not.
+    dx: float = 0.0
+    dy: float = 0.0
 
 
 @dataclass(frozen=True)

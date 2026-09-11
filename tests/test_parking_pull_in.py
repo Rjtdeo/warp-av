@@ -380,3 +380,49 @@ def test_at_the_end_and_past_it_the_straight_line_counts():
     r = Route(waypoints=[Waypoint(x=float(x), y=0.0, yaw=0.0) for x in range(0, 41, 2)])
     assert p.distance_to_destination(r, 39.0, 0.3) == pytest.approx(1.04, abs=0.05)
     assert p.distance_to_destination(r, 43.0, 0.0) == pytest.approx(3.0, abs=0.01), "an overshoot must grow"
+
+
+# ---------------------------------------------------------------- never park IN the lane where a strip exists
+
+def test_where_strips_are_refused_the_lane_is_not_offered_instead():
+    """Rajat, 2026-09-11: a van stopped in the driving lane makes everything behind it wait."""
+    p = planner()
+    r = lane_changing_route()
+    far = pin_at(r, 100.0)
+    everywhere = [(x, BAY) for x in range(60, 162, 2)]          # every strip spot turned down
+    assert p.apply_pullover(Route(waypoints=list(r.waypoints)), pin_index=far,
+                            avoid=everywhere, in_lane_ok=False) is None
+    lane = p.apply_pullover(Route(waypoints=list(r.waypoints)), pin_index=far,
+                            avoid=everywhere, in_lane_ok=True)
+    assert lane is not None and lane["kind"] in ("kerb", "lane"), "the last resort is still there"
+
+
+def test_a_strip_further_on_is_found_before_the_lane_is_used():
+    p = planner(bay_from=195.0, bay_to=260.0)                   # the strip starts 95 m past the pin
+    r = Route(waypoints=[Waypoint(x=float(x), y=LANE_2, yaw=0.0) for x in range(0, 262, 2)])
+    pin = pin_at(r, 100.0)
+    assert p.apply_pullover(Route(waypoints=list(r.waypoints)), pin_index=pin,
+                            past_pin_m=p.PARK_PAST_PIN_M, in_lane_ok=False) is None
+    spot = p.apply_pullover(Route(waypoints=list(r.waypoints)), pin_index=pin,
+                            past_pin_m=p.PARK_FAR_PAST_PIN_M, in_lane_ok=False)
+    assert spot is not None and spot["kind"] == "bay" and spot["past_pin_m"] <= p.PARK_FAR_PAST_PIN_M
+
+
+def test_parked_in_a_slot_means_centred_not_just_inside():
+    """2026-09-11: counted parked the moment it was wholly inside -- 0.02 m to spare at one end."""
+    slot = {"x": 0.0, "y": 0.0, "yaw": 0.0, "length": 7.0, "width": 2.5}
+    hl, hw = 2.95, 0.99
+    assert RoutePlanner.van_in_slot(-0.53, 0.0, 0.0, hl, hw, slot)[0], "wholly inside..."
+    assert not RoutePlanner.parked_in_slot(-0.53, 0.0, 0.0, hl, hw, slot), "...but 0.02 m from the end"
+    assert RoutePlanner.parked_in_slot(-0.25, 0.0, 0.0, hl, hw, slot)
+    assert RoutePlanner.parked_in_slot(0.0, 0.1, 0.0, hl, hw, slot)
+
+
+def test_a_spot_at_the_very_end_of_a_strip_is_not_chosen():
+    """2026-09-11: the van's nose would have stuck out past the strip's end; the kerb corner
+    stopped it 8.8 degrees into its turn. The bay must run on 3.6 m past the spot too."""
+    from warp_av.planning.planner import BAY_AHEAD_OF_SPOT_M
+    p = planner(bay_from=60.0, bay_to=113.0)
+    r = lane_changing_route()
+    spot = p.apply_pullover(r, pin_index=pin_at(r, 100.0), in_lane_ok=False)
+    assert spot is None or spot["x"] <= 113.0 - BAY_AHEAD_OF_SPOT_M + 1e-6

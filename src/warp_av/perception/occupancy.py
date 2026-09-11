@@ -417,6 +417,27 @@ class OccupancyGrid:
             return None
         return abs(right - left)
 
+    def strip_ahead(self, from_m: float, to_m: float, half_width_m: float):
+        """(free, blocked, unseen) squares over a strip of ground straight ahead of the van --
+        from `from_m` to `to_m` in front of its middle, `half_width_m` either side.
+
+        The ground the van's own body is about to cover, in other words. Nothing is inferred
+        here: FREE is where a beam went through, UNKNOWN is where none has been, and the two
+        are never added together."""
+        if not self.updated or to_m <= from_m or half_width_m <= 0:
+            return None
+        step = self.cell_m
+        xs = np.arange(from_m, to_m + 1e-6, step)
+        ys = np.arange(-half_width_m, half_width_m + 1e-6, step)
+        gx, gy = np.meshgrid(xs, ys)
+        r, c = self.to_cell(gx, gy)
+        inside = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
+        cells = np.zeros(r.shape, dtype=np.uint8)
+        cells[inside] = self.cells[r[inside], c[inside]]
+        free = int((cells == FREE).sum())
+        blocked = int((cells == OCCUPIED).sum())
+        return free, blocked, int(cells.size) - free - blocked
+
     def drivable_at(self, x_m: float, y_m: float) -> bool:
         """Free AND road: somewhere the van could actually put a wheel."""
         r, c = self.to_cell(x_m, y_m)

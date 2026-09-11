@@ -225,9 +225,15 @@ a low front camera. Not yet measured.
 FREE / OCCUPIED / UNKNOWN plus a separate ROAD-surface layer, with temporal memory (free
 believed ~0.5 s, blocked longer) and whole-square ego-motion compensation.
 
-Its only influence on driving is `blind_spot_ahead()` → `blind_spot_m` → a **speed cap** in
-`behavior.py`. It validates and slows; it does not generate paths. Planning still works off
-the route polyline and a corridor test.
+Its influence on driving is a **speed cap** (`blind_spot_ahead()` → `blind_spot_m` in
+`behavior.py`), the parking-spot check (`planning/parking_check.py`), and a **one-way second
+opinion** on things standing in the way: when every square of the ground the van's body is
+about to cover has been SEEN empty, a body the corridor check drew there is not believed
+(`planner.nothing_is_standing_there`, `OccupancyGrid.strip_ahead`, used in `main.py`). It
+validates, slows and unblocks; it does not generate paths, and it can never STOP the van on
+its own — occupied or unseen space ahead is not yet a reason to stop, and the decision is
+taken outside the planner's counted reasons, so `BLOCKED_OCCUPANCY` and `UNKNOWN_SPACE` are
+still never produced. Planning still works off the route polyline and a corridor test.
 
 **This is not "occupancy-based motion planning" and should not be described as such.**
 
@@ -320,6 +326,12 @@ faults.
   van is more than about 2.2 m from its planned route. Measured: with a barrel at 6 m the
   van detects it at every lateral offset and still reports a clear path. This caused a
   mailbox strike on a long route.
+* **Only a dead CAR is passed.** The go-around plans the path round a stopped vehicle and
+  slides the van's body along it before taking it (`planner.plan_overtake` +
+  `pull_in_blocker`, with moving traffic judged by `planner.overtake_blocker`, which also
+  looks behind). Anything else standing in the lane -- a box, a barrel, a cone -- stops the
+  van, which waits for an operator: measured 2026-09-11 with a 0.45 m barrel in the lane
+  (stopped 8.7 m short, waited until the test ended) and a box poking 0.15 m into it.
 * **Steering wander.** Full-lock steering for about 7% of one long run. The controller is a
   tuned pure-pursuit with a centreline correction term; a Stanley controller or MPC is the
   longer-term answer.
@@ -334,15 +346,19 @@ faults.
   268 readings). The near side comes out 0.04-0.19 m further from the van than CARLA's box
   (mirrors) -- covered by the 0.10 m pad. These figures are CARLA's; a real LiDAR must be
   measured again.
-* **Parking into a strip is not yet reliable.** The pull-in is gentle and ends straight
-  (see Recently resolved), but on 2026-09-11 the check made just before turning in -- the
-  planner's own swept-body test over the whole way in, `planner.pull_in_blocker` -- once
-  refused a free strip because of a lamp post on the pavement about 1 m beyond it, where the
-  van would have passed with about 0.6 m to spare; the next run into the same strip parked.
-  When a spot is refused the fallback can be a stop at the kerb edge of the DRIVING lane,
-  which blocks the lane: it should move on to the next spot, or the next street, instead.
-  Along the slot the van can finish near its ends (0.02 m to spare front/back once).
-  `ROAD_BOUNDARY` exists as a planner reason but is not produced yet.
+* **Parking into a strip depends on how the thing beside it was measured.** The pull-in is
+  gentle and ends straight (see Recently resolved). Twice on 2026-09-11 a free strip was
+  refused by street furniture beside it: a lamp post about 1 m beyond the strip, and a line
+  of kerbside furniture measured 6.3 x 0.84 m whose fitted rectangle (8.0 x 2.3 m, named a
+  vehicle by the camera) reached into the way in -- the second failed a mission 3.6 m short
+  of the spot. Two causes were fixed the same day (a fitted rectangle may no longer claim
+  more ground than the points it came from; the heading allowance is capped by a thing's own
+  shape), and the free-space second opinion above now carries the van past a body drawn on
+  ground the laser has seen empty: the same run then parked 0.2 m from the spot with no part
+  of the van in the driving lane. That is ONE proven run, not a reliability claim. When a
+  spot is refused the fallback can still be a stop at the kerb edge of the DRIVING lane,
+  which blocks the lane. Along the slot the van can finish near its ends (0.02 m to spare
+  front/back once). `ROAD_BOUNDARY` exists as a planner reason but is not produced yet.
 
 ---
 
