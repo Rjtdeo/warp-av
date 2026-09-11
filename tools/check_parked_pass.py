@@ -185,6 +185,9 @@ def main():
                       f"{(best[1] - ct0.rotation.yaw + 180) % 360 - 180:+.1f} deg to it", flush=True)
         t0 = time.time()
         passed_at = None
+        stopped_since = None
+        overtook = False
+        last_behaviour = None
         while time.time() - t0 < a.timeout:
             vt = van.get_transform()
             vy = math.radians(vt.rotation.yaw)
@@ -199,7 +202,13 @@ def main():
                 near = [o for o in objs if math.hypot(o["ego_x"] - tx, o["ego_y"] - ty) < 3.0]
                 o = min(near, key=lambda o: math.hypot(o["ego_x"] - tx, o["ego_y"] - ty)) if near else None
                 oid = o.get("id") if o else None
-                if oid is not None and oid == pl.get("blocker_id"):
+                in_lane = (rights[k] - car.bounding_box.extent.y) < lane_half - 0.3
+                if s.get("overtaking") and in_lane and tx > -12.0:
+                    verdict, rgb = "going round it (overtake)", (0, 200, 255)
+                elif oid is not None and oid == pl.get("blocker_id") and in_lane:
+                    waited = (time.time() - stopped_since) if stopped_since else 0.0
+                    verdict, rgb = f"stopped behind it: {waited:.0f} s (overtakes after 10 s)", (255, 120, 40)
+                elif oid is not None and oid == pl.get("blocker_id"):
                     verdict, rgb = "too close: stopping", (255, 60, 60)
                 elif oid is not None and oid == pl.get("passing_id"):
                     verdict, rgb = "passing slowly, with care", (255, 200, 0)
@@ -210,8 +219,11 @@ def main():
                 gap_now = gap(corners(vt, van.bounding_box.extent), corners(ct, car.bounding_box.extent))
                 if a.show and -12.0 < tx < 45.0:
                     room = rights[k] - car.bounding_box.extent.y - 0.994
+                    what = ("stopped car IN the lane" if in_lane else f"parked car: {room:.2f} m of room")
+                    if "static.prop" in a.car:
+                        what = "cone IN the lane" if "cone" in a.car else "object IN the lane"
                     world.debug.draw_string(carla.Location(ct.location.x, ct.location.y, ct.location.z + 2.3),
-                                            f"parked car: {room:.2f} m of room", draw_shadow=True,
+                                            what, draw_shadow=True,
                                             color=carla.Color(255, 255, 255), life_time=0.32)
                     world.debug.draw_string(carla.Location(ct.location.x, ct.location.y, ct.location.z + 1.8),
                                             f"van: {verdict}", draw_shadow=True,
@@ -235,9 +247,20 @@ def main():
                                                        - (abs(ty) - car.bounding_box.extent.y), 2)})
                 per_car[k].append(row)
                 rows.append(row)
+            if s["pose"]["speed"] < 0.2 and s.get("behavior", "").startswith("stopped"):
+                stopped_since = stopped_since or time.time()
+            else:
+                stopped_since = None
+            if s.get("overtaking") and not overtook:
+                overtook = True
+                print(f"t={time.time() - t0:.0f} s: overtake started", flush=True)
+            if s.get("behavior") != last_behaviour:
+                last_behaviour = s.get("behavior")
+                print(f"t={time.time() - t0:5.1f} s: {last_behaviour} -- {(s.get('behavior_reason') or '')[:70]}", flush=True)
             if a.show:
+                tag = "  OVERTAKING" if s.get("overtaking") else ""
                 world.debug.draw_string(carla.Location(vt.location.x, vt.location.y, vt.location.z + 3.4),
-                                        f"{s['pose']['speed']:.1f} m/s  {s.get('behavior')}", draw_shadow=True,
+                                        f"{s['pose']['speed']:.1f} m/s  {s.get('behavior')}{tag}", draw_shadow=True,
                                         color=carla.Color(255, 255, 255), life_time=0.32)
             last_tx = per_car[-1][-1]["truth"][0]
             if last_tx < -8.0 and passed_at is None:

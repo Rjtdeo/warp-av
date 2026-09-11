@@ -16,6 +16,9 @@ scenarios/results/*.jsonl
 !scenarios/results/REPORT.md
 .vercel
 sweep_out/
+# Working files from live tests and analysis (Rajat 2026-09-11: everything stays
+# inside warp-av, never on the desktop). Not part of the project.
+scratch/
 
 # The brains and recordings that matter are kept in the repo (small): the
 # rest of models/ and logs/ stay ignored.
