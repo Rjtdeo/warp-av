@@ -15,6 +15,8 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Optional, Tuple
 
+from warp_av.perception.motion_class import MotionMemory
+
 
 # ----------------------------------------------------------------------
 # Clustering
@@ -355,7 +357,7 @@ class Track:
                  "last_seen", "hits", "strong_hits",
                  "length_m", "width_m", "height_m", "yaw_deg",
                  "_history", "_still", "range_m", "_sizes", "size_uncertain",
-                 "cls_source", "_unnamed")
+                 "cls_source", "_unnamed", "motion")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -387,6 +389,8 @@ class Track:
         self.range_m = 0.0         # how far away it was last seen, for judging its wobble
         self._sizes = []           # the recent size sightings, to take a middle value from
         self.size_uncertain = False   # True when those sightings disagree badly
+        # can it move? dynamic until it has earned static (Planning V2, motion_class.py)
+        self.motion = MotionMemory()
 
     # ---- what the rest of the stack reads -------------------------------------------
     @property
@@ -610,6 +614,14 @@ def _note_size(tr: Track, o: dict) -> None:
     tr.size_uncertain = bool(spread > expected_size_spread_m(tr.range_m))
 
 
+def _note_motion(tr: "Track", o: dict, t: float) -> None:
+    """Static or dynamic, from this sighting: its shape, where it is, and whether anything
+    has ever named it a road user. A sighting that says nothing about it leaves it DYNAMIC."""
+    tr.motion.note(o.get("static_shapes") or (), o.get("road_gap_fn"),
+                   named=tr.cls is not None, stationary=tr.stationary,
+                   wx=tr.wx, wy=tr.wy, t=t)
+
+
 def expected_size_spread_m(range_m: float) -> float:
     """How much a thing's measured length is expected to wobble at that range, from the
     LiDAR's points spreading out. Beyond this, the sightings genuinely disagree."""
@@ -772,6 +784,7 @@ class ObjectTracker:
                 _forget_name(tr)
             _note_size(tr, o)
             _recheck_name(tr)
+            _note_motion(tr, o, t)
 
         for j in unmatched:
             o = observations[j]
@@ -786,6 +799,7 @@ class ObjectTracker:
                 tr.cls_source = o.get("cls_source", "shape")
                 tr.confidence = o.get("confidence", 0.5)
             _note_size(tr, o)
+            _note_motion(tr, o, t)
             self._next_id += 1
             self._tracks.append(tr)
 

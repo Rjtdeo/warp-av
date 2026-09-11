@@ -51,6 +51,7 @@ import carla  # noqa: E402
 from scratch_world import ScratchWorld  # noqa: E402
 from warp_av.adapters.carla_sensor_adapter import decode_lidar, LIDAR_ROTATION_HZ  # noqa: E402
 from warp_av.perception.ground_filter import GroundFilter, remove_road_edge_points  # noqa: E402
+from warp_av.perception.camera_lidar_perception import DEFAULT_KEEP_ABOVE_M  # noqa: E402
 from warp_av.perception.road_edges import find_road_edges  # noqa: E402
 from warp_av.perception.tracking import cluster_points, merge_split_clusters, MIN_POINTS_FAR  # noqa: E402
 
@@ -70,6 +71,14 @@ TAG_NAME = {**STATIC_TAGS, **DYNAMIC_TAGS, **ROAD_TAGS,
 MATCH_CELL_M = 0.05       # twin lookup: same ray means same point, so 5 cm is generous
 CLUSTER_CELL_M = 0.8      # the van's own (camera_lidar_perception.DEFAULT_CLUSTER_CELL_M)
 WEDGE_TICKS = 3           # 3 x 0.05 s at 10 Hz = 1.5 rotations: a full sweep with overlap
+# anywhere a vehicle can be. Town10HD draws its parking strips as SHOULDER lanes: 153 of
+# the 378 cars in the second recording sat on one, so leaving it out made them look
+# 'clear of the road'.
+DRIVABLE = (carla.LaneType.Driving | carla.LaneType.Parking | carla.LaneType.Bidirectional
+            | carla.LaneType.Shoulder | carla.LaneType.Biking)
+SETTLE_MIN_TICKS = 20     # 1 s: the drop, the bounce, and the walkers finding their feet
+SETTLE_MAX_TICKS = 80
+SETTLED_MPS = 0.02
 
 
 def category_of(tag: int) -> str:
@@ -130,11 +139,22 @@ def lidar_bp(bl, semantic: bool):
 # Town10HD's streets are empty unless something is spawned, so without this the answer key
 # holds buildings, poles and parked cars and not one person -- and "never call a person
 # static" is the boundary that matters most. So each viewpoint gets company.
+#
+# The first recording (8,687 blobs) showed where rules break: a car parked beside a lamp
+# post comes out as ONE blob, and borrows the post's height -- 3.8 m tall, so a "tall and
+# off the road means building" rule called 7 parked cars static. So the company now
+# includes exactly those hard cases: people and vehicles standing right beside poles,
+# trees and the building line, lorries and buses (tall, like a wall), and parked cars.
 WALKERS_PER_VIEW = 5
 VEHICLES_PER_VIEW = 3
+GLUED_WALKERS_PER_VIEW = 3        # beside a pole or a tree, touching distance
 TWO_WHEELERS = ("vehicle.bh.crossbike", "vehicle.diamondback.century", "vehicle.gazelle.omafiets",
                 "vehicle.harley-davidson.low_rider", "vehicle.kawasaki.ninja",
                 "vehicle.yamaha.yzf", "vehicle.vespa.zx125")
+BIG_VEHICLES = ("vehicle.carlamotors.carlacola", "vehicle.carlamotors.european_hgv",
+                "vehicle.carlamotors.firetruck", "vehicle.mitsubishi.fusorosa",
+                "vehicle.ford.ambulance", "vehicle.volkswagen.t2", "vehicle.volkswagen.t2_2021",
+                "vehicle.tesla.cybertruck")
 
 
 def _sidewalk_near(wp, max_hops: int = 4):
@@ -150,10 +170,42 @@ def _sidewalk_near(wp, max_hops: int = 4):
     return None
 
 
-def populate(sim, bl, wp, rng):
-    """People on the pavement and in the road, and a mix of vehicles and two-wheelers,
-    within about 25 m of the viewpoint. Everything is spawned through the sandbox, so
-    everything is destroyed again whatever happens."""
+def _lane_of_type_near(wp, lane_type, max_hops: int = 3):
+    for step in ("get_right_lane", "get_left_lane"):
+        cur = wp
+        for _ in range(max_hops):
+            cur = getattr(cur, step)()
+            if cur is None:
+                break
+            if cur.lane_type == lane_type:
+                return cur
+    return None
+
+
+def _offset(t, lat):
+    """A point `lat` metres to the right of a waypoint transform (left if negative)."""
+    yaw = math.radians(t.rotation.yaw)
+    return (t.location.x - math.sin(yaw) * lat, t.location.y + math.cos(yaw) * lat)
+
+
+def _four_wheelers(bl):
+    return [b for b in bl.filter("vehicle.*")
+            if int(b.get_attribute("number_of_wheels")) == 4 and "sprinter" not in b.id]
+
+
+def _things_near(things, x, y, lo, hi):
+    """Map objects (poles, trees) whose middle is between lo and hi metres from (x, y)."""
+    if things is None or not len(things):
+        return []
+    d = np.hypot(things[:, 0] - x, things[:, 1] - y)
+    return [things[i] for i in np.where((d > lo) & (d < hi))[0]]
+
+
+def populate(sim, bl, wp, rng, cmap=None, poles=None, trees=None):
+    """People on the pavement and in the road, a mix of vehicles and two-wheelers, and the
+    hard cases: people glued to poles and trees, a vehicle parked beside a pole, a lorry or
+    bus, a parked car -- all within about 25 m of the viewpoint. Everything is spawned
+    through the sandbox, so everything is destroyed again whatever happens."""
     made = []
     walker_bps = list(bl.filter("walker.pedestrian.*"))
     side = _sidewalk_near(wp)
@@ -166,18 +218,51 @@ def populate(sim, bl, wp, rng):
     road_ahead = wp.next(9.0)
     if road_ahead:
         spots.append((road_ahead[0], False))
-    for (w_, on_pavement) in spots[:WALKERS_PER_VIEW]:
+    for k, (w_, on_pavement) in enumerate(spots[:WALKERS_PER_VIEW]):
         t = w_.transform
-        lat = rng.uniform(-0.8, 0.8) if on_pavement else rng.uniform(-1.2, 1.2)
-        yaw = math.radians(t.rotation.yaw)
-        loc = carla.Location(t.location.x - math.sin(yaw) * lat,
-                             t.location.y + math.cos(yaw) * lat, t.location.z + 1.0)
-        a = sim.try_spawn(rng.choice(walker_bps),
-                          carla.Transform(loc, carla.Rotation(yaw=rng.uniform(0, 360))))
+        if on_pavement and k == 1:
+            # against the building line: the far edge of the pavement
+            lat = (w_.lane_width / 2.0 - 0.35) * (1 if rng.random() < 0.5 else -1)
+        else:
+            lat = rng.uniform(-0.8, 0.8) if on_pavement else rng.uniform(-1.2, 1.2)
+        x, y = _offset(t, lat)
+        a = sim.try_spawn(rng.choice(walker_bps), carla.Transform(
+            carla.Location(x, y, t.location.z + 1.0), carla.Rotation(yaw=rng.uniform(0, 360))))
         if a is not None:
             made.append(a)
+        if on_pavement and k == 2:
+            # a second person beside the first: two people chatting make one wide blob
+            x2, y2 = _offset(t, lat + 0.65)
+            b = sim.try_spawn(rng.choice(walker_bps), carla.Transform(
+                carla.Location(x2, y2, t.location.z + 1.0), carla.Rotation(yaw=rng.uniform(0, 360))))
+            if b is not None:
+                made.append(b)
+    # people glued to a pole or a tree: the merge that turns a person into "a tall thing"
+    vx, vy = wp.transform.location.x, wp.transform.location.y
+    glued = _things_near(poles, vx, vy, 5.0, 25.0)
+    rng.shuffle(glued)
+    glued_trees = _things_near(trees, vx, vy, 5.0, 25.0)
+    rng.shuffle(glued_trees)
+    targets = glued[:2] + glued_trees[:1]
+    for (px, py, pz, reach, _hz) in targets[:GLUED_WALKERS_PER_VIEW]:
+        ground_z = wp.transform.location.z
+        if cmap is not None:
+            g = cmap.get_waypoint(carla.Location(px, py, pz), project_to_road=True,
+                                  lane_type=carla.LaneType.Sidewalk)
+            if g is not None:
+                ground_z = g.transform.location.z
+        for _try in range(3):
+            ang = rng.uniform(0, 2 * math.pi)
+            r = reach + rng.uniform(0.35, 0.6)
+            a = sim.try_spawn(rng.choice(walker_bps), carla.Transform(
+                carla.Location(px + r * math.cos(ang), py + r * math.sin(ang), ground_z + 1.0),
+                carla.Rotation(yaw=rng.uniform(0, 360))))
+            if a is not None:
+                made.append(a)
+                break
     # vehicles: in the next lane and behind/ahead in our own, some two-wheelers among them
     lanes = [wp.get_left_lane(), wp.get_right_lane(), wp]
+    fours = _four_wheelers(bl)
     for k in range(VEHICLES_PER_VIEW):
         lane = lanes[k % len(lanes)]
         if lane is None or lane.lane_type != carla.LaneType.Driving:
@@ -187,17 +272,73 @@ def populate(sim, bl, wp, rng):
             continue
         t = ahead[0].transform
         name = rng.choice(TWO_WHEELERS) if rng.random() < 0.5 else None
-        bps = bl.filter(name) if name else [b for b in bl.filter("vehicle.*")
-                                            if int(b.get_attribute("number_of_wheels")) == 4
-                                            and "sprinter" not in b.id]
+        bps = list(bl.filter(name)) if name else fours
         if not bps:
             continue
-        a = sim.try_spawn(rng.choice(list(bps)),
-                          carla.Transform(carla.Location(t.location.x, t.location.y,
-                                                         t.location.z + 0.4), t.rotation))
+        a = sim.try_spawn(rng.choice(bps), carla.Transform(
+            carla.Location(t.location.x, t.location.y, t.location.z + 0.4), t.rotation))
         if a is not None:
             made.append(a)
+    # a lorry or a bus: as tall as a shop front, and it still drives off
+    big = [b for n in BIG_VEHICLES for b in bl.filter(n)]
+    lane = rng.choice([l for l in lanes if l is not None and l.lane_type == carla.LaneType.Driving] or [wp])
+    ahead = lane.next(rng.uniform(10.0, 26.0))
+    if big and ahead:
+        t = ahead[0].transform
+        # pulled over against the kerb half the time: that is where a delivery lorry stops
+        lat = (lane.lane_width / 2.0) * 0.6 * (1 if rng.random() < 0.5 else 0)
+        x, y = _offset(t, lat)
+        a = sim.try_spawn(rng.choice(big), carla.Transform(
+            carla.Location(x, y, t.location.z + 0.5), t.rotation))
+        if a is not None:
+            made.append(a)
+    # a parked car: in a parking lane if the street has one, else tight against the kerb
+    park = _lane_of_type_near(wp, carla.LaneType.Parking)
+    base = park or wp
+    ahead = base.next(rng.uniform(6.0, 22.0))
+    if fours and ahead:
+        t = ahead[0].transform
+        lat = 0.0 if park is not None else (base.lane_width / 2.0 - 1.05)
+        x, y = _offset(t, lat)
+        a = sim.try_spawn(rng.choice(fours), carla.Transform(
+            carla.Location(x, y, t.location.z + 0.4), t.rotation))
+        if a is not None:
+            made.append(a)
+    # a car parked right beside a lamp post: the exact blob that fooled the first rules
+    if fours and cmap is not None:
+        near_road = []
+        for (px, py, pz, reach, _hz) in _things_near(poles, vx, vy, 6.0, 24.0):
+            d = cmap.get_waypoint(carla.Location(px, py, pz), project_to_road=True,
+                                  lane_type=carla.LaneType.Driving)
+            if d is None:
+                continue
+            off = math.hypot(px - d.transform.location.x, py - d.transform.location.y)
+            if off < d.lane_width / 2.0 + 2.5:
+                near_road.append((d, px, py, off))
+        rng.shuffle(near_road)
+        for (d, px, py, off) in near_road[:1]:
+            t = d.transform
+            yaw = math.radians(t.rotation.yaw)
+            # which side of the lane centre the pole is on
+            right = (-math.sin(yaw)) * (px - t.location.x) + math.cos(yaw) * (py - t.location.y)
+            sign = 1.0 if right > 0 else -1.0
+            lat = sign * max(0.0, off - 1.0 - 0.45)
+            x, y = _offset(t, lat)
+            a = sim.try_spawn(rng.choice(fours), carla.Transform(
+                carla.Location(x, y, t.location.z + 0.4), t.rotation))
+            if a is not None:
+                made.append(a)
     return made
+
+
+def map_things(world, label):
+    """(x, y, z, reach) of every map object with this label; reach = its half-size."""
+    out = []
+    for o in world.get_environment_objects(label):
+        bb = o.bounding_box
+        out.append((bb.location.x, bb.location.y, bb.location.z, max(bb.extent.x, bb.extent.y),
+                    bb.extent.z))
+    return np.array(out, dtype=float) if out else np.zeros((0, 5))
 
 
 def viewpoints(cmap, n: int, seed: int):
@@ -224,6 +365,8 @@ def main():
 
     rows = []
     match_hits = match_total = 0
+    edge_errors = collections.Counter()
+    edge_sides = 0
     t_start = time.time()
     with ScratchWorld(fixed_dt=0.05) as sim:
         w = sim.world
@@ -233,7 +376,13 @@ def main():
         spots = viewpoints(cmap, a.viewpoints, a.seed)
         print(f"{len(spots)} viewpoints across {cmap.name}")
         mount = carla.Transform(carla.Location(x=0.0, z=2.5))
-        gf = GroundFilter()
+        # exactly the van's road filter: it keeps points 8 cm up, not the class default 12 cm
+        gf = GroundFilter(keep_above_m=DEFAULT_KEEP_ABOVE_M)
+        poles = map_things(w, carla.CityObjectLabel.Poles)
+        trees = map_things(w, carla.CityObjectLabel.Vegetation)
+        # trees: taller than a person, and not a hedge or a patch of grass
+        trees = trees[(trees[:, 3] < 3.0) & (trees[:, 4] > 1.5)] if len(trees) else trees
+        print(f"{len(poles)} poles and {len(trees)} trees on the map to stand people beside")
 
         for vi, wp in enumerate(spots):
             t = wp.transform
@@ -241,14 +390,23 @@ def main():
                 carla.Location(t.location.x, t.location.y, t.location.z + 0.3), t.rotation))
             if van is None:
                 continue
-            company = populate(sim, bl, wp, random.Random(a.seed * 1000 + vi))
+            company = populate(sim, bl, wp, random.Random(a.seed * 1000 + vi),
+                               cmap=cmap, poles=poles, trees=trees)
             plain = sim.spawn(lidar_bp(bl, False), mount, attach_to=van)
             label = sim.spawn(lidar_bp(bl, True), mount, attach_to=van)
             got_p, got_l = [], []
             plain.listen(lambda m: got_p.append(decode_lidar(m)))
             label.listen(lambda m: got_l.append(decode_semantic(m)))
-            for _ in range(4):                     # settle the suspension
+            # Settle before recording. The van is dropped from 30 cm and a 30 cm fall alone
+            # takes 0.25 s, so the first version's 4 ticks (0.2 s) recorded a van still in
+            # the air or bouncing: the road smeared across the wedges and no kerb line was
+            # ever found. Wait until it has truly stopped moving.
+            for k in range(SETTLE_MAX_TICKS):
                 sim.tick()
+                if k >= SETTLE_MIN_TICKS:
+                    v = van.get_velocity()
+                    if math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z) < SETTLED_MPS:
+                        break
             got_p.clear(); got_l.clear()
             for _ in range(WEDGE_TICKS):
                 sim.tick()
@@ -271,13 +429,21 @@ def main():
             heights = ground.above[mask]
             try:
                 edges = find_road_edges(pts[:, :2], ground.above)
-            except Exception:
+            except Exception as e:
                 edges = None
+                edge_errors[repr(e)[:120]] += 1
+            if edges is not None:
+                edge_sides += sum(1 for sd in (edges.left, edges.right)
+                                  if sd is not None and sd.confident)
             sel, heights, _dropped = remove_road_edge_points(sel, heights, cluster_points, edges=edges)
             clusters = cluster_points(sel[:, :2].tolist(), heights=heights.tolist(),
                                       cell=CLUSTER_CELL_M, min_points_far=MIN_POINTS_FAR,
                                       return_members=True)
             clusters = merge_split_clusters(clusters)
+            # the van drops these too: a 2-point blob, low and beside the lane, is a kerb crumb
+            clusters = [c for c in clusters
+                        if not (c.get("weak") and (c.get("height") is not None and c["height"] < 0.30)
+                                and abs(c["y"]) > 1.2)]
 
             # ---- the answer key -----------------------------------------------------------
             twins = TwinIndex(lab)
@@ -304,11 +470,41 @@ def main():
                 on_road = cmap.get_waypoint(carla.Location(wx, wy, vt.location.z),
                                             project_to_road=False,
                                             lane_type=carla.LaneType.Driving) is not None
+                here = cmap.get_waypoint(carla.Location(wx, wy, vt.location.z),
+                                         project_to_road=False, lane_type=carla.LaneType.Any)
+                lane_here = str(here.lane_type) if here is not None else "none"
                 kerb_gap = None
+                kerb_beyond = None
                 if edges is not None:
                     side = edges.right if c["y"] > 0 else edges.left
                     if side is not None and getattr(side, "confident", False):
                         kerb_gap = abs(c["y"] - side.lateral_at(c["x"]))
+                        # signed, from the blob's innermost point: + = beyond the kerb
+                        # (pavement side), - = some of it is inside the road
+                        mp = sel[members]
+                        edge_y = np.array([side.lateral_at(float(px)) for px in mp[:, 0]])
+                        s_i = (mp[:, 1] - edge_y) if c["y"] > 0 else (edge_y - mp[:, 1])
+                        kerb_beyond = float(np.min(s_i))
+                # how far its nearest point is from anywhere a vehicle can be (DRIVABLE).
+                # + = that far clear of it; 0 or - = on it.
+                mp = sel[members]
+                pick = mp if len(mp) <= 24 else mp[np.linspace(0, len(mp) - 1, 24).astype(int)]
+                gaps = []
+                for (px, py) in pick[:, :2]:
+                    gx = vt.location.x + cy * px - sy * py
+                    gy = vt.location.y + sy * px + cy * py
+                    g = cmap.get_waypoint(carla.Location(float(gx), float(gy), vt.location.z),
+                                          project_to_road=True, lane_type=DRIVABLE)
+                    if g is not None:
+                        gl = g.transform.location
+                        gaps.append(math.hypot(gx - gl.x, gy - gl.y) - g.lane_width / 2.0)
+                road_gap = min(gaps) if gaps else float("nan")
+                # merge-proof height: how the points are spread up the blob, not just its
+                # tallest one (one lamp-post point made a parked car "3.8 m tall")
+                hm = heights[members]
+                hm = hm[np.isfinite(hm)]
+                hq = np.percentile(hm, [10, 50, 90]) if len(hm) else [float("nan")] * 3
+                frac_high = float(np.mean(hm > 2.0)) if len(hm) else float("nan")
                 rows.append(dict(
                     view=vi, road_id=int(wp.road_id), junction=bool(wp.is_junction),
                     x=float(c["x"]), y=float(c["y"]), distance=float(math.hypot(c["x"], c["y"])),
@@ -317,6 +513,10 @@ def main():
                     yaw_deg=float(c.get("yaw_deg") or 0.0), n=int(c["n"]), weak=bool(c.get("weak")),
                     lane_half_width=float(lane_w / 2.0), on_road=bool(on_road),
                     kerb_gap=float("nan") if kerb_gap is None else float(kerb_gap),
+                    kerb_beyond=float("nan") if kerb_beyond is None else kerb_beyond,
+                    lane_here=lane_here, road_gap=float(road_gap),
+                    h_q10=float(hq[0]), h_q50=float(hq[1]), h_q90=float(hq[2]),
+                    frac_high=frac_high, wx=float(wx), wy=float(wy),
                     tag=int(tag), tag_name=TAG_NAME.get(int(tag), f"tag{tag}"),
                     category=category_of(int(tag)), purity=float(votes / len(tags)),
                     tags_seen=json.dumps({TAG_NAME.get(k, str(k)): v for k, v in count.most_common(3)})))
@@ -340,6 +540,7 @@ def main():
     print(f"twin match rate: {100.0 * match_hits / max(1, match_total):.1f}% of points")
     print("by category:", dict(cats))
     print("by class   :", dict(names.most_common(14)))
+    print(f"kerb lines found: {edge_sides} confident sides; errors: {dict(edge_errors) or 'none'}")
 
 
 if __name__ == "__main__":

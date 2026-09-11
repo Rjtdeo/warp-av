@@ -64,6 +64,12 @@ class DetectedObject:
     # how much room to leave around it: what was measured, but never less than the kind of
     # thing deserves, because a small person can still step sideways without warning
     clearance_radius_m: float = 0.4
+    # can it move? "dynamic" until the van has earned "static" -- shape, place, time, and no
+    # road-user name ever (Planning V2, perception/motion_class.py). static_rule says which
+    # rule earned it: "pole", "structure" or "low". Static IN the path still blocks.
+    motion_class: str = "dynamic"
+    static_rule: str = ""
+    motion_why: str = ""        # why it is what it is, in words ("moving", "named a road user", ...)
     timestamp: float = field(default_factory=time.time)
 
 

@@ -61,6 +61,10 @@ class WorldObject:
     size_uncertain: bool = False       # recent sightings disagreed about how big it is
     clearance_radius_m: float = 0.4    # room to leave around it, never less than its kind needs
     age_s: float = 0.0                 # how old the sighting behind this is
+    # can it move? "dynamic" until perception has earned "static" (perception/motion_class.py)
+    motion_class: str = "dynamic"
+    static_rule: str = ""
+    motion_why: str = ""
 
     @property
     def is_vehicle(self) -> bool:
@@ -113,6 +117,8 @@ class WorldObject:
             "confidence": round(self.confidence, 2), "age_s": round(self.age_s, 2),
             "size_uncertain": self.size_uncertain,
             "clearance_radius_m": round(self.clearance_radius_m, 2),
+            "motion_class": self.motion_class, "static_rule": self.static_rule,
+            "motion_why": self.motion_why,
         }
 
 
@@ -223,7 +229,8 @@ class WorldModel:
                            "moving": len(self.moving_objects()),
                            "vehicles": len(self.of_kind(ObjectType.VEHICLE)),
                            "pedestrians": len(self.of_kind(ObjectType.PEDESTRIAN)),
-                           "cyclists": len(self.of_kind(ObjectType.CYCLIST))},
+                           "cyclists": len(self.of_kind(ObjectType.CYCLIST)),
+                           "static": sum(1 for o in self.objects if o.motion_class == "static")},
                 "objects": [o.as_dict() for o in self.objects]}
 
 
@@ -263,6 +270,9 @@ def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_
             size_uncertain=bool(getattr(o, "size_uncertain", False)),
             clearance_radius_m=float(getattr(o, "clearance_radius_m", 0.4)),
             age_s=max(0.0, now - float(getattr(o, "timestamp", now) or now)),
+            motion_class=str(getattr(o, "motion_class", "dynamic") or "dynamic"),
+            static_rule=str(getattr(o, "static_rule", "") or ""),
+            motion_why=str(getattr(o, "motion_why", "") or ""),
         ))
 
     closest = perception.closest_obstacle_distance

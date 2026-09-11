@@ -43,6 +43,8 @@ from .camera_model import (CameraModel, camera_models, box_contains, box_edges, 
                            cluster_point, ground_point)
 from .occupancy import OccupancyGrid
 from .road_edges import RoadEdges, find_road_edges
+from .motion_class import (carla_road_gap, high_share, sample_for_gap, shape_rules,
+                           static_dynamic_wanted, STATIC)
 from .ground_filter import ROAD_EDGE_MIN_CENTRE_LATERAL_M
 from .detection_worker import DetectionWorker, yolox_inline_from_env
 from .tracking import (cluster_points, clearance_radius_m, merge_split_clusters,
@@ -780,6 +782,14 @@ class CameraLidarPerception:
         # v2: multi-object tracking in world frame (ids + speeds).
         self.tracker = ObjectTracker()
         self.last_track_count = 0
+        # Planning V2: static or dynamic. Needs the map for "how far from the nearest lane",
+        # read once on the first sweep. WARP_STATIC_DYNAMIC=0 labels everything dynamic.
+        self.static_dynamic = static_dynamic_wanted()
+        self._road_gap = None
+        self._road_gap_tried = False
+        self.last_static_count = 0
+        self.last_static_candidates = 0
+        self.last_static_by_rule = {}
 
         # Perception fix 2: road removal by local patches instead of the flat
         # 35 cm line above. WARP_GROUND_FILTER=flat restores the old line.
@@ -931,6 +941,7 @@ class CameraLidarPerception:
             # Pass 2: everything that is left
             xy = sel[:, :2]
             clusters = cluster_points(xy.tolist(), heights=heights.tolist(), cell=self.cluster_cell_m,
+                                      return_members=self.static_dynamic,    # static or dynamic reads them
                                       min_points_far=MIN_POINTS_FAR, far_range_m=self.far_range_m)
             self.last_clusters_before_cap = _tracking.LAST_CLUSTER_TOTAL
             # one thing seen as two: put it back together (day 10 follow-up)
@@ -1028,9 +1039,28 @@ class CameraLidarPerception:
             yaw = math.radians(tf.rotation.yaw)
             cy, sy = math.cos(yaw), math.sin(yaw)
             ex0, ey0 = tf.location.x, tf.location.y
+            road_gap = self._road_gap_reader() if self.static_dynamic else None
+            candidates = 0
             observations = []
             for c in clusters:
+                # Static or dynamic (Planning V2): the shape check is cheap and runs on every
+                # blob; only a blob whose shape fits a rule gets a lookup on the map, and even
+                # then only when its track asks (once, then reused -- see motion_class.py).
+                shapes, gap_fn = (), None
+                members = c.pop("members", None)
+                if road_gap is not None and members:
+                    idx = np.asarray(members, dtype=int)
+                    shapes = shape_rules(c.get("height") or 0.0,
+                                         max(c.get("length_m", 0.0), c.get("width_m", 0.0)),
+                                         high_share(heights[idx]), c["n"])
+                    if shapes:
+                        candidates += 1
+                        pts = sample_for_gap(sel[idx, :2])
+                        wpts = [(ex0 + px * cy - py * sy, ey0 + px * sy + py * cy) for px, py in pts]
+                        gap_fn = (lambda w=wpts, z=tf.location.z: road_gap.gap_m(w, z))
                 observations.append({
+                    "static_shapes": shapes,
+                    "road_gap_fn": gap_fn,
                     "wx": ex0 + c["x"] * cy - c["y"] * sy,
                     "wy": ey0 + c["x"] * sy + c["y"] * cy,
                     "cls": c["cls"],
@@ -1044,6 +1074,7 @@ class CameraLidarPerception:
                     "yaw_deg": c.get("yaw_deg", 0.0),
                 })
             tracks = self.tracker.update(observations, now)
+            self.last_static_candidates = candidates
 
             # ---- tracks -> DetectedObjects (back to ego frame) ----
             objects = []
@@ -1079,6 +1110,9 @@ class CameraLidarPerception:
                     size_uncertain=bool(getattr(tr, "size_uncertain", False)),
                     clearance_radius_m=clearance_radius_m(tr.cls, getattr(tr, "length_m", 0.0),
                                                           getattr(tr, "width_m", 0.0)),
+                    motion_class=tr.motion.state,
+                    static_rule=(tr.motion.rule or "") if tr.motion.is_static else "",
+                    motion_why=tr.motion.why,
                     id=tr.tid, timestamp=now))
 
             # ---- simple forward in-path summary (route corridor refines) ----
@@ -1096,6 +1130,12 @@ class CameraLidarPerception:
                         path_blocked = True
 
             self.last_track_count = len(objects)
+            by_rule = {}
+            for obj in objects:
+                if obj.motion_class == STATIC:
+                    by_rule[obj.static_rule] = by_rule.get(obj.static_rule, 0) + 1
+            self.last_static_count = sum(by_rule.values())
+            self.last_static_by_rule = by_rule
             output = PerceptionOutput(
                 objects=objects,
                 closest_obstacle_distance=closest_dist,
@@ -1444,6 +1484,18 @@ class CameraLidarPerception:
         right = -dx * sa + dy * ca
         turned = (tf.rotation.yaw - lyaw + 180.0) % 360.0 - 180.0
         return (forward, right, turned)
+
+    def _road_gap_reader(self):
+        """How far things are from the nearest lane, from CARLA's map -- read once. Without a
+        map (a replay, a fake sensor) there is no answer, and nothing is ever called static."""
+        if not self._road_gap_tried:
+            self._road_gap_tried = True
+            try:
+                self._road_gap = carla_road_gap(self.sensor_adapter.vehicle.get_world().get_map())
+            except Exception as e:
+                self._road_gap = None
+                self.last_road_gap_error = repr(e)
+        return self._road_gap
 
     def _sits_on_the_kerb(self, cluster) -> bool:
         """Is this low blob just a chip of the kerb the van has already found?

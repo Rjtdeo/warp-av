@@ -129,7 +129,9 @@ def test_it_can_be_written_out_for_the_web_page():
                          path_blocked=True, closest_obstacle_distance=10.0,
                          closest_obstacle_type=ObjectType.VEHICLE, closest_obstacle_speed=3.0)
     d = build_world_model(p, pose(x=20.0, y=30.0)).as_dict()
-    assert d["counts"] == {"total": 1, "moving": 1, "vehicles": 1, "pedestrians": 0, "cyclists": 0}
+    assert d["counts"] == {"total": 1, "moving": 1, "vehicles": 1, "pedestrians": 0, "cyclists": 0,
+                           "static": 0}
+    assert d["objects"][0]["motion_class"] == "dynamic", "everything starts dynamic"
     assert d["objects"][0]["stationary"] is False and d["objects"][0]["type"] == "vehicle"
     assert d["path"]["blocked"] is True and d["van"]["x"] == 20.0
     import json

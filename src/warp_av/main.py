@@ -934,6 +934,8 @@ class WarpAV:
                         # is it parked, or is it going somewhere? (Perception V2 day 6)
                         "stationary": bool(getattr(obj, "stationary", True)),
                         "speed": round(getattr(obj, "speed", 0.0), 2),
+                        # can it move at all? (Planning V2, perception/motion_class.py)
+                        "motion_class": getattr(obj, "motion_class", "dynamic"),
                     }
                     for obj in perception.objects
                 ]),
@@ -983,6 +985,16 @@ class WarpAV:
                                     if self.camera_lidar_perception is not None else "n/a"),
                 "clusters": int(len(getattr(self.camera_lidar_perception, "last_clusters", []) or [])),
                 "clusters_before_cap": int(getattr(self.camera_lidar_perception, "last_clusters_before_cap", 0) or 0),
+                # Planning V2: static or dynamic -- how many things earned "static", by which
+                # rule, how many blobs this sweep had a static SHAPE, and the map lookups spent
+                "static_dynamic": ({
+                    "on": bool(getattr(self.camera_lidar_perception, "static_dynamic", False)),
+                    "static": int(getattr(self.camera_lidar_perception, "last_static_count", 0) or 0),
+                    "by_rule": dict(getattr(self.camera_lidar_perception, "last_static_by_rule", {}) or {}),
+                    "shape_candidates": int(getattr(self.camera_lidar_perception, "last_static_candidates", 0) or 0),
+                    "map_lookups": int(getattr(getattr(self.camera_lidar_perception, "_road_gap", None),
+                                               "lookups", 0) or 0),
+                } if self.camera_lidar_perception is not None else None),
             },
 
             "mission": self.mission_manager.get_status(),

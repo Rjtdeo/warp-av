@@ -95,6 +95,13 @@ def _could_use_a_road(obj) -> bool:
     thing this shape be going this FAST -- asked of everything, because a reading of 12 m/s
     from something the size of a post is not a fast post, it is a wrong reading.
     """
+    # A thing perception has shown cannot move -- a pole, a building front, a kerb, earned
+    # over several sightings and never once named a road user (perception/motion_class.py)
+    # -- is not going to step or pull into our path. It still blocks if it is IN the path:
+    # that is the corridor's job, not this one.
+    if getattr(obj, "motion_class", "dynamic") == "static":
+        return False
+
     kind = getattr(getattr(obj, "object_type", None), "value", str(getattr(obj, "object_type", "")))
     height, width, length = _size(obj, "height_m"), _size(obj, "width_m"), _size(obj, "length_m")
 
