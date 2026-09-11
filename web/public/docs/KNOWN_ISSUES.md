@@ -189,6 +189,11 @@ The left, right, rear and top views are stored (`latest_frames`) and used for de
 but **no health check runs on them**. A blinded side camera silently stops contributing
 labels and nothing reports it.
 
+The stuck-patch rule only counts a patch that is frozen solid (`TILE_FROZEN_BELOW`, under
+0.10 change between frames). In CARLA a drop on the glass freezes its patch at exactly 0.00
+and plain sky never does; a real camera's sensor noise never reads 0.00, so this number has
+to be measured again on real hardware before it means anything there.
+
 **Planned resolution.** Run the same picture checks on every perception camera and name
 the failing view in the report.
 
@@ -318,6 +323,18 @@ faults.
   pragmatic policy that needs review before real roads.
 * **Yellow is always a stop.** The distance to the line is now known, so dilemma-zone
   handling is possible, but is not implemented.
+* **The van will not pass a car parked on the shoulder.** Measured live 2026-09-10: a car
+  parked on a Town10HD shoulder lane, its centre 2.5-2.6 m from the route line, held the van
+  for over two minutes (`blocked_swept_path`). The LiDAR sees only the car's near side, so its
+  measured middle sits nearer the lane than the car really is, and the swept-path rule (on by
+  default since 2026-09-10) judges that the van would touch it. There is no pass-with-care or
+  overtake behaviour to fall back on.
+* **The van can stall at a destination beside the kerb.** In the parking approach it stops
+  for a low (0.14-0.15 m) piece of kerb 0.6-1.6 m from its path line -- correctly labelled
+  static -- and waits there (`blocked_swept_path` or `blocked_tracked_object`); 4 of 5
+  pedestrian scenarios on 2026-09-10 ended this way, the fifth behind a vehicle parked 2.4 m
+  from the path. The road edge is treated as an obstacle; `ROAD_BOUNDARY` exists as a planner
+  reason but is not produced yet.
 
 ---
 
@@ -338,6 +355,13 @@ Real, but not perception or safety faults.
 * **CARLA host/port, vehicle type and sensor configuration are partly hardcoded** in the
   adapters rather than fully driven by config.
 * **Pedestrian-versus-obstacle tie-breaking at equal range depends on iteration order.**
+* **Stopping the stack's scheduled task does not stop the stack.** `schtasks /End` ends
+  `start_stack.bat` but not the `python run.py` it started; the next `schtasks /Run` then
+  fails quietly while the old stack keeps running old code. Stop the python process itself.
+  A stopped or killed stack also leaves its van's sensors in the world -- CARLA does not
+  remove a sensor with the thing it rides on (81 sensors, 45 of them cameras still rendering,
+  found 2026-09-10). `tools/clear_leftover_vans.py --remove --sensors` clears them
+  (`--stack-down` when the stack is stopped on purpose).
 
 ### Scenario runner
 
@@ -385,6 +409,13 @@ Kept short deliberately; this is not a history file.
   following works in camera mode.
 * **Sensor health is wired to the safety supervisor** and produces degraded-speed and stop
   behaviour, including picture-quality faults (dark, frozen, covered, rain-blocked tiles).
+* **Plain sky no longer reads as "something on the lens".** A clean front camera was called
+  broken for 18-75 % of daytime driving (the sky, and the far end of the road, hardly change
+  while driving), and each time the safety supervisor slowed the van to 2 m/s and then
+  stopped it -- it failed every pedestrian scenario before the pedestrian was reached. A patch
+  now also has to be frozen solid. Measured on 3,512 front-camera frames in 8 drives: clean
+  lens 0 %, five drops still caught on 99 % of the driving, one drop 1 % (was 87 %); live, five
+  drops were caught in 0.8 s and a clean 15 s drive gave 0 of 55 alarms.
 * **Fault injection works in camera mode** (`camera_covered`, `camera_blanked`,
   `camera_frozen`, `camera_drops`, `lidar_dead_beams`).
 * **Traffic lights are read from the camera in camera mode**, using map-provided lamp
