@@ -24,6 +24,7 @@ import sys
 import signal
 import threading
 import math
+from collections import Counter
 import json
 import carla
 import cv2
@@ -66,6 +67,7 @@ from .perception.bay_finder import why_no_kerb
 
 from .world_model import build_world_model
 from .perception.traffic_lights import SignalMap, TrafficLightLookahead, carla_state_source
+from .perception.road_signs import read_signs, signs_on_route, next_sign
 from .perception.light_camera import CameraLightReader, LampMap, camera_lights_wanted
 from .sensor_health import HealthMonitor, read_sensors
 
@@ -205,6 +207,11 @@ class WarpAV:
                 return _sim(light_id)
 
             self._signal_lookahead = TrafficLightLookahead(smap, state_source=light_colour)
+            # ...and the signs on the same map: stop and give-way (perception/road_signs.py)
+            self._signs = read_signs(self.vehicle_adapter.get_map())
+            kinds = Counter(sign.kind for sign in self._signs)
+            print(f"[Signs] {kinds.get('stop', 0)} stop and {kinds.get('give_way', 0)} give-way "
+                  f"lanes read from the map")
             lanes = sum(len(s.lanes) for s in smap.signals.values())
             lined = sum(len(s.lines) for s in smap.signals.values())
             print(f"[Signals] {len(smap)} traffic lights read from the map "
@@ -212,6 +219,7 @@ class WarpAV:
         except Exception as e:
             self._signal_lookahead = None
             self._light_reader = None
+            self._signs = []
             print(f"[Signals] could not read the map's traffic lights: {e}")
         # Planning V2: swept-path blocking, OFF by default. The van's real size
         # is read from the CARLA bounding box (fallback 2.96 x 0.99 m).
@@ -300,6 +308,28 @@ class WarpAV:
 
         print("[Init] All systems ready!")
         print("=" * 60)
+
+    def _signs_ahead(self, pose):
+        """(bumper to the next sign's line, its kind, which one it is) or (None, None, None).
+
+        The signs on this route are matched once, when the route is made; only "how far to the
+        next one" is worked out each tick."""
+        if not self._route or not getattr(self, "_signs", None):
+            return (None, None, None)
+        if getattr(self, "_signs_route", None) is not self._route.waypoints:
+            self._signs_route = self._route.waypoints
+            self._signs_on_route = signs_on_route(self._signs, self._route.waypoints)
+        if not self._signs_on_route:
+            return (None, None, None)
+        total = sum(math.hypot(b.x - a.x, b.y - a.y)
+                    for a, b in zip(self._route.waypoints, self._route.waypoints[1:]))
+        along_now = total - self.planner.route_left_m(self._route, pose.x, pose.y)
+        found = next_sign(self._signs_on_route, along_now)
+        if found is None:
+            return (None, None, None)
+        gap, sign = found
+        return (gap - self.behavior.front_offset_m, sign.kind,
+                (sign.road_id, sign.lane_id, round(sign.x, 1), round(sign.y, 1)))
 
     def _forget_the_manoeuvre(self):
         """A pass belongs to the mission it was begun in. A mission cancelled mid-pass used to
@@ -757,6 +787,10 @@ class WarpAV:
 
         _phase("prediction")
 
+        try:
+            sign_m, sign_kind, sign_at = self._signs_ahead(pose)
+        except Exception:
+            sign_m, sign_kind, sign_at = (None, None, None)
         behavior_output = self.behavior.update(
             perception=perception,
             world=self._world,                 # day 7: the one sheet of what the van knows
@@ -773,6 +807,9 @@ class WarpAV:
             light_id=(signal.light_id if signal is not None else None),
             speed_limit_mps=self._speed_limit_mps(pose),
             seen_ahead_m=self._seen_ahead_m(),
+            sign_m=sign_m, sign_kind=sign_kind, sign_at=sign_at,
+            junction_span=(self.planner.junction_span(self._route, pose.x, pose.y)
+                           if self._route else None),
         )
 
         # Every change of what the van is doing goes in the mission log, so a drive can be
@@ -1218,6 +1255,8 @@ class WarpAV:
             "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers),
                         "parked_cars": len(getattr(self, "_parked_cars", []))},
             "signal_ahead": (self._signal_ahead.as_dict() if self._signal_ahead is not None else None),
+            "road_sign": ({"kind": sign_kind, "to_line_m": round(sign_m, 1), "at": sign_at}
+                          if sign_kind is not None and sign_m is not None else None),
             "signal_lookahead": (self._signal_lookahead.as_dict()
                                  if self._signal_lookahead is not None else None),
             "light_colour_from": ("camera" if self._light_reader is not None else "simulator"),

@@ -22,11 +22,13 @@ from typing import Optional
 
 from ..perception.perception import PerceptionOutput, ObjectType, VULNERABLE_TYPES
 from ..localization.localization import Pose, LocalizationQuality
+from ..perception.road_signs import STOP, GIVE_WAY
 from .transitions import (TransitionLog, SAFETY_HOLD, LOCALIZATION_LOST, PERCEPTION_LOST,
                           NO_MISSION, VRU_IN_PATH, VEHICLE_IN_PATH, OBSTACLE_IN_PATH,
                           ROUTE_BLOCKED_TOO_LONG, CONFIRMING_CLEAR, FOLLOWING_LEAD,
                           OBJECT_AHEAD_SLOW, ROUTE_CLEAR, PREDICTED_CROSSER_STOP,
                           PREDICTED_CROSSER_SLOW, LIGHT_ROLL_UP, LIGHT_HOLD,
+                          SIGN_ROLL_UP, SIGN_STOP_HOLD, SIGN_GIVE_WAY, JUNCTION_KEEP_CLEAR,
                           JUNCTION_ROLL_UP, JUNCTION_PAUSE, JUNCTION_GIVE_WAY,
                           JUNCTION_TIMEOUT, DESTINATION_NEAR, PARKING_PULL_IN, PARKED,
                           PARKED_OVERSHOT)
@@ -65,6 +67,15 @@ EASE_OFF_MPS = 0.35
 #: Colours that mean "do not go". UNKNOWN is deliberately one of them: at a stop line we
 #: know about, not being able to read the light is never permission.
 LIGHT_MEANS_STOP = ("red", "yellow", "unknown")
+
+
+#: The front bumper stops this far short of a sign's line, rolls up to it below this much
+#: more, and counts as stopped below this speed, for this long. A stop sign means stopped.
+JUNCTION_ENTER_WITHIN_M = 6.0
+SIGN_STOP_GAP_M = 0.5
+SIGN_STOP_ROLL_M = 0.2
+SIGN_STOPPED_MPS = 0.2
+SIGN_DWELL_S = 1.0
 
 
 #: The front bumper stops this far short of the stop line.
@@ -124,6 +135,14 @@ class Situation:
     stop_line_m: Optional[float] = None
     light_id: Optional[int] = None
     world: object = None
+    #: the next stop or give-way sign on the route: how far the bumper is from its line, what
+    #: kind it is, and which one it is -- so a sign already stopped for is not stopped for
+    #: twice (perception/road_signs.py)
+    sign_m: Optional[float] = None
+    sign_kind: Optional[str] = None
+    sign_at: Optional[tuple] = None
+    #: where the next junction on the route begins and ends (planner.junction_span)
+    junction_span: Optional[tuple] = None
     #: what the light asks: worked out by the crosser rule, read by the light rule below it
     light: Optional[tuple] = None
 
@@ -190,6 +209,10 @@ class BehaviorSystem:
         self.junction_creep_mps = 2.0
         self._junction_wait_started = None
         self._junction_done = False          # cleared for the junction we're in
+        #: room the van wants beyond a junction before it enters: its own length and a bit
+        self.keep_clear_m = 8.0
+        self._sign_done = None               # the sign whose line we have already stopped at
+        self._sign_still_since = None        # when the van came to rest at that line
         self._park_best_d = None             # closest approach to the parking spot
         self.block_release_s = 2.0           # blocked verdicts must stay clear this long before moving again
         self._block_memory = None            # (t_last_blocked, kind, distance)
@@ -248,6 +271,10 @@ class BehaviorSystem:
         blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
         speed_limit_mps: Optional[float] = None,  # the limit on this piece of road, from the map
         seen_ahead_m: Optional[float] = None,     # how far the laser has seen the road ahead FREE
+        sign_m: Optional[float] = None,           # front bumper to the next sign's line, by road
+        sign_kind: Optional[str] = None,          # "stop" or "give_way" (perception/road_signs)
+        sign_at: Optional[tuple] = None,          # which sign that is: (road, lane, x, y)
+        junction_span: Optional[tuple] = None,    # (metres to the next junction, to its far side)
     ) -> BehaviorOutput:
         """One decision cycle: ask the rules in RULES, in order, until one answers.
 
@@ -264,7 +291,9 @@ class BehaviorSystem:
         self._blind_spot_m = blind_spot_m
         self._speed_limit_mps = speed_limit_mps
         self._seen_ahead_m = seen_ahead_m
-        now = Situation(perception=perception, pose=pose,
+        now = Situation(sign_m=sign_m, sign_kind=sign_kind, sign_at=sign_at,
+                        junction_span=junction_span,
+                        perception=perception, pose=pose,
                         destination_distance=destination_distance, safety_ok=safety_ok,
                         junction=junction, park_heading_ok=park_heading_ok,
                         park_position_ok=park_position_ok, predicted_conflict=predicted_conflict,
@@ -483,6 +512,68 @@ class BehaviorSystem:
             return self._decide(*now.light)
         return None
 
+    def _rule_road_sign(self, now):
+        """A stop or give-way sign from the map (perception/road_signs.py).
+
+        A stop sign asks for a FULL stop at its line -- not a slow roll -- and then the
+        junction rule below gives way as usual. A give-way asks for a crawl at the line and
+        the same looking. A sign is stopped for ONCE: `sign_at` says which one it is, so the
+        van does not stop again for the same sign as it creeps over the line.
+        """
+        if now.sign_m is None or now.sign_kind is None:
+            self._sign_done = None if now.sign_at is None else self._sign_done
+            return None
+        if now.sign_at is not None and self._sign_done == now.sign_at:
+            return None                               # already stopped for this one
+        d, speed = float(now.sign_m), float(getattr(now.pose, "speed", 0.0) or 0.0)
+        if now.sign_kind == GIVE_WAY:
+            if d > SIGN_STOP_GAP_M:
+                creep = max(1.0, min(self.slow_speed, 0.45 * d))
+                return self._decide(DrivingBehavior.WAITING_AT_JUNCTION,
+                                    f"Give-way line in {d:.1f} m — slowing to look",
+                                    speed=creep, stop=False, why=SIGN_GIVE_WAY)
+            self._sign_done = now.sign_at             # the junction rule looks from here on
+            return None
+        if d > SIGN_STOP_GAP_M + SIGN_STOP_ROLL_M:
+            creep = max(0.6, min(3.0, 0.45 * (d - SIGN_STOP_GAP_M)))
+            return self._decide(DrivingBehavior.WAITING_AT_JUNCTION,
+                                f"STOP sign in {d:.1f} m — rolling up to the line",
+                                speed=creep, stop=False, why=SIGN_ROLL_UP)
+        # at the line: a full stop, held long enough to be a stop and not a hesitation
+        if speed > SIGN_STOPPED_MPS:
+            self._sign_still_since = None
+        elif self._sign_still_since is None:
+            self._sign_still_since = time.time()
+        waited = 0.0 if self._sign_still_since is None else time.time() - self._sign_still_since
+        if waited >= SIGN_DWELL_S:
+            self._sign_done = now.sign_at
+            return None                               # stopped properly: the junction decides
+        return self._decide(DrivingBehavior.WAITING_AT_JUNCTION,
+                            f"STOP sign — stopped at the line ({waited:.1f} s of {SIGN_DWELL_S:.0f})",
+                            speed=0.0, stop=True, why=SIGN_STOP_HOLD)
+
+    def _rule_junction_box(self, now):
+        """Never enter a junction the van cannot clear.
+
+        A van that stops inside a junction blocks everyone crossing it, and there is no way out
+        but forward. So: about to enter, and the first thing in the way sits BEYOND the far
+        side but nearer than the van's own length past it -- wait at the line instead.
+        """
+        span = now.junction_span
+        if span is None:
+            return None
+        entry_m, exit_m = float(span[0]), float(span[1])
+        if entry_m > JUNCTION_ENTER_WITHIN_M:
+            return None                           # not about to enter one
+        blocker = getattr(now.perception, "closest_obstacle_distance", None)
+        if blocker is None or blocker > exit_m + self.keep_clear_m or blocker <= entry_m:
+            return None                           # nothing beyond it, or it is on this side
+        return self._decide(
+            DrivingBehavior.WAITING_AT_JUNCTION,
+            f"Junction ahead is {exit_m - entry_m:.0f} m across and the way out is blocked "
+            f"{blocker:.1f} m on — waiting on this side of it",
+            speed=0.0, stop=True, why=JUNCTION_KEEP_CLEAR)
+
     def _rule_junction(self, now):
         """Give way before turning at a junction."""
         perception, junction = now.perception, now.junction
@@ -506,7 +597,8 @@ class BehaviorSystem:
             if self._junction_wait_started is None:
                 self._junction_wait_started = moment
             waited = moment - self._junction_wait_started
-            conflict = self._junction_conflict(perception, now.world)
+            conflict = self._junction_conflict(perception, now.world,
+                                               ego_yaw_rad=getattr(now.pose, "yaw", None))
             if waited >= self.junction_wait_timeout_s:
                 self._junction_done = True
                 self._junction_wait_started = None
@@ -639,6 +731,9 @@ class BehaviorSystem:
          "what is ABOUT to be in the way, before it is -- and the light is read here, so a "
          "crosser cannot hide a red one"),
         ("traffic_light", _rule_traffic_light, "the law, once nothing physical is in the way"),
+        ("road_sign", _rule_road_sign, "...and the signs painted on it, which say to stop or "
+         "to give way before the junction rule below looks at all"),
+        ("junction_box", _rule_junction_box, "never enter a junction the van cannot clear"),
         ("junction", _rule_junction, "give way before turning across traffic"),
         ("parking", _rule_parking, "the last few metres to the spot: nothing in sight takes "
          "the state away from a van that is parking (it still slows for it)"),
@@ -772,17 +867,20 @@ class BehaviorSystem:
             should_stop=stop
         )
 
-    def _junction_conflict(self, perception: PerceptionOutput, world=None):
-        """Distance of the nearest moving vehicle that could cross our turn,
-        or None. Vehicles directly ahead in our own lane are the car-following
-        problem, not a junction conflict; far/parked/behind vehicles ignored.
+    def _junction_conflict(self, perception: PerceptionOutput, world=None, ego_yaw_rad=None):
+        """Distance of the nearest moving vehicle that is going to CROSS our turn, or None.
 
-        Asked of the world model (Perception V2 day 7) when one is supplied; the
-        answer is identical either way, and the loop below stays for callers that
-        still hand over a bare PerceptionOutput.
+        Vehicles directly ahead in our own lane are the car-following problem, not a junction
+        conflict; far, parked and well-behind ones are ignored -- and, given the van's heading,
+        so are the ones driving AWAY (world_model.crossing_vehicles).
+
+        Asked of the world model (Perception V2 day 7) when one is supplied; the loop below
+        stays for callers that still hand over a bare PerceptionOutput, and it is the old
+        radius answer: it has no velocities to judge a crossing with.
         """
         if world is not None:
-            crossing = world.crossing_vehicles(self.junction_conflict_radius_m)
+            crossing = world.crossing_vehicles(self.junction_conflict_radius_m,
+                                               ego_yaw_rad=ego_yaw_rad)
             return crossing[0].distance_m if crossing else None
         nearest = None
         for obj in perception.objects:

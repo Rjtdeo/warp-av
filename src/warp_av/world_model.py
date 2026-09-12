@@ -34,6 +34,38 @@ DEFAULT_PATH_HALF_WIDTH_M = 1.75      # half the van's driving corridor
 DEFAULT_PATH_AHEAD_M = 30.0
 
 
+#: How far ahead a crossing vehicle is worked out. Longer than it takes to cross a junction,
+#: and short enough that a car three streets away on the same heading is not "coming".
+CROSSING_WITHIN_S = 6.0
+#: How near us it has to be when it reaches our line for that to be a conflict: the length of
+#: the van plus a junction's worth of room.
+CROSSING_NEAR_M = 12.0
+
+
+def _will_cross_us(obj, ego_yaw_rad: float, half_width_m: float, within_s: float) -> bool:
+    """Does this vehicle's own motion bring it onto our line of travel, soon, near us?
+
+    Its velocity is in the world frame; the van's frame is x ahead, y to the right. A car
+    already on our line counts. A car whose sideways motion never brings it to the line -- one
+    driving away down the crossing road -- does not.
+    """
+    c, s = math.cos(ego_yaw_rad), math.sin(ego_yaw_rad)
+    vx = float(getattr(obj, "vx_world", 0.0) or 0.0)
+    vy = float(getattr(obj, "vy_world", 0.0) or 0.0)
+    ahead = vx * c + vy * s                       # its speed along our heading
+    across = -vx * s + vy * c                     # ...and across it (+ = to our right)
+    y, x = float(obj.y), float(obj.x)
+    if abs(y) <= half_width_m:
+        return True                               # already on our line of travel
+    if across == 0.0 or (y > 0) == (across > 0):
+        return False                              # going away from our line, or straight along it
+    t = -y / across                               # when it reaches the line
+    if t < 0.0 or t > within_s:
+        return False
+    return abs(x + ahead * t) <= CROSSING_NEAR_M
+
+
+
 @dataclass
 class WorldObject:
     """One thing the van is following."""
@@ -199,11 +231,20 @@ class WorldModel:
         return got[0] if got else None
 
     def crossing_vehicles(self, radius_m: float, lane_half_width_m: float = DEFAULT_PATH_HALF_WIDTH_M,
-                          behind_m: float = -3.0, min_speed_mps: float = 1.0) -> List[WorldObject]:
-        """Moving vehicles that could cross the van's path at a junction.
+                          behind_m: float = -3.0, min_speed_mps: float = 1.0,
+                          ego_yaw_rad: Optional[float] = None,
+                          within_s: float = CROSSING_WITHIN_S) -> List[WorldObject]:
+        """Moving vehicles that are going to CROSS the van's path at a junction.
 
-        Not the ones in our own lane straight ahead: those are the car-following
-        problem. Not the parked ones, not the ones well behind us, not the far ones.
+        Not the ones in our own lane straight ahead: those are the car-following problem. Not
+        the parked ones, not the ones well behind us, not the far ones -- and, given the van's
+        heading, not the ones driving AWAY. Until 2026-09-11 a car leaving the junction on the
+        crossing road held the van at the line exactly as long as one arriving: the rule was
+        "moving, nearby, not in our lane", which is a radius, not a right of way.
+
+        With ego_yaw_rad, each vehicle's own velocity is turned into the van's frame and it
+        counts only if it reaches our line of travel within `within_s` seconds and is near us
+        when it does. Without it the old radius answer stands, for callers that have no pose.
         """
         got = []
         for o in self.objects:
@@ -212,6 +253,9 @@ class WorldModel:
             if o.distance_m > radius_m or o.x < behind_m:
                 continue
             if o.x > 0 and abs(o.y) < lane_half_width_m:
+                continue
+            if ego_yaw_rad is not None and not _will_cross_us(o, ego_yaw_rad, lane_half_width_m,
+                                                              within_s):
                 continue
             got.append(o)
         got.sort(key=lambda o: o.distance_m)

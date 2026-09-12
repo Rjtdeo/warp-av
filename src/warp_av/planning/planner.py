@@ -1885,6 +1885,30 @@ class RoutePlanner:
                             z=last.z, yaw=hd)
         return last
 
+    def junction_span(self, route: Route, current_x, current_y, within_m: float = 40.0):
+        """(metres to the next junction on the route, metres to its far side) or None.
+
+        Where a junction begins and ends along our own route, which is what says whether the
+        van can clear it before it enters (behaviour: never block the box).
+        """
+        wps = route.waypoints if route else None
+        if not wps or len(wps) < 2:
+            return None
+        ci = min(range(len(wps)), key=lambda i: math.hypot(wps[i].x - current_x,
+                                                           wps[i].y - current_y))
+        along, entry = 0.0, None
+        for i in range(ci, len(wps) - 1):
+            step = math.hypot(wps[i + 1].x - wps[i].x, wps[i + 1].y - wps[i].y)
+            if entry is None:
+                if wps[i].is_junction:
+                    entry = along
+            elif not wps[i].is_junction:
+                return (entry, along)
+            along += step
+            if entry is None and along > within_m:
+                return None
+        return None if entry is None else (entry, along)
+
     def route_left_m(self, route: Route, current_x, current_y) -> float:
         """How far there is still to DRIVE along the route to its end, from the nearest point of
         the route (found the way get_next_waypoint finds it)."""

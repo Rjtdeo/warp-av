@@ -42,7 +42,13 @@ PREDICTED_CROSSER_SLOW = "predicted_crosser_slow"
 LIGHT_ROLL_UP = "light_roll_up"             # not green: rolling up to the stop line
 LIGHT_HOLD = "light_hold"                   # holding at the line, waiting for green
 
+# signs, read from the map (perception/road_signs.py)
+SIGN_ROLL_UP = "sign_roll_up"               # a stop or give-way line ahead: rolling up to it
+SIGN_STOP_HOLD = "sign_stop_hold"           # the full stop a stop sign asks for
+SIGN_GIVE_WAY = "sign_give_way"             # a give-way line: down to a crawl, looking
+
 # junctions without lights
+JUNCTION_KEEP_CLEAR = "junction_keep_clear"  # the way out is blocked: wait on this side
 JUNCTION_ROLL_UP = "junction_roll_up"
 JUNCTION_PAUSE = "junction_pause"           # stopped at the line to look
 JUNCTION_GIVE_WAY = "junction_give_way"     # something is coming
@@ -78,7 +84,8 @@ ALL_WHY = (
     FOLLOWING_LEAD, OBJECT_AHEAD_SLOW, ROUTE_CLEAR,
     PREDICTED_CROSSER_STOP, PREDICTED_CROSSER_SLOW,
     LIGHT_ROLL_UP, LIGHT_HOLD,
-    JUNCTION_ROLL_UP, JUNCTION_PAUSE, JUNCTION_GIVE_WAY, JUNCTION_TIMEOUT,
+    SIGN_ROLL_UP, SIGN_STOP_HOLD, SIGN_GIVE_WAY,
+    JUNCTION_KEEP_CLEAR, JUNCTION_ROLL_UP, JUNCTION_PAUSE, JUNCTION_GIVE_WAY, JUNCTION_TIMEOUT,
     DESTINATION_NEAR, PARKING_PULL_IN, PARKED, PARKED_OVERSHOT,
 )
 

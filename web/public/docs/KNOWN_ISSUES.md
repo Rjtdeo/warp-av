@@ -317,10 +317,14 @@ exist yet.
   timeout but no alternative route.
 * **Geofence / ODD enforcement.** 40 `odd_boundary` scenarios define the contract; nothing
   enforces it.
-* **Signs.** Stop and give-way signs are not read yet. They ARE in the map: Town10HD carries
-  9 stop signs (OpenDRIVE type 206) and one give-way (205), the same place the traffic-light
-  stop lines come from. Speed-limit signs are read where a map has them (type 274); this town
-  has none, so the town default of 30 km/h stands.
+* **Signs.** Stop and give-way signs are read from the map (`perception/road_signs.py`,
+  OpenDRIVE types 206 and 205 — the same place the traffic-light stop lines come from), and a
+  sign counts only on the (road, lane) the route actually travels. Town10HD gives 12 stop-sign
+  lanes and 1 give-way. A stop sign is a FULL stop at the line, held a second, and stopped for
+  once; a give-way is a crawl at the line. Speed-limit signs are read where a map has them
+  (type 274); this town has none, so the town default of 30 km/h stands. Not read at all:
+  no-entry, turn restrictions, bus lanes, and anything painted on the road other than the stop
+  bars already measured by hand.
 * **Reverse manoeuvres.** Forward pull-over only. A taken parking slot cannot be recovered
   from by reversing.
 * **Multi-fault reporting.** `SafetySupervisor` reports only the first failed check, so a
@@ -383,9 +387,16 @@ faults.
 * **Steering wander.** Full-lock steering for about 7% of one long run. The controller is a
   tuned pure-pursuit with a centreline correction term; a Stanley controller or MPC is the
   longer-term answer.
-* **Junction give-way is radius-based.** No lane-level right-of-way, so a vehicle driving
-  *away* on the crossing road still counts as a conflict. Creep-on-timeout after 12 s is a
-  pragmatic policy that needs review before real roads.
+* **Junction give-way is by velocity, not by right of way.** A vehicle counts only if its own
+  motion brings it onto the van's line of travel within 6 seconds AND near the van when it
+  gets there (`world_model.crossing_vehicles`): a car driving *away* down the crossing road no
+  longer holds the van, which is what it did until 2026-09-11. The van also refuses to enter a
+  junction it cannot clear (`behavior._rule_junction_box` over `planner.junction_span`):
+  measured that day, it held 7.7 m short of a 31 m junction whose far side was blocked. What
+  is still missing: no lane-level right of way (who actually has priority is never asked, only
+  who is coming), nothing reads the other road's signs or lights, no four-way-stop order of
+  arrival, and creep-on-timeout after 12 s remains a pragmatic policy that needs review before
+  real roads.
 * **Passing parked cars close by depends on a good look at them.** The swept-path check now
   judges a stationary thing by a rectangle fitted to its points (`tracking.fit_rectangle`),
   kept on the map frame, and for a thing standing still the most complete view of it so far.

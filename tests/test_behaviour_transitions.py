@@ -161,7 +161,8 @@ def test_the_order_is_written_down_and_is_the_one_we_mean():
     assert names == [
         "safety", "no_mission", "localization", "perception", "parked", "blocked_too_long",
         "vru_in_path", "vehicle_in_path", "obstacle_in_path", "confirming_clear",
-        "predicted_crosser", "traffic_light", "junction", "parking", "following_lead",
+        "predicted_crosser", "traffic_light", "road_sign", "junction_box", "junction", "parking",
+        "following_lead",
         "object_ahead", "approaching", "cruise",
     ]
     for name, rule, place in BehaviorSystem.RULES:
