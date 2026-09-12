@@ -1,4 +1,5 @@
 """Troy fix #1: obey traffic lights (red/yellow stop, green go, hazards still outrank)."""
+from warp_av.behavior import transitions as T
 from warp_av.behavior.behavior import BehaviorSystem, DrivingBehavior
 from warp_av.perception.perception import PerceptionOutput, ObjectType
 from warp_av.localization.localization import Pose
@@ -172,3 +173,33 @@ def test_a_predicted_crosser_never_lets_the_van_skip_a_red_light():
     b = BehaviorSystem(); b.set_mission()
     o = at(b, "red", stop_line_m=20.0, speed=3.0, predicted_conflict=crosser)
     assert o.desired_speed_mps <= 2.5, "the stricter of the two must win"
+
+
+def test_a_yellow_commit_is_dropped_if_the_van_can_stop_after_all():
+    """Live 2026-09-11: the van decided to go on a yellow at 4 m/s, then slowed to 1.9 m/s
+    behind traffic and crossed light 10's paint on RED with 3 m of stopping distance in hand.
+    The decision was made once and never looked at again."""
+    b = BehaviorSystem(); b.set_mission()
+    fast = at(b, "yellow", stop_line_m=2.5, speed=4.0)          # cannot stop: commits
+    assert b.light_status["choice"] == "go" and not fast.should_stop
+    slowed = at(b, "yellow", stop_line_m=2.2, speed=1.0)        # can stop now: it will
+    assert b.light_status["choice"] == "stop" and "after all" in b.light_status["why"]
+    assert slowed.desired_speed_mps <= 3.0, "rolling up to the line, not going through"
+    at_the_line = at(b, "red", stop_line_m=0.4, speed=0.5)
+    assert at_the_line.should_stop and at_the_line.why == T.LIGHT_HOLD
+
+
+def test_but_once_past_the_line_it_clears_the_junction():
+    b = BehaviorSystem(); b.set_mission()
+    at(b, "yellow", stop_line_m=2.0, speed=5.0)
+    assert b.light_status["choice"] == "go"
+    over = at(b, "red", stop_line_m=-1.0, speed=1.0)
+    assert b.light_status["choice"] == "go" and not over.should_stop
+
+
+def test_and_a_stop_is_never_re_opened():
+    b = BehaviorSystem(); b.set_mission()
+    at(b, "red", stop_line_m=8.0, speed=3.0)
+    assert b.light_status["choice"] == "stop"
+    crept = at(b, "red", stop_line_m=-0.3, speed=0.2)
+    assert b.light_status["choice"] == "stop" and crept.should_stop

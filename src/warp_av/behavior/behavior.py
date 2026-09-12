@@ -781,16 +781,27 @@ class BehaviorSystem:
                 "light_id": light_id, "state": state, "stop_line_m": d, "choice": "go",
                 "why": "green"}
             return None
+        speed = max(0.0, float(getattr(pose, "speed", 0.0) or 0.0))
+        too_close_to_stop = (state == "yellow" and d is not None
+                             and speed * speed / (2.0 * COMFORT_DECEL_MPS2) > d)
         if self._light_choice is None:
-            speed = max(0.0, float(getattr(pose, "speed", 0.0) or 0.0))
             if d is not None and d < 0.0:
                 self._light_choice = ("go", f"already {-d:.1f} m over the stop line when it changed")
-            elif (state == "yellow" and d is not None
-                  and speed * speed / (2.0 * COMFORT_DECEL_MPS2) > d):
+            elif too_close_to_stop:
                 self._light_choice = ("go", f"turned yellow {d:.1f} m from the line at "
                                             f"{speed:.1f} m/s, too close to stop")
             else:
                 self._light_choice = ("stop", "can stop before the line")
+        elif self._light_choice[0] == "go" and d is not None and d > 0.0 and not too_close_to_stop:
+            # Going is kept only while it is still TRUE, and only until the line: measured live
+            # on 2026-09-11, the van decided to go on a yellow at 4 m/s, then slowed to 1.9 m/s
+            # behind traffic and crossed the paint of light 10 on RED with 3 m of stopping
+            # distance in hand, because the decision was made once and never looked at again.
+            # A "stop" is still never re-opened -- that is what stops a creep a few centimetres
+            # over the line from becoming "committed, carry on" -- and neither is a "go" once
+            # the van is actually past the line, where the only safe way out is forward.
+            self._light_choice = ("stop", f"slowed to {speed:.1f} m/s: it can stop before the "
+                                          f"line after all")
         choice, why = self._light_choice
         self.light_status = {"light_id": light_id, "state": state, "stop_line_m": d,
                              "choice": choice, "why": why}

@@ -140,18 +140,16 @@ def test_carrying_the_map_is_cheap_enough_to_do_every_tick():
     p, o = fan()
     g.update(p, o)
 
-    def sweep_ms(carrying):
-        quickest = float("inf")                  # of several runs: the least disturbed one
-        for _ in range(5):
+    def quickest(f, n=20, tries=5):
+        best = float("inf")
+        for _ in range(tries):
             t0 = time.perf_counter()
-            for i in range(20):
-                if carrying:
-                    g.update(p, o, moved=(0.08, 0.0, 0.1), now=200.0 + i * 0.1)
-                else:
-                    g.update(p, o)
-            quickest = min(quickest, (time.perf_counter() - t0) / 20 * 1000.0)
-        return quickest
+            for _ in range(n):
+                f()
+            best = min(best, (time.perf_counter() - t0) / n * 1000.0)
+        return best
 
-    plain, carried = sweep_ms(False), sweep_ms(True)
-    assert carried < plain + 1.0, f"carrying the map added {carried - plain:.1f} ms a sweep"
-    assert carried < 25.0, f"{carried:.1f} ms a sweep is a quarter of the van's 100 ms tick"
+    carrying = quickest(lambda: g._carry_forward((0.08, 0.0, 0.1)))
+    whole = quickest(lambda: g.update(p, o))
+    assert carrying < 1.0, f"carrying the map costs {carrying:.2f} ms"
+    assert whole < 25.0, f"{whole:.1f} ms a sweep is a quarter of the van's 100 ms tick"
