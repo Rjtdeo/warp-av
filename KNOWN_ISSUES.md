@@ -313,8 +313,13 @@ exist yet.
 * **Sensor calibration.** Camera intrinsics come from the simulator's FOV and image size;
   extrinsics are the mount transforms in `camera_model.VIEW_MOUNTS`. No calibration
   procedure, no calibration validation, no allowance for drift.
-* **Re-planning around a blockage.** The van stops and waits. There is a blocked-route
-  timeout but no alternative route.
+* **Re-planning around a blockage** is done (`planner.plan_route_avoiding`): a street that
+  stays blocked for 6 s is made expensive in the map's own road graph and the route searched
+  again, which either finds another way to the same destination or answers None, and the van
+  says which ("going round: a new route of 498 m" or "every way to the destination goes
+  through the blockage"). It only helps while a junction still lies between the van and the
+  blockage -- with no reverse gear, a way round that starts behind the van is no way round --
+  and it does not re-plan for TIME, only for a block: a slow street is still driven.
 * **Geofence / ODD enforcement.** 40 `odd_boundary` scenarios define the contract; nothing
   enforces it.
 * **Signs.** Stop and give-way signs are read from the map (`perception/road_signs.py`,

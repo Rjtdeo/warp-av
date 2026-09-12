@@ -47,7 +47,9 @@ from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake
                               what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M)
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
-                                   GROUND_SEEN_FREE, GROUND_BLOCKED)
+                                   GROUND_SEEN_FREE, GROUND_BLOCKED, REROUTED, NO_WAY_ROUND,
+                                   VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
+                                   JUNCTION_KEEP_CLEAR)
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -331,6 +333,125 @@ class WarpAV:
         return (gap - self.behavior.front_offset_m, sign.kind,
                 (sign.road_id, sign.lane_id, round(sign.x, 1), round(sign.y, 1)))
 
+    def _dress_route_for_parking(self):
+        """Bend the end of the route to a parking spot, and remember the route it was drawn on.
+
+        Done when a mission starts, and again whenever the route itself is replaced -- a way
+        round a blocked street -- because a spot drawn on a route the van is no longer taking
+        is not a spot."""
+        self._parking_slots = None
+        self._parking_rechecked = False
+        # Bend the end of the route to a kerbside parking spot (Troy #7):
+        # finish pulled over on the right, not dead-centre on the road. The route is carried
+        # on past the pin first, so that where there is no room to pull in gently before it,
+        # the spot can be a little past it instead.
+        try:
+            pin_index = len(self._route.waypoints) - 1
+            self.planner.extend_past_pin(self._route, self.planner.PARK_FAR_PAST_PIN_M)
+            # The route as planned, before any pull-in is drawn on it: every later choice of
+            # spot is drawn afresh from this, not on top of the last one.
+            self._route_base = list(self._route.waypoints)
+            self._pin_index = pin_index
+            self._parking_rejected = []
+            self._parking_wait_since = None
+            chosen = self._choose_spot()
+            if chosen is not None:
+                self._route.waypoints, self._parking_spot = chosen
+            else:
+                # nowhere at all: the pin itself, but still judged on being straight there
+                self._route.waypoints = list(self._route_base[:pin_index + 1])
+                end = self._route.waypoints[-1]
+                self._parking_spot = {"x": end.x, "y": end.y, "yaw": end.yaw, "kind": "lane",
+                                      "offset_m": 0.0, "moved_back_m": 0, "confirmed": True,
+                                      "note": "no workable spot near the pin"}
+        except Exception as e:
+            print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
+            self._parking_spot = None
+            self._lidar_rescan_done = False
+            self._lidar_rescan_tries = 0
+            self._hold_short_done = False
+            self.rl_parker.reset()
+        if self._parking_spot:
+            moved = self._parking_spot.get("moved_back_m", 0)
+            kind = self._parking_spot.get("kind", "kerb")
+            what = {"bay": "PARKING BAY off the driving lane",
+                    "kerb": "kerb-hug inside the lane (no bay to pull into)",
+                    "lane": "straight in the lane (no bay or kerb to pull into)"}.get(kind, kind)
+            past = self._parking_spot.get("past_pin_m") or 0
+            note = (f", {moved} m before the pin" if moved > 1 else
+                    f", {past} m past the pin" if past > 1 else "")
+            self._parking_note = (f"{what}: ({self._parking_spot['x']}, {self._parking_spot['y']}), "
+                                  f"{self._parking_spot['offset_m']} m right of lane centre{note}")
+            print(f"[Mission] parking spot: {self._parking_spot}")
+        else:
+            self._parking_note = None
+            print("[Mission] no kerbside spot found near the pin — will park on the lane")
+
+    #: A road that stays blocked: how long the van watches it before looking for another way
+    #: round, how far ahead a blockage counts, and how often it may ask the map.
+    REROUTE_AFTER_S = 6.0
+    REROUTE_WITHIN_M = 45.0
+    REROUTE_EVERY_S = 15.0
+    #: what counts as "the road is blocked" for this: something in the way, a road that has
+    #: stayed blocked, and a junction whose far side is blocked (the van is held before it)
+    BLOCKED_REASONS = (VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
+                       JUNCTION_KEEP_CLEAR)
+
+    def _maybe_reroute(self, pose, perception, behavior_output):
+        """A street that stays blocked is a street to go round: ask the map for another way to
+        the same destination, and take it if there is one.
+
+        Only worth asking while a junction still lies between the van and the blockage -- the
+        van has no reverse gear, so a way round that starts behind it is no way round at all.
+        planner.plan_route_avoiding makes that piece of road expensive and searches again; it
+        answers None when every route to the destination still goes through it.
+        """
+        mission = self.mission_manager.current_mission
+        if not self._route or mission is None or self._overtake_point is not None:
+            return
+        blocked = behavior_output.why in self.BLOCKED_REASONS or perception.path_blocked
+        if not blocked:
+            self._blocked_road_since = None
+            return
+        now = time.time()
+        if getattr(self, "_blocked_road_since", None) is None:
+            self._blocked_road_since = now
+            return
+        if now - self._blocked_road_since < self.REROUTE_AFTER_S \
+                or now - getattr(self, "_reroute_asked_at", 0.0) < self.REROUTE_EVERY_S:
+            return
+        self._reroute_asked_at = now
+        at_m = float(getattr(perception, "closest_obstacle_distance", 0.0) or 0.0)
+        if at_m <= 0.0 or at_m > self.REROUTE_WITHIN_M:
+            return
+        span = self.planner.junction_span(self._route, pose.x, pose.y)
+        if span is None or span[0] > at_m:
+            self._note_move(NO_WAY_ROUND,
+                            f"the way is blocked {at_m:.0f} m ahead and there is no junction "
+                            f"between here and it — nothing to turn off at")
+            return
+        c, s_ = math.cos(pose.yaw), math.sin(pose.yaw)
+        bx, by = pose.x + c * at_m, pose.y + s_ * at_m
+        dest = (mission.destination_x, mission.destination_y)
+        other = self.planner.plan_route_avoiding(pose.x, pose.y, dest[0], dest[1], bx, by)
+        if other is None:
+            self._note_move(NO_WAY_ROUND,
+                            f"every way to the destination goes through the blockage "
+                            f"{at_m:.0f} m ahead — waiting")
+            return
+        self._route = other
+        self._dress_route_for_parking()
+        if self._signal_lookahead is not None:
+            self._signal_lookahead.set_route(self._route)
+        self._blocked_road_since = None
+        self._note_move(REROUTED,
+                        f"the road is blocked {at_m:.0f} m ahead — going round: a new route of "
+                        f"{other.total_distance:.0f} m to the same destination")
+        self.logger.log_event("rerouted",
+                              f"blocked {at_m:.1f} m ahead at ({bx:.1f}, {by:.1f}); new route "
+                              f"{other.total_distance:.0f} m, {len(other.waypoints)} points")
+        print(f"[Route] blocked {at_m:.1f} m ahead — another way round: {other.total_distance:.0f} m")
+
     def _forget_the_manoeuvre(self):
         """A pass belongs to the mission it was begun in. A mission cancelled mid-pass used to
         leave the rejoin point set for ever, and everything that asks "am I mid-pass?" kept
@@ -424,53 +545,7 @@ class WarpAV:
         except Exception as e:
             print(f"[Planner] departure blend failed ({e}) — starting as planned")
 
-        self._parking_slots = None
-        self._parking_rechecked = False
-        # Bend the end of the route to a kerbside parking spot (Troy #7):
-        # finish pulled over on the right, not dead-centre on the road. The route is carried
-        # on past the pin first, so that where there is no room to pull in gently before it,
-        # the spot can be a little past it instead.
-        try:
-            pin_index = len(self._route.waypoints) - 1
-            self.planner.extend_past_pin(self._route, self.planner.PARK_FAR_PAST_PIN_M)
-            # The route as planned, before any pull-in is drawn on it: every later choice of
-            # spot is drawn afresh from this, not on top of the last one.
-            self._route_base = list(self._route.waypoints)
-            self._pin_index = pin_index
-            self._parking_rejected = []
-            self._parking_wait_since = None
-            chosen = self._choose_spot()
-            if chosen is not None:
-                self._route.waypoints, self._parking_spot = chosen
-            else:
-                # nowhere at all: the pin itself, but still judged on being straight there
-                self._route.waypoints = list(self._route_base[:pin_index + 1])
-                end = self._route.waypoints[-1]
-                self._parking_spot = {"x": end.x, "y": end.y, "yaw": end.yaw, "kind": "lane",
-                                      "offset_m": 0.0, "moved_back_m": 0, "confirmed": True,
-                                      "note": "no workable spot near the pin"}
-        except Exception as e:
-            print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
-            self._parking_spot = None
-            self._lidar_rescan_done = False
-            self._lidar_rescan_tries = 0
-            self._hold_short_done = False
-            self.rl_parker.reset()
-        if self._parking_spot:
-            moved = self._parking_spot.get("moved_back_m", 0)
-            kind = self._parking_spot.get("kind", "kerb")
-            what = {"bay": "PARKING BAY off the driving lane",
-                    "kerb": "kerb-hug inside the lane (no bay to pull into)",
-                    "lane": "straight in the lane (no bay or kerb to pull into)"}.get(kind, kind)
-            past = self._parking_spot.get("past_pin_m") or 0
-            note = (f", {moved} m before the pin" if moved > 1 else
-                    f", {past} m past the pin" if past > 1 else "")
-            self._parking_note = (f"{what}: ({self._parking_spot['x']}, {self._parking_spot['y']}), "
-                                  f"{self._parking_spot['offset_m']} m right of lane centre{note}")
-            print(f"[Mission] parking spot: {self._parking_spot}")
-        else:
-            self._parking_note = None
-            print("[Mission] no kerbside spot found near the pin — will park on the lane")
+        self._dress_route_for_parking()
 
         # Start logging
         self.logger.start_mission_log(mission.mission_id)
@@ -872,6 +947,12 @@ class WarpAV:
                 self._confirm_parking_spot(pose, behavior_output, dest_dist)
             except Exception as e:
                 print(f"[Parking] could not check the spot: {e}")
+
+        # A street that stays blocked: is there another way to the same destination?
+        try:
+            self._maybe_reroute(pose, perception, behavior_output)
+        except Exception as e:
+            print(f"[Route] re-route check failed: {e}")
 
         # Go-around: pass a vehicle that is genuinely dead in our lane.
         try:

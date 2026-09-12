@@ -667,6 +667,41 @@ class RoutePlanner:
             print(f"[Planner] Route planning failed: {e}")
             return None
 
+    #: What a blocked stretch of road costs the route search: further than any detour on a
+    #: town map, so any other way round wins -- and still finite, so a street with no other way
+    #: out still plans, and the caller can see the answer goes through the blockage anyway.
+    AVOID_COST_M = 5000.0
+
+    def plan_route_avoiding(self, start_x, start_y, end_x, end_y,
+                            avoid_x, avoid_y, clear_m: float = 4.0) -> Optional[Route]:
+        """A route to the destination that does NOT use the piece of road at (avoid_x, avoid_y).
+
+        The map's own road graph is what CARLA's route search walks, and a blocked street is
+        one edge of it: the edge that carries that point is made very expensive, the search is
+        run again, and the cost put back. When the answer still goes through the blockage --
+        a dead end, a one-way street with no other way out -- there is no way round, and this
+        returns None rather than the same route under a different name.
+        """
+        try:
+            wp = self.carla_map.get_waypoint(carla.Location(x=float(avoid_x), y=float(avoid_y), z=0.3))
+            edge_ids = self._grp._road_id_to_edge[wp.road_id][wp.section_id][wp.lane_id]
+            edge = self._grp._graph.edges[edge_ids[0], edge_ids[1]]
+        except Exception as e:
+            print(f"[Planner] cannot find the blocked road on the map: {e}")
+            return None
+        was = edge.get("length", 0.0)
+        try:
+            edge["length"] = was + self.AVOID_COST_M
+            route = self.plan_route(start_x, start_y, end_x, end_y)
+        finally:
+            edge["length"] = was
+        if route is None or not route.waypoints:
+            return None
+        near = min(math.hypot(w.x - avoid_x, w.y - avoid_y) for w in route.waypoints)
+        if near <= clear_m:
+            return None                       # the only way to the destination is through it
+        return route
+
     # --- Curve-aware speed (Troy #2/#3: left & right turns) ---
     A_LAT_MAX = 1.3     # m/s^2 comfortable lateral accel for a cargo van (higher clipped kerbs)
     A_DECEL = 1.2       # m/s^2 gentle pre-corner deceleration (earlier slowdown)
