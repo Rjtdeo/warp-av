@@ -41,7 +41,7 @@ from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
-                              nothing_is_standing_there, pass_refused)
+                              nothing_is_standing_there, pass_refused, pass_options)
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
                                    GROUND_SEEN_FREE)
@@ -72,6 +72,13 @@ from .sensor_health import HealthMonitor, read_sensors
 #: say before the van drives on is planner.nothing_is_standing_there.
 SEEN_FREE_LOOK_M = 7.0
 SEEN_FREE_MIN_LOOK_M = 2.0
+
+#: While getting past something standing in the lane: how close a body may come before the
+#: van stops mid-manoeuvre, and how fast it may go. A squeeze inside the lane passes within
+#: arm's reach of the thing by design, so the lane change's 1.6 m would freeze it beside what
+#: it is passing; 1.0 m from the van's middle is 1 cm from its side.
+PASS_ABORT_M, SQUEEZE_ABORT_M = 1.6, 1.0
+PASS_SPEED_MPS, SQUEEZE_SPEED_MPS = 3.0, 2.0
 
 SPOT_CONFIRM_FROM_M = 28.0   # start looking this far from the spot (the LiDAR's map reaches 30 m)
 SPOT_FREE_LOOKS = 2          # seen free on this many looks in a row before the van turns in
@@ -832,14 +839,17 @@ class WarpAV:
                 # Belt and braces: any body within 1.6 m while passing —
                 # tracking lag, mis-judged widths, anything — pauses the
                 # maneuver. A stall is acceptable; a scrape is not.
-                too_tight = any(o.distance < 1.6 for o in perception.objects)
+                too_tight = any(o.distance < getattr(self, "_overtake_tight_m", PASS_ABORT_M)
+                                for o in perception.objects)
                 if too_tight and pose.speed > 0.3:
                     behavior_output.desired_speed_mps = 0.0
                     behavior_output.should_stop = True
                     behavior_output.reason += " | overtake paused — clearance tight"
-                elif behavior_output.desired_speed_mps > 3.0:
-                    behavior_output.desired_speed_mps = 3.0
-                    behavior_output.reason += " | passing a stopped vehicle"
+                else:
+                    cap = getattr(self, "_overtake_cap_mps", PASS_SPEED_MPS)
+                    if behavior_output.desired_speed_mps > cap:
+                        behavior_output.desired_speed_mps = cap
+                    behavior_output.reason += " | getting past something standing in the lane"
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         _phase("behaviour")
@@ -2162,6 +2172,17 @@ class WarpAV:
         except Exception:
             return False
 
+    def _lane_width(self, pose, fallback_m=3.5):
+        """How wide the lane under the van is -- what says whether there is room to squeeze
+        past something inside it (planner.pass_options)."""
+        try:
+            wp = self.vehicle_adapter.get_map().get_waypoint(
+                carla.Location(x=pose.x, y=pose.y, z=0.3), lane_type=carla.LaneType.Driving)
+            width = float(getattr(wp, "lane_width", 0.0) or 0.0)
+            return width if 1.5 < width < 6.0 else fallback_m
+        except Exception:
+            return fallback_m
+
     #: What the van will go round, once it has stood still for OVERTAKE_AFTER_S: a dead car,
     #: and anything else standing in the lane that is not a person. Never a person or someone
     #: riding -- they may step aside, and the van waits for them however long it takes.
@@ -2220,36 +2241,55 @@ class WarpAV:
         if why is not None:
             waiting(why)
             return
-        # ...then the way round itself, planned on a copy: plan_overtake rewrites the route
-        trial = Route(waypoints=list(self._route.waypoints), total_distance=self._route.total_distance)
-        rejoin = self.planner.plan_overtake(trial, pose.x, pose.y,
-                                            lead_d, lane_ok=self._lane_ok)
-        if rejoin is None:
-            waiting("geometry refused (bend/junction/no lane/route end)")
-            return
-        # ...and what stands on it: the van's body slid along that path, as before a pull-in
-        in_way = self.planner.pull_in_blocker(perception, trial, pose.x, pose.y, pose.yaw,
-                                              self.footprint_blocking.footprint, horizon_m=back_in_m)
-        if in_way is not None:
+        # ...then the way round itself: the SMALLEST one that works. A nudge inside our own
+        # lane first, either way round, and only then a whole lane (planner.pass_options).
+        # Each is planned on a copy, because plan_overtake rewrites the route it is given.
+        taken, refused = None, "geometry refused (bend/junction/no lane/route end)"
+        for over_m, in_lane in pass_options(self._lane_width(pose),
+                                            self.footprint_blocking.footprint.half_width,
+                                            self.planner.OVERTAKE_SHIFT_M):
+            trial = Route(waypoints=list(self._route.waypoints),
+                          total_distance=self._route.total_distance)
+            rejoin = self.planner.plan_overtake(trial, pose.x, pose.y, lead_d,
+                                                lane_ok=self._lane_ok, shift_m=over_m)
+            if rejoin is None:
+                continue
+            # ...and what stands on it: the van's body slid along that path, as before a pull-in
+            in_way = self.planner.pull_in_blocker(perception, trial, pose.x, pose.y, pose.yaw,
+                                                  self.footprint_blocking.footprint,
+                                                  horizon_m=back_in_m)
+            if in_way is None:
+                taken = (over_m, in_lane, trial, rejoin)
+                break
             obj, dist, hit, where, box = in_way
-            what = getattr(getattr(obj, "object_type", None), "value", "thing")
-            waiting(f"{what} (id {getattr(obj, 'id', None)}) standing on the way round, {dist:.0f} m away "
-                    f"-- touched {hit.along_m:.0f} m on, {hit.lateral_m:+.1f} m off the path")
+            stands = getattr(getattr(obj, "object_type", None), "value", "thing")
+            refused = (f"{abs(over_m):.2f} m over is not enough: {stands} (id "
+                       f"{getattr(obj, 'id', None)}) {dist:.0f} m away would be touched "
+                       f"{hit.along_m:.0f} m on, {hit.lateral_m:+.1f} m off the path")
+        if taken is None:
+            waiting(refused)
             return
+        over_m, in_lane, trial, rejoin = taken
+        way = (f"squeezing past inside our own lane, {abs(over_m):.2f} m over to the "
+               f"{'left' if over_m > 0 else 'right'}" if in_lane else "passing on the left")
         self._route.waypoints = trial.waypoints          # one swap: the tick may be reading it
         self._overtake_point = rejoin
+        # While squeezing, the thing IS close: the abort line has to be the body's, not the
+        # lane change's 1.6 m, or the van would freeze beside what it is passing.
+        self._overtake_tight_m = SQUEEZE_ABORT_M if in_lane else PASS_ABORT_M
+        self._overtake_cap_mps = SQUEEZE_SPEED_MPS if in_lane else PASS_SPEED_MPS
         self._blocked_since = None
         try:
             self.logger.log_event(
                 "overtake",
-                f"a {what} has been in the way for {self.OVERTAKE_AFTER_S:.0f} s — passing on the "
-                f"left, rejoining {self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
+                f"a {what} has been in the way for {self.OVERTAKE_AFTER_S:.0f} s — {way}, "
+                f"rejoining {self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
         except Exception:
             pass
         self._note_move(GO_AROUND_START,
-                        f"{what} standing at {lead_d:.1f} m — passing on the left, rejoining "
+                        f"{what} standing at {lead_d:.1f} m — {way}, rejoining "
                         f"{self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
-        print(f"[Overtake] {what} standing at {lead_d:.1f} m — passing on the left")
+        print(f"[Overtake] {what} standing at {lead_d:.1f} m — {way}")
 
     def _static_vehicle_objects(self, pose):
         """Nearby static-layer parked cars as pseudo-detections (VEHICLE,

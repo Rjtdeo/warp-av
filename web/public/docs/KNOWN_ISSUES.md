@@ -345,9 +345,16 @@ faults.
   is dead ahead in its view, so "not called a person" is a judgement, and with a stale or
   missing camera it is not. Measured that day: a 0.45 m barrel passed with 1.97 m to spare, a
   0.65 m box with 2.05 m, a person standing in the lane waited for until the test ended.
-  What is still missing is the narrow version: the van always swings a full lane, so on a
-  single-lane road, or with the next lane occupied, a barrel still stops it. Squeezing past
-  inside the lane on a measured gap is not built.
+  It tries the smallest way round first (`planner.pass_options`): a nudge that keeps its body
+  inside its own lane -- 0.71 m on a 3.5 m lane, either way round -- and only then the whole
+  lane. While squeezing it crawls at 2 m/s and aborts on anything within 1.0 m of its middle
+  rather than 1.6 m, or it would freeze beside what it is passing. Measured 2026-09-11: a box
+  reaching 0.58 m into the lane squeezed past inside the lane with 0.72 m to spare at
+  1.95 m/s; a barrel in the middle of the lane still took a whole lane, as it must.
+  What is still missing: 0.71 m is all a 1.98 m van has inside a 3.5 m lane, so anything
+  sitting near the middle of a single-lane road still stops it -- there is no rule for using
+  the shoulder, the pavement or the oncoming lane, and none for waiting for a gap in oncoming
+  traffic to use it.
 * **Steering wander.** Full-lock steering for about 7% of one long run. The controller is a
   tuned pure-pursuit with a centreline correction term; a Stanley controller or MPC is the
   longer-term answer.

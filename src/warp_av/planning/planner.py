@@ -361,6 +361,30 @@ PASS_LOOK_PAST_LEAD_M = 45.0
 PASS_STILL_MPS = 0.3
 
 
+#: The van may move this close to its own lane's edge while squeezing past something without
+#: leaving the lane. 5 cm of paint is not clearance, but it is not a lane change either.
+LANE_EDGE_KEEP_M = 0.05
+
+
+def pass_options(lane_width_m: float, van_half_width_m: float, full_shift_m: float):
+    """The ways round something in the lane, smallest first: (how far over, does it stay in
+    our lane).
+
+    A nudge inside our own lane first, either way round, and only then the whole lane. On a
+    3.5 m lane a 1.98 m van has 0.75 m of room to move over before its body is on the line,
+    which is enough for something poking into the lane but never for something sitting in the
+    middle of it -- that still needs a lane to borrow. Live on 2026-09-11 the van stopped dead
+    for 116 s in front of a box that reached 0.15 m into its lane, with 0.6 m of road beside
+    it."""
+    room = 0.5 * float(lane_width_m) - float(van_half_width_m) - LANE_EDGE_KEEP_M
+    out = []
+    if room > 0.1:
+        out.append((round(room, 2), True))          # left, staying in our lane
+        out.append((round(-room, 2), True))         # right, staying in our lane
+    out.append((float(full_shift_m), False))        # and then a whole lane to the left
+    return out
+
+
 def pass_refused(kind: str, speed_mps: float, camera_degraded: bool) -> Optional[str]:
     """Why the van may not go round the thing standing in its way -- or None when it may.
 
@@ -1657,12 +1681,15 @@ class RoutePlanner:
     OVERTAKE_REJOIN_M = 16.0     # fully back in lane this far beyond it
 
     def plan_overtake(self, route: Route, ego_x, ego_y, obstacle_along_m,
-                      lane_ok=None):
-        """Rewrite the route to swing one lane LEFT around a dead vehicle
-        ahead and rejoin beyond it (straights only: refuses near junctions
-        or in bends). `lane_ok(x, y)` must confirm the shifted position is
-        on a real driving lane. Returns the rejoin point (Waypoint) or None
-        when the geometry does not allow a safe pass."""
+                      lane_ok=None, shift_m=None):
+        """Rewrite the route to move over around something standing ahead and rejoin beyond
+        it (straights only: refuses near junctions or in bends). `lane_ok(x, y)` must confirm
+        the moved-over position is ground the van may use. Returns the rejoin point
+        (Waypoint) or None when the geometry does not allow a safe pass.
+
+        `shift_m` is how far over to go: OVERTAKE_SHIFT_M (a whole lane to the LEFT) by
+        default, a smaller number for a nudge that stays inside our own lane, and a negative
+        one to move right. See pass_options."""
         wps = route.waypoints
         n = len(wps)
         if n < 10 or obstacle_along_m is None:
@@ -1674,6 +1701,7 @@ class RoutePlanner:
         for i in range(ci, n - 1):
             arcs.append(arcs[-1] + math.hypot(wps[i + 1].x - wps[i].x,
                                               wps[i + 1].y - wps[i].y))
+        over = self.OVERTAKE_SHIFT_M if shift_m is None else float(shift_m)
         # Full offset only PAST the car's centre: the whole approach is ramp,
         # putting ~2.7 m of clearance at its rear corner already (v1 clipped
         # the corner by demanding a full lane change inside 6 m).
@@ -1706,7 +1734,7 @@ class RoutePlanner:
             s = t * t * (3 - 2 * t)           # smoothstep, no lateral jerk
             wp = wps[i]
             right = (-math.sin(wp.yaw), math.cos(wp.yaw))
-            off = -self.OVERTAKE_SHIFT_M * s  # minus right-vector = LEFT
+            off = -over * s                   # minus right-vector = LEFT
             nx, ny = wp.x + right[0] * off, wp.y + right[1] * off
             if s > 0.5 and lane_ok is not None and k % 4 == 0:
                 if not lane_ok(nx, ny):

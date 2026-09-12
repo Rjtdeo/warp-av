@@ -201,3 +201,83 @@ def test_the_van_asks_this_before_it_goes_round_anything():
     assert "why_not = pass_refused(" in src
     i = src.index("OVERTAKE_STATES = ")
     assert "STOPPED_OBSTACLE" in src[i:i + 200] and "STOPPED_BLOCKED" in src[i:i + 200]
+
+
+# ---- the smallest way round: a nudge inside our own lane (2026-09-11) --------------------
+
+from warp_av.planning.planner import pass_options, LANE_EDGE_KEEP_M   # noqa: E402
+
+
+def test_the_nudge_is_tried_before_the_whole_lane():
+    ways = pass_options(3.5, 0.99, 3.6)
+    assert [w[0] for w in ways] == [0.71, -0.71, 3.6]
+    assert [w[1] for w in ways] == [True, True, False]
+
+
+def test_a_nudge_never_puts_the_body_over_the_line():
+    for lane in (2.6, 3.0, 3.5, 4.2):
+        over = pass_options(lane, 0.99, 3.6)[0][0]
+        assert over + 0.99 <= lane / 2.0 - LANE_EDGE_KEEP_M + 1e-9
+
+
+def test_a_lane_too_narrow_to_move_in_only_offers_the_whole_lane():
+    assert pass_options(2.0, 0.99, 3.6) == [(3.6, False)]
+
+
+def test_the_path_of_a_nudge_stays_where_it_should():
+    p, _ = way_round()
+    road = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
+    trial = Route(waypoints=list(road.waypoints))
+    assert p.plan_overtake(trial, 0.0, 0.0, LEAD, shift_m=0.7) is not None
+    ys = {round(w.x): w.y for w in trial.waypoints}
+    assert abs(ys[20] + 0.7) < 0.02 and abs(ys[40]) < 0.02          # over, then back
+
+
+def test_it_can_move_the_other_way_too():
+    p, _ = way_round()
+    road = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
+    trial = Route(waypoints=list(road.waypoints))
+    assert p.plan_overtake(trial, 0.0, 0.0, LEAD, shift_m=-0.7) is not None
+    assert abs({round(w.x): w.y for w in trial.waypoints}[20] - 0.7) < 0.02
+
+
+def test_a_nudge_gets_past_a_box_poking_into_the_lane_and_a_lane_change_is_not_needed():
+    """Live 2026-09-11: the van stood for 116 s in front of a box reaching 0.15 m into its
+    lane, with 0.6 m of road beside it."""
+    p, _ = way_round()
+    box = thing(LEAD + 2.0, 1.5, kind=ObjectType.OBSTACLE, h=0.7, w=0.66, l=0.65)
+    van = VehicleFootprint(half_length=2.95, half_width=0.99, safety_margin=0.30)
+    straight = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
+    assert p.pull_in_blocker(_Seen([box]), straight, 0.0, 0.0, 0.0, van,
+                             horizon_m=REJOIN) is not None, "it is in the way to begin with"
+    for over, in_lane in pass_options(3.5, 0.99, 3.6):
+        trial = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
+        assert p.plan_overtake(trial, 0.0, 0.0, LEAD, shift_m=over) is not None
+        if p.pull_in_blocker(_Seen([box]), trial, 0.0, 0.0, 0.0, van,
+                             horizon_m=REJOIN) is None:
+            assert in_lane and over > 0, "it should slide left inside its own lane"
+            return
+    raise AssertionError("no way round was found at all")
+
+
+def test_but_something_in_the_middle_of_the_lane_still_needs_a_lane_to_borrow():
+    p, _ = way_round()
+    barrel = thing(LEAD + 2.0, 0.0, kind=ObjectType.OBSTACLE, h=0.8, w=0.48, l=0.45)
+    van = VehicleFootprint(half_length=2.95, half_width=0.99, safety_margin=0.30)
+    taken = None
+    for over, in_lane in pass_options(3.5, 0.99, 3.6):
+        trial = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
+        if p.plan_overtake(trial, 0.0, 0.0, LEAD, shift_m=over) is None:
+            continue
+        if p.pull_in_blocker(_Seen([barrel]), trial, 0.0, 0.0, 0.0, van, horizon_m=REJOIN) is None:
+            taken = (over, in_lane)
+            break
+    assert taken == (3.6, False)
+
+
+def test_the_van_tries_them_in_that_order_and_creeps_while_it_squeezes():
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    assert "for over_m, in_lane in pass_options(" in src
+    assert "SQUEEZE_ABORT_M if in_lane else PASS_ABORT_M" in src
+    assert "SQUEEZE_SPEED_MPS if in_lane else PASS_SPEED_MPS" in src
