@@ -240,7 +240,11 @@ opinion** on the ground the van's body is about to cover (`planner.what_the_grou
 
 Measured 2026-09-11: over a 510 m mission the stop half fired 0 times (no false stops), and
 all three verdicts were seen on real ground. What it still does not do: `unknown_space` is
-`road_boundary` is still never produced, and the grid generates no paths — planning still
+`road_boundary` is produced now -- when a kerb line the LASER fitted (not the map) lies under
+where the van's own body would be in the next 2 to 6 m, the planner says so and the van is held
+to a crawl so the steering can bring it back (`main._road_edge_ahead`, `behavior.KERB_CRAWL_MPS`);
+where no kerb line has been fitted confidently, nothing is claimed and nothing changes. The grid
+generates no paths — planning still
 works off the route polyline and a corridor test. Unseen ground now caps the speed as well as
 the blind pocket beside the lane: the van may never go faster than it could stop inside the
 distance the laser has actually seen FREE ahead of it (`OccupancyGrid.free_distance` →
@@ -318,7 +322,8 @@ exist yet.
   again, which either finds another way to the same destination or answers None, and the van
   says which ("going round: a new route of 498 m" or "every way to the destination goes
   through the blockage"). It only helps while a junction still lies between the van and the
-  blockage -- with no reverse gear, a way round that starts behind the van is no way round --
+  blockage -- the van backs out a few metres at most, never along a street, so a way round
+  that starts behind it is no way round --
   and it does not re-plan for TIME, only for a block: a slow street is still driven.
 * **Geofence / ODD enforcement.** 40 `odd_boundary` scenarios define the contract; nothing
   enforces it.
@@ -446,9 +451,15 @@ faults.
 
 Real, but not perception or safety faults.
 
-* **Parking is forward-only.** No reverse or parallel manoeuvre, so a slot that has been
-  taken cannot be recovered from by backing out. Slot completion requires the whole van
-  inside the box, parallel to the lane within 6°.
+* **Reverse is a way out, not a manoeuvre.** The van backs straight out, up to 5 m at
+  0.8 m/s, and only over ground the laser has SEEN empty behind it, re-checked every tick
+  (`main._rear_is_clear`, over the same free-space map the forward check uses). It is used for
+  one thing: a parking spot it has turned into and cannot reach, after which it chooses
+  another. Measured 2026-09-11: "a kerb blocks the way into the spot -- backing out up to 5 m",
+  "backed out 5.0 m", then a bay 32 m further on. Still missing: no reversing along a road, no
+  parallel parking, no backing round a corner, and the laser alone says what is behind -- the
+  rear camera is not asked. Slot completion still requires the whole van inside the box,
+  parallel to the lane within 6°.
 * **The map cannot see painted kerb markings or mid-block driveways**, so a software-derived
   parking slot can still land on one. Hand-annotated no-parking zones per street are the
   clean fix.

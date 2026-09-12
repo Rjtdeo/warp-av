@@ -69,6 +69,10 @@ EASE_OFF_MPS = 0.35
 LIGHT_MEANS_STOP = ("red", "yellow", "unknown")
 
 
+#: How fast the van may go while its own body is heading over a kerb line.
+KERB_CRAWL_MPS = 1.5
+
+
 #: The front bumper stops this far short of a sign's line, rolls up to it below this much
 #: more, and counts as stopped below this speed, for this long. A stop sign means stopped.
 JUNCTION_ENTER_WITHIN_M = 6.0
@@ -271,6 +275,7 @@ class BehaviorSystem:
         blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
         speed_limit_mps: Optional[float] = None,  # the limit on this piece of road, from the map
         seen_ahead_m: Optional[float] = None,     # how far the laser has seen the road ahead FREE
+        over_the_kerb: bool = False,              # the fitted kerb line is under the van's path
         sign_m: Optional[float] = None,           # front bumper to the next sign's line, by road
         sign_kind: Optional[str] = None,          # "stop" or "give_way" (perception/road_signs)
         sign_at: Optional[tuple] = None,          # which sign that is: (road, lane, x, y)
@@ -291,6 +296,7 @@ class BehaviorSystem:
         self._blind_spot_m = blind_spot_m
         self._speed_limit_mps = speed_limit_mps
         self._seen_ahead_m = seen_ahead_m
+        self._over_the_kerb = bool(over_the_kerb)
         now = Situation(sign_m=sign_m, sign_kind=sign_kind, sign_at=sign_at,
                         junction_span=junction_span,
                         perception=perception, pose=pose,
@@ -837,6 +843,10 @@ class BehaviorSystem:
         if seen is not None:
             caps.append((stopping_speed_for(float(seen)),
                          f"the road is only seen clear for {float(seen):.1f} m"))
+        # About to put a wheel over the kerb the laser fitted: down to a crawl, so the
+        # steering has time to bring the van back before its body is over it.
+        if getattr(self, "_over_the_kerb", False):
+            caps.append((KERB_CRAWL_MPS, "the kerb is under where the van would be"))
         # The limit on this piece of road, from the map. Not a cap that can be argued with.
         limit = getattr(self, "_speed_limit_mps", None)
         if limit is not None:

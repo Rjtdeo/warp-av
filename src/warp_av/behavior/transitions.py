@@ -57,6 +57,9 @@ JUNCTION_PAUSE = "junction_pause"           # stopped at the line to look
 JUNCTION_GIVE_WAY = "junction_give_way"     # something is coming
 JUNCTION_TIMEOUT = "junction_timeout"       # waited long enough: creeping out
 
+# backing out of somewhere there is no way forward from
+REVERSING = "reversing"
+
 # the end of the mission
 DESTINATION_NEAR = "destination_near"
 PARKING_PULL_IN = "parking_pull_in"
@@ -78,12 +81,14 @@ GROUND_SEEN_FREE = "ground_seen_free"       # a body the corridor check drew on 
 GROUND_BLOCKED = "ground_blocked"           # ...and solid ground nothing was tracked on
 LANE_CHANGE_WAITING = "lane_change_waiting"  # holding our lane until the next one has a gap
 LANE_CHANGE_GO = "lane_change_go"            # ...and taking it
+BACKED_OUT = "backed_out"                    # ...and what came of it
 REROUTED = "rerouted"                       # another way to the same destination, round a block
 NO_WAY_ROUND = "no_way_round"               # ...and when the map says there is not one
 
 ALL_MOVES = (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
              SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP, GROUND_SEEN_FREE,
-             GROUND_BLOCKED, REROUTED, NO_WAY_ROUND, LANE_CHANGE_WAITING, LANE_CHANGE_GO)
+             GROUND_BLOCKED, REROUTED, NO_WAY_ROUND, LANE_CHANGE_WAITING, LANE_CHANGE_GO,
+             BACKED_OUT)
 
 ALL_WHY = (
     SAFETY_HOLD, LOCALIZATION_LOST, PERCEPTION_LOST, NO_MISSION,
@@ -93,7 +98,7 @@ ALL_WHY = (
     LIGHT_ROLL_UP, LIGHT_HOLD,
     SIGN_ROLL_UP, SIGN_STOP_HOLD, SIGN_GIVE_WAY, LANE_CHANGE_WAIT,
     JUNCTION_KEEP_CLEAR, JUNCTION_ROLL_UP, JUNCTION_PAUSE, JUNCTION_GIVE_WAY, JUNCTION_TIMEOUT,
-    DESTINATION_NEAR, PARKING_PULL_IN, PARKED, PARKED_OVERSHOT,
+    REVERSING, DESTINATION_NEAR, PARKING_PULL_IN, PARKED, PARKED_OVERSHOT,
 )
 
 

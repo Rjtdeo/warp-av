@@ -49,6 +49,7 @@ from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
                                    GROUND_SEEN_FREE, GROUND_BLOCKED, REROUTED, NO_WAY_ROUND,
+                                   BACKED_OUT, REVERSING,
                                    VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
                                    JUNCTION_KEEP_CLEAR, LANE_CHANGE_WAIT, LANE_CHANGE_WAITING,
                                    LANE_CHANGE_GO)
@@ -62,7 +63,7 @@ from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
 from .planning.instrumentation import (PhaseTimer, PlannerDecision, BLOCKED_OCCUPANCY,
-                                       UNKNOWN_SPACE)
+                                       UNKNOWN_SPACE, CLEAR, ROAD_BOUNDARY)
 from .planning.footprint_config import FootprintBlockingConfig
 from .planning.parking_check import spot_view, spot_counts, SPOT_DEFAULT_LEN_M, SPOT_DEFAULT_WID_M
 from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
@@ -406,8 +407,9 @@ class WarpAV:
         """A street that stays blocked is a street to go round: ask the map for another way to
         the same destination, and take it if there is one.
 
-        Only worth asking while a junction still lies between the van and the blockage -- the
-        van has no reverse gear, so a way round that starts behind it is no way round at all.
+        Only worth asking while a junction still lies between the van and the blockage: the van
+        backs out a few metres at most (_start_backing_out), never along a street, so a way
+        round that starts behind it is no way round at all.
         planner.plan_route_avoiding makes that piece of road expensive and searches again; it
         answers None when every route to the destination still goes through it.
         """
@@ -514,6 +516,102 @@ class WarpAV:
         behavior_output.reason += f" | waiting for a gap to move over: {why}"
         behavior_output.why = LANE_CHANGE_WAIT
 
+    #: Backing out of somewhere there is no way forward from: how far, how fast, and how much
+    #: clear ground the laser must see behind before each metre of it.
+    REVERSE_MAX_M = 5.0
+    REVERSE_SPEED_MPS = 0.8
+    REVERSE_LOOK_M = 7.0
+    REVERSE_TIMEOUT_S = 20.0
+
+    #: Where the van's own body would be in a moment, asked of the kerb lines the laser fitted
+    #: (perception/road_edges.py). Not the map: the map says where the road is drawn, these say
+    #: where the kerb actually is.
+    ROAD_EDGE_LOOK_M = (2.0, 4.0, 6.0)
+
+    def _road_edge_ahead(self, pose):
+        """Would the van's body be over a kerb in the next few metres? (planner: road_boundary)
+
+        Answered only where the laser has fitted a kerb line it is confident about; where it
+        has not, the answer is no answer, and nothing changes.
+        """
+        edges = getattr(self.perception, "road_edges", None)
+        if edges is None:
+            return False
+        half = self.footprint_blocking.footprint.half_width
+        for x in self.ROAD_EDGE_LOOK_M:
+            for y in (-half, half):
+                if edges.drivable(x, y) is False:
+                    return True
+        return False
+
+    def _rear_is_clear(self, pose):
+        """Has the laser SEEN the ground behind the van empty, as far as it would back up?
+
+        The same question the second opinion asks of the ground ahead, asked backwards: solid
+        squares or unseen ground behind mean the van does not move into them.
+        """
+        grid = getattr(self.perception, "grid", None)
+        if grid is None:
+            return False
+        rear = self.footprint_blocking.footprint.half_length
+        half = self.footprint_blocking.footprint.swept_half_width
+        counts = grid.strip_ahead(-(rear + self.REVERSE_LOOK_M), -(rear + 0.2), half)
+        return what_the_ground_says(counts) == CLEAR
+
+    def _start_backing_out(self, pose, why):
+        """Begin a short straight reverse, if the ground behind allows it. True if begun."""
+        if getattr(self, "_reversing", None) is not None:
+            return True
+        if not self._rear_is_clear(pose):
+            self._note_move(BACKED_OUT, f"{why}, but the ground behind is not seen clear — "
+                                        f"not backing out")
+            return False
+        self._reversing = {"from": (pose.x, pose.y), "why": why, "began": time.time()}
+        self._note_move(BACKED_OUT, f"{why} — backing out up to {self.REVERSE_MAX_M:.0f} m")
+        print(f"[Reverse] {why} — backing out")
+        return True
+
+    def _keep_backing_out(self, pose, behavior_output):
+        """Drive the reverse, one tick at a time, and stop it the moment anything is wrong."""
+        backing = getattr(self, "_reversing", None)
+        if backing is None:
+            return
+        gone = math.hypot(pose.x - backing["from"][0], pose.y - backing["from"][1])
+        done, why = None, backing["why"]
+        if gone >= self.REVERSE_MAX_M:
+            done = f"backed out {gone:.1f} m"
+        elif time.time() - backing["began"] > self.REVERSE_TIMEOUT_S:
+            done = f"gave up backing out after {gone:.1f} m"
+        elif not self._rear_is_clear(pose):
+            done = f"stopped backing out after {gone:.1f} m: the ground behind is no longer clear"
+        if done is not None:
+            self._reversing = None
+            self._note_move(BACKED_OUT, done)
+            print(f"[Reverse] {done}")
+            behavior_output.desired_speed_mps = 0.0
+            behavior_output.should_stop = True
+            behavior_output.reason = f"{done} — {why}"
+            behavior_output.why = REVERSING
+            return
+        behavior_output.desired_speed_mps = -self.REVERSE_SPEED_MPS
+        behavior_output.should_stop = False
+        behavior_output.behavior = DrivingBehavior.PARKING
+        behavior_output.reason = f"Backing out ({gone:.1f} m of {self.REVERSE_MAX_M:.0f}) — {why}"
+        behavior_output.why = REVERSING
+
+    def _after_backing_out(self, pose):
+        """Whatever the van backed out FOR, do now. Today that is always choosing another
+        parking spot: it backed out of one it could not reach."""
+        pending = getattr(self, "_after_reverse", None)
+        if pending is None:
+            return
+        self._after_reverse = None
+        if pending == "rechoose_parking":
+            try:
+                self._rechoose_parking(pose, "backed out of a spot the van could not get into")
+            except Exception as e:
+                print(f"[Reverse] could not choose another spot: {e}")
+
     def _forget_the_manoeuvre(self):
         """A pass belongs to the mission it was begun in. A mission cancelled mid-pass used to
         leave the rejoin point set for ever, and everything that asks "am I mid-pass?" kept
@@ -521,6 +619,8 @@ class WarpAV:
         ground was switched off for the rest of the stack's life (found live 2026-09-11)."""
         self._overtake_point = None
         self._overtake_retry_at = 0.0
+        self._reversing = None
+        self._after_reverse = None
         self._gap_wait_since = None
         self._gap_given_up_until = 0.0
         self._blocked_since = None
@@ -946,6 +1046,7 @@ class WarpAV:
             light_id=(signal.light_id if signal is not None else None),
             speed_limit_mps=self._speed_limit_mps(pose),
             seen_ahead_m=self._seen_ahead_m(),
+            over_the_kerb=self._road_edge_ahead(pose),
             sign_m=sign_m, sign_kind=sign_kind, sign_at=sign_at,
             junction_span=(self.planner.junction_span(self._route, pose.x, pose.y)
                            if self._route else None),
@@ -1011,6 +1112,17 @@ class WarpAV:
                 self._confirm_parking_spot(pose, behavior_output, dest_dist)
             except Exception as e:
                 print(f"[Parking] could not check the spot: {e}")
+
+        # Backing out of somewhere there is no way forward from: nothing else decides while
+        # the van is going backwards.
+        try:
+            self._keep_backing_out(pose, behavior_output)
+        except Exception as e:
+            print(f"[Reverse] failed: {e}")
+        if getattr(self, "_reversing", None) is not None:
+            behavior_output.reason += ""          # everything below is for going forwards
+        else:
+            self._after_backing_out(pose)
 
         # Changing lane: look into the lane the route moves into, and wait for a gap.
         try:
@@ -2663,8 +2775,9 @@ class WarpAV:
     def _maybe_give_up_on_the_spot(self, perception, behavior_output, dest_dist, pose):
         """Blocked on the way into the parking spot by something that will not move
         (planner.WaitingIsPointless). Before the pull-in has begun: choose another spot. Once
-        it has begun there is no way forward and no reverse gear -- the mission FAILS, saying
-        why, and the van stays where it is.
+        it has begun, the van backs out of the spot -- once, and only over ground the laser has
+        seen clear behind it -- and chooses another. If it cannot back out, or the next spot is
+        blocked too, the mission FAILS, saying why, and the van stays where it is.
 
         This used to finish the mission right there and call it parked: measured against
         CARLA on 2026-09-11, that left the van 39 degrees across the driving lane, 4.1 m of
@@ -2687,7 +2800,17 @@ class WarpAV:
         if not turning_in:
             self._rechoose_parking(pose, f"the way in is blocked by a {what} that will not move")
             return
-        why = f"Could not get into the parking spot: a {what} blocks the way in (no reverse gear)"
+        spot_key = (round(sp.get("x", 0.0), 1), round(sp.get("y", 0.0), 1))
+        if getattr(self, "_backed_out_for", None) != spot_key:
+            # There IS a reverse gear now: back out of the spot and try another one, rather
+            # than ending the mission where the van happens to be standing.
+            self._backed_out_for = spot_key
+            if self._start_backing_out(pose, f"a {what} blocks the way into the spot"):
+                self._after_reverse = "rechoose_parking"
+                self._give_up = WaitingIsPointless()
+                return
+        why = (f"Could not get into the parking spot: a {what} blocks the way in, and backing "
+               f"out did not find another")
         self.mission_manager.fail_mission(why)
         self.behavior.has_mission = False
         behavior_output.behavior = DrivingBehavior.STOPPED_BLOCKED
@@ -2743,6 +2866,14 @@ class WarpAV:
         counts = grid.strip_ahead(front, front + GROUND_LOOK_M, half)
         self._ground_says = what_the_ground_says(counts)
         if self._ground_says != BLOCKED_OCCUPANCY:
+            if self._ground_says is not None and self._road_edge_ahead(pose):
+                # the laser's own kerb line says the van's body would be over it
+                self._ground_says = ROAD_BOUNDARY
+                try:
+                    if self.planner.last_decision.reason == CLEAR:
+                        self.planner.last_decision.reason = ROAD_BOUNDARY
+                except Exception:
+                    pass
             return
         at = grid.nearest_block_ahead(front, front + GROUND_LOOK_M, half)
         if at is None:

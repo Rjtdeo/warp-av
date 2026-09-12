@@ -153,3 +153,37 @@ def test_lane_validities_sweep_up_kerbs_and_pavements():
     """A sign's validity range covers every lane id between two numbers, which on Town10HD
     includes 0.6 m kerb strips and 6 m pavements. Only real lanes are kept."""
     assert MIN_LANE_WIDTH_M >= 2.0
+
+
+# ---- the kerb the laser fitted (P2's road_boundary, at last) ------------------------------
+
+from warp_av.planning.instrumentation import ROAD_BOUNDARY, ALL_REASONS  # noqa: E402
+from warp_av.behavior.behavior import KERB_CRAWL_MPS  # noqa: E402
+
+
+def test_heading_over_the_kerb_is_a_crawl():
+    b = van()
+    out = drive(b, over_the_kerb=True)
+    assert out.desired_speed_mps == KERB_CRAWL_MPS
+    assert "kerb is under where the van would be" in out.reason
+
+
+def test_and_changes_nothing_when_it_is_not():
+    b = van()
+    assert drive(b, over_the_kerb=False).desired_speed_mps == b.cruise_speed
+
+
+def test_a_stop_still_beats_it():
+    b = van()
+    seen = PerceptionOutput(closest_obstacle_distance=4.0, path_blocked=True)
+    assert drive(b, perception=seen, over_the_kerb=True).should_stop
+
+
+def test_the_van_asks_the_laser_kerb_lines_not_the_map():
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("def _road_edge_ahead")
+    body = src[i:i + 1200]
+    assert 'edges = getattr(self.perception, "road_edges", None)' in body
+    assert "edges.drivable(x, y) is False" in body, "no answer is not a wrong answer"
+    assert "self.planner.last_decision.reason = ROAD_BOUNDARY" in src
+    assert ROAD_BOUNDARY in ALL_REASONS

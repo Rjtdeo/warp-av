@@ -73,6 +73,9 @@ class VehicleController:
     BRAKE_GAIN = 0.35         # proportional brake beyond the coast band
     SERVICE_BRAKE_CAP = 0.6   # normal slowing never exceeds this (~3.6 m/s^2);
                               # should_stop / e-stop paths still use full brake
+    #: Backing out is slow and gentle on purpose: it is a way out of a corner, not a manoeuvre.
+    REVERSE_MAX_MPS = 0.9
+    REVERSE_THROTTLE = 0.35
     SPEED_SLEW_UP = 0.15      # max increase of the speed target per tick
     # ...and the same for a FALL, so easing off is a decision the van rides out rather than a
     # step. 0.40 m/s a tick at ~9 ticks a second is 3.6 m/s2 -- firm, but a ramp rather than a
@@ -117,6 +120,22 @@ class VehicleController:
         """
         if not self._enabled:
             return VehicleCommand(brake=1.0)  # fail-safe: brake
+
+        # --- REVERSE: a short, straight backing out, asked for with a negative speed.
+        # Straight only, and slow: nothing can be swung into on the way out, and whoever asked
+        # for it (main.py) is watching the ground behind every tick.
+        if desired_speed < 0.0 and not should_stop:
+            self.speed_pid.reset()
+            self._last_steer = 0.0
+            self._desired_eff = 0.0
+            want = min(self.REVERSE_MAX_MPS, -float(desired_speed))
+            error = want - max(0.0, current_speed)
+            return VehicleCommand(
+                steering=0.0,
+                throttle=min(self.REVERSE_THROTTLE, 0.18 + 0.20 * error) if error > 0.05 else 0.0,
+                brake=0.0 if error > -0.2 else 0.3,
+                gear=GearState.REVERSE
+            )
 
         # --- STOP ---
         if should_stop or desired_speed <= 0:
