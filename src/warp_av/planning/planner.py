@@ -354,6 +354,12 @@ def obstacle_box_for(obj, ego_yaw: float):
 PASSING_LANE_BAND_M = (-6.5, -0.8)
 OUR_LANE_BAND_M = (-1.6, 1.6)
 #: How far back along the passing lane traffic is looked for, and ahead of the dead lead.
+#: How much longer than the pass itself the oncoming lane must stay clear for, and how long a
+#: pass is assumed to take when the caller does not say: swinging out, by, and back at the
+#: speed the van actually passes at is about this, and guessing short is the unsafe way to be
+#: wrong.
+PASS_GAP_MARGIN_S = 3.0
+PASS_TAKES_S = 9.0
 PASS_LOOK_BACK_M = 40.0
 PASS_LOOK_PAST_LEAD_M = 45.0
 
@@ -365,6 +371,10 @@ PASS_STILL_MPS = 0.3
 #: The van may move this close to its own lane's edge while squeezing past something without
 #: leaving the lane. 5 cm of paint is not clearance, but it is not a lane change either.
 LANE_EDGE_KEEP_M = 0.05
+#: How far onto the hard shoulder the van will go when there is no lane to borrow at all: a
+#: single-lane street with something in the middle of it. Half a lane, so the van is beside
+#: the thing rather than on top of the kerb.
+SHOULDER_SHIFT_M = 1.8
 
 
 #: How far the route has to leave the van's line before it is a change of lane and not a bend.
@@ -420,8 +430,8 @@ def lane_change_blocker(objects, side: int, ego_yaw: float) -> Optional[str]:
 
 
 def pass_options(lane_width_m: float, van_half_width_m: float, full_shift_m: float):
-    """The ways round something in the lane, smallest first: (how far over, does it stay in
-    our lane).
+    """The ways round something in the lane, smallest first: (how far over, does it stay in our
+    lane, may it use the hard shoulder).
 
     A nudge inside our own lane first, either way round, and only then the whole lane. On a
     3.5 m lane a 1.98 m van has 0.75 m of room to move over before its body is on the line,
@@ -432,9 +442,12 @@ def pass_options(lane_width_m: float, van_half_width_m: float, full_shift_m: flo
     room = 0.5 * float(lane_width_m) - float(van_half_width_m) - LANE_EDGE_KEEP_M
     out = []
     if room > 0.1:
-        out.append((round(room, 2), True))          # left, staying in our lane
-        out.append((round(-room, 2), True))         # right, staying in our lane
-    out.append((float(full_shift_m), False))        # and then a whole lane to the left
+        out.append((round(room, 2), True, False))     # left, staying in our lane
+        out.append((round(-room, 2), True, False))    # right, staying in our lane
+    out.append((float(full_shift_m), False, False))   # then a whole lane to the left
+    # ...and last of all, the hard shoulder on the right: only where the map says there is one
+    # wide enough to stand the van on, and never before the lane has been tried.
+    out.append((-SHOULDER_SHIFT_M, False, True))
     return out
 
 
@@ -473,7 +486,8 @@ def body_centre(obj):
             float(obj.y) + float(getattr(obj, "box_dy", 0.0) or 0.0))
 
 
-def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: float) -> Optional[str]:
+def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: float,
+                     pass_takes_s: float = PASS_TAKES_S, ego_speed_mps: float = 0.0) -> Optional[str]:
     """Why MOVING traffic says the van may not swing out past a dead lead vehicle now, or None.
 
     Judged by where it is and where it is going:
@@ -504,8 +518,20 @@ def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: floa
         in_passing = PASSING_LANE_BAND_M[0] < y < PASSING_LANE_BAND_M[1]
         in_ours = OUR_LANE_BAND_M[0] <= y <= OUR_LANE_BAND_M[1]
         if x >= -2.0:
-            if in_passing and dist < lead_d + PASS_LOOK_PAST_LEAD_M:
-                return f"moving {kind} in the passing lane {dist:.0f} m ahead"
+            if in_passing:
+                # coming AT us (the borrowed lane is often the oncoming one): what matters is
+                # not how far away it is but whether the pass can be finished before it
+                # arrives. Distance alone said 45 m was enough at any speed.
+                along = (float(getattr(obj, "vx_world", 0.0) or 0.0) * c
+                         + float(getattr(obj, "vy_world", 0.0) or 0.0) * s)
+                closing = -along + max(0.0, float(ego_speed_mps or 0.0))
+                if along < -0.3 and closing > 0.3:
+                    meets_in = dist / closing
+                    if meets_in < pass_takes_s + PASS_GAP_MARGIN_S:
+                        return (f"oncoming {kind} {dist:.0f} m away meets us in {meets_in:.0f} s "
+                                f"and the pass needs {pass_takes_s:.0f} s")
+                elif dist < lead_d + PASS_LOOK_PAST_LEAD_M:
+                    return f"moving {kind} in the passing lane {dist:.0f} m ahead"
             if in_ours and x > 0.0 and dist < rejoin_room_m:
                 return f"no room to pull back in: moving {kind} {dist:.0f} m ahead"
         elif in_passing and dist < PASS_LOOK_BACK_M:

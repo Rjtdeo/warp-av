@@ -55,8 +55,21 @@ def test_someone_moving_where_the_van_pulls_back_in_stops_it():
 
 
 def test_traffic_in_the_passing_lane_ahead_stops_it():
+    """Coming AT us, what matters is whether the pass can be finished before it arrives."""
     oncoming = thing(30.0, -3.5, speed=6.0, stationary=False, vx=-6.0)
-    assert "passing lane" in overtake_blocker([lead(), oncoming], LEAD, REJOIN, 0.0)
+    why = overtake_blocker([lead(), oncoming], LEAD, REJOIN, 0.0, pass_takes_s=9.0)
+    assert "oncoming" in why and "meets us in 5 s" in why
+
+
+def test_a_gap_in_the_oncoming_lane_big_enough_for_the_pass_is_taken():
+    far_off = thing(150.0, -3.5, speed=6.0, stationary=False, vx=-6.0)     # 25 s away
+    assert overtake_blocker([lead(), far_off], LEAD, REJOIN, 0.0, pass_takes_s=9.0) is None
+
+
+def test_a_car_going_the_same_way_in_that_lane_is_judged_by_distance_not_time():
+    same_way = thing(30.0, -3.5, speed=6.0, stationary=False, vx=6.0)
+    assert "passing lane" in overtake_blocker([lead(), same_way], LEAD, REJOIN, 0.0,
+                                              pass_takes_s=9.0)
 
 
 def test_a_car_coming_up_behind_in_the_passing_lane_stops_it():
@@ -205,13 +218,15 @@ def test_the_van_asks_this_before_it_goes_round_anything():
 
 # ---- the smallest way round: a nudge inside our own lane (2026-09-11) --------------------
 
-from warp_av.planning.planner import pass_options, LANE_EDGE_KEEP_M   # noqa: E402
+from warp_av.planning.planner import (pass_options, LANE_EDGE_KEEP_M,  # noqa: E402
+                                      SHOULDER_SHIFT_M)
 
 
-def test_the_nudge_is_tried_before_the_whole_lane():
+def test_the_nudge_is_tried_before_the_whole_lane_and_the_shoulder_last():
     ways = pass_options(3.5, 0.99, 3.6)
-    assert [w[0] for w in ways] == [0.71, -0.71, 3.6]
-    assert [w[1] for w in ways] == [True, True, False]
+    assert [w[0] for w in ways] == [0.71, -0.71, 3.6, -SHOULDER_SHIFT_M]
+    assert [w[1] for w in ways] == [True, True, False, False]
+    assert [w[2] for w in ways] == [False, False, False, True], "only the last may use it"
 
 
 def test_a_nudge_never_puts_the_body_over_the_line():
@@ -220,8 +235,8 @@ def test_a_nudge_never_puts_the_body_over_the_line():
         assert over + 0.99 <= lane / 2.0 - LANE_EDGE_KEEP_M + 1e-9
 
 
-def test_a_lane_too_narrow_to_move_in_only_offers_the_whole_lane():
-    assert pass_options(2.0, 0.99, 3.6) == [(3.6, False)]
+def test_a_lane_too_narrow_to_move_in_offers_the_lane_and_the_shoulder():
+    assert pass_options(2.0, 0.99, 3.6) == [(3.6, False, False), (-SHOULDER_SHIFT_M, False, True)]
 
 
 def test_the_path_of_a_nudge_stays_where_it_should():
@@ -250,7 +265,7 @@ def test_a_nudge_gets_past_a_box_poking_into_the_lane_and_a_lane_change_is_not_n
     straight = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
     assert p.pull_in_blocker(_Seen([box]), straight, 0.0, 0.0, 0.0, van,
                              horizon_m=REJOIN) is not None, "it is in the way to begin with"
-    for over, in_lane in pass_options(3.5, 0.99, 3.6):
+    for over, in_lane, _shoulder in pass_options(3.5, 0.99, 3.6):
         trial = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
         assert p.plan_overtake(trial, 0.0, 0.0, LEAD, shift_m=over) is not None
         if p.pull_in_blocker(_Seen([box]), trial, 0.0, 0.0, 0.0, van,
@@ -265,7 +280,7 @@ def test_but_something_in_the_middle_of_the_lane_still_needs_a_lane_to_borrow():
     barrel = thing(LEAD + 2.0, 0.0, kind=ObjectType.OBSTACLE, h=0.8, w=0.48, l=0.45)
     van = VehicleFootprint(half_length=2.95, half_width=0.99, safety_margin=0.30)
     taken = None
-    for over, in_lane in pass_options(3.5, 0.99, 3.6):
+    for over, in_lane, _shoulder in pass_options(3.5, 0.99, 3.6):
         trial = Route(waypoints=[Waypoint(x=i * 2.0, y=0.0, yaw=0.0) for i in range(60)])
         if p.plan_overtake(trial, 0.0, 0.0, LEAD, shift_m=over) is None:
             continue
@@ -278,6 +293,9 @@ def test_but_something_in_the_middle_of_the_lane_still_needs_a_lane_to_borrow():
 def test_the_van_tries_them_in_that_order_and_creeps_while_it_squeezes():
     from pathlib import Path
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
-    assert "for over_m, in_lane in pass_options(" in src
-    assert "SQUEEZE_ABORT_M if in_lane else PASS_ABORT_M" in src
-    assert "SQUEEZE_SPEED_MPS if in_lane else PASS_SPEED_MPS" in src
+    assert "for over_m, in_lane, on_shoulder in pass_options(" in src
+    assert "SQUEEZE_ABORT_M if (in_lane or on_shoulder) else PASS_ABORT_M" in src
+    assert "SQUEEZE_SPEED_MPS if (in_lane or on_shoulder)" in src
+    assert "self._shoulder_ok if on_shoulder else self._lane_ok" in src, \
+        "only the shoulder option may use the shoulder"
+    assert "pass_takes_s=pass_takes_s, ego_speed_mps=pose.speed" in src

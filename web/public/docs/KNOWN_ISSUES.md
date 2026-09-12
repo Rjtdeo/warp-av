@@ -385,10 +385,16 @@ faults.
   rather than 1.6 m, or it would freeze beside what it is passing. Measured 2026-09-11: a box
   reaching 0.58 m into the lane squeezed past inside the lane with 0.72 m to spare at
   1.95 m/s; a barrel in the middle of the lane still took a whole lane, as it must.
-  What is still missing: 0.71 m is all a 1.98 m van has inside a 3.5 m lane, so anything
-  sitting near the middle of a single-lane road still stops it -- there is no rule for using
-  the shoulder, the pavement or the oncoming lane, and none for waiting for a gap in oncoming
-  traffic to use it.
+  When the lane itself is not enough, the van borrows: the lane to the left (which on a
+  single-lane street is the ONCOMING one) and, last of all, the hard shoulder -- half on the
+  lane, half on the shoulder, with its outer side kept on ground the map says it may use
+  (`main._shoulder_ok`). Oncoming traffic is judged on TIME, not distance: the pass is refused
+  unless the lane stays clear for as long as the pass needs plus three seconds
+  (`planner.overtake_blocker`, `PASS_TAKES_S`). Measured 2026-09-11: a barrel in the middle of
+  the lane with the next lane occupied went past on the shoulder, 1.8 m over, 0.31 m between
+  the bodies, 0 collisions. What is still missing: the van will not use a pavement or a bus
+  lane, it cannot creep forward to see round what it is behind, and nothing checks whether the
+  shoulder is somewhere it is ALLOWED to drive rather than merely wide enough.
 * **Speed is a set of caps, not a plan.** The wanted speed is the cruising speed, capped by
   the limit on this piece of road (from the map), the bend ahead, the distance the laser has
   seen clear, the nearest unseen pocket beside the lane, a missing sense, and the car in

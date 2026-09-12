@@ -86,6 +86,9 @@ SEEN_FREE_MIN_LOOK_M = 2.0
 #: van stops mid-manoeuvre, and how fast it may go. A squeeze inside the lane passes within
 #: arm's reach of the thing by design, so the lane change's 1.6 m would freeze it beside what
 #: it is passing; 1.0 m from the van's middle is 1 cm from its side.
+#: How much ground the van leaves beyond its outer wheels when it puts half of itself on the
+#: shoulder to get past something.
+SHOULDER_EDGE_KEEP_M = 0.10
 PASS_ABORT_M, SQUEEZE_ABORT_M = 1.6, 1.0
 PASS_SPEED_MPS, SQUEEZE_SPEED_MPS = 3.0, 2.0
 
@@ -2428,6 +2431,38 @@ class WarpAV:
         except Exception:
             return False
 
+    def _shoulder_ok(self, x, y):
+        """May the van stand here, half on the lane and half on what is beside it?
+
+        Not "is there a shoulder wide enough for the whole van" -- the van straddles the lane
+        edge, so what matters is that its RIGHT SIDE stays on ground it may use. The shoulder
+        beside the test road is 2.0 m: too narrow to hold a 1.98 m van, wide enough to carry
+        its outer half (measured 2026-09-11, when the first version of this refused it).
+
+        Only ever asked for the last way round something (planner.pass_options): a street with
+        nothing to borrow and something in the middle of it.
+        """
+        try:
+            cmap = self.vehicle_adapter.get_map()
+            wp = cmap.get_waypoint(carla.Location(x=x, y=y, z=0.3), lane_type=carla.LaneType.Driving)
+            if wp is None:
+                return False
+            t = wp.transform
+            h = math.radians(t.rotation.yaw)
+            lat = -(x - t.location.x) * math.sin(h) + (y - t.location.y) * math.cos(h)
+            if lat <= 0.0:
+                return self._lane_ok(x, y)          # to the left: that is a lane question
+            beside = wp.get_right_lane()
+            if beside is None or beside.lane_type not in (carla.LaneType.Shoulder,
+                                                          carla.LaneType.Parking,
+                                                          carla.LaneType.Driving):
+                return False
+            room = 0.5 * float(wp.lane_width) + float(beside.lane_width)
+            half = self.footprint_blocking.footprint.half_width
+            return lat + half + SHOULDER_EDGE_KEEP_M <= room
+        except Exception:
+            return False
+
     def _lane_width(self, pose, fallback_m=3.5):
         """How wide the lane under the van is -- what says whether there is room to squeeze
         past something inside it (planner.pass_options)."""
@@ -2499,7 +2534,10 @@ class WarpAV:
             return
         # Clearance: traffic moving where the pass would go (planner.overtake_blocker)...
         back_in_m = lead_d + self.planner.OVERTAKE_REJOIN_M + 8.0
-        why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw)
+        cruise = max(2.0, float(getattr(self.behavior, "cruise_speed", 4.0)))
+        pass_takes_s = back_in_m / cruise
+        why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw,
+                               pass_takes_s=pass_takes_s, ego_speed_mps=pose.speed)
         if why is not None:
             waiting(why)
             return
@@ -2507,14 +2545,18 @@ class WarpAV:
         # lane first, either way round, and only then a whole lane (planner.pass_options).
         # Each is planned on a copy, because plan_overtake rewrites the route it is given.
         taken, refused = None, "geometry refused (bend/junction/no lane/route end)"
-        for over_m, in_lane in pass_options(self._lane_width(pose),
-                                            self.footprint_blocking.footprint.half_width,
-                                            self.planner.OVERTAKE_SHIFT_M):
+        for over_m, in_lane, on_shoulder in pass_options(
+                self._lane_width(pose), self.footprint_blocking.footprint.half_width,
+                self.planner.OVERTAKE_SHIFT_M):
             trial = Route(waypoints=list(self._route.waypoints),
                           total_distance=self._route.total_distance)
-            rejoin = self.planner.plan_overtake(trial, pose.x, pose.y, lead_d,
-                                                lane_ok=self._lane_ok, shift_m=over_m)
+            rejoin = self.planner.plan_overtake(
+                trial, pose.x, pose.y, lead_d, shift_m=over_m,
+                lane_ok=self._shoulder_ok if on_shoulder else self._lane_ok)
             if rejoin is None:
+                refused = (f"{abs(over_m):.2f} m over "
+                           f"{'onto the shoulder ' if on_shoulder else ''}is refused by the "
+                           f"geometry (bend/junction/no ground to use/route end)")
                 continue
             # ...and what stands on it: the van's body slid along that path, as before a pull-in
             in_way = self.planner.pull_in_blocker(perception, trial, pose.x, pose.y, pose.yaw,
@@ -2533,13 +2575,16 @@ class WarpAV:
             return
         over_m, in_lane, trial, rejoin = taken
         way = (f"squeezing past inside our own lane, {abs(over_m):.2f} m over to the "
-               f"{'left' if over_m > 0 else 'right'}" if in_lane else "passing on the left")
+               f"{'left' if over_m > 0 else 'right'}" if in_lane else
+               f"onto the hard shoulder, {abs(over_m):.1f} m over to the right"
+               if on_shoulder else "passing on the left")
         self._route.waypoints = trial.waypoints          # one swap: the tick may be reading it
         self._overtake_point = rejoin
         # While squeezing, the thing IS close: the abort line has to be the body's, not the
         # lane change's 1.6 m, or the van would freeze beside what it is passing.
-        self._overtake_tight_m = SQUEEZE_ABORT_M if in_lane else PASS_ABORT_M
-        self._overtake_cap_mps = SQUEEZE_SPEED_MPS if in_lane else PASS_SPEED_MPS
+        self._overtake_tight_m = SQUEEZE_ABORT_M if (in_lane or on_shoulder) else PASS_ABORT_M
+        self._overtake_cap_mps = (SQUEEZE_SPEED_MPS if (in_lane or on_shoulder)
+                                  else PASS_SPEED_MPS)
         self._blocked_since = None
         try:
             self.logger.log_event(
