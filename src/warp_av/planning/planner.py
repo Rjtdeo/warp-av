@@ -367,6 +367,58 @@ PASS_STILL_MPS = 0.3
 LANE_EDGE_KEEP_M = 0.05
 
 
+#: How far the route has to leave the van's line before it is a change of lane and not a bend.
+LANE_CHANGE_IS_M = 2.0
+
+
+#: Looking into the lane the van is about to move into: how far ahead a standing thing counts,
+#: how far ahead moving traffic counts, and how far back a car coming up it counts.
+#:
+#: A thing standing in that lane only stops the MOVE while it is close enough that moving over
+#: would put the van into it. Further off it is not a reason to stay put: the van changes lane
+#: and then the corridor check deals with what is in front of it, as it does in any lane. Live
+#: on 2026-09-11 a 25 m rule had the van waiting behind parked cars for a gap that could never
+#: come, and one 510 m mission ran out of time 166 m short; 12 m was still enough to hold it
+#: in front of a kerbside blob for the whole of the next run.
+LANE_CHANGE_STANDING_M = 6.0
+LANE_CHANGE_AHEAD_M = 35.0
+LANE_CHANGE_BEHIND_M = 40.0
+
+
+def lane_change_blocker(objects, side: int, ego_yaw: float) -> Optional[str]:
+    """Why the van may not move over into the next lane yet, or None when it may.
+
+    `side` is +1 for the lane on the right, -1 for the left. The same question the go-around
+    asks of the lane it borrows (overtake_blocker), asked of the lane the ROUTE says to move
+    into: anything standing in it ahead, anything moving in it ahead, or anything coming up it
+    from behind. Until 2026-09-11 nothing looked at all -- the map said change lane and the van
+    swerved across.
+    """
+    from .prediction import could_use_a_road
+    lo, hi = (PASSING_LANE_BAND_M if side < 0
+              else (-PASSING_LANE_BAND_M[1], -PASSING_LANE_BAND_M[0]))
+    c, s = math.cos(ego_yaw), math.sin(ego_yaw)
+    for obj in objects or []:
+        x, y = body_centre(obj)
+        if not (lo < y < hi):
+            continue
+        dist = math.hypot(x, y)
+        kind = getattr(getattr(obj, "object_type", None), "value", "thing")
+        moving = (float(getattr(obj, "speed", 0.0) or 0.0) > PASS_STILL_MPS
+                  and not getattr(obj, "stationary", False) and could_use_a_road(obj))
+        if x >= -2.0:
+            if moving and dist < LANE_CHANGE_AHEAD_M:
+                return f"moving {kind} {dist:.0f} m ahead in that lane"
+            if not moving and dist < LANE_CHANGE_STANDING_M:
+                return f"{kind} standing {dist:.0f} m ahead in that lane"
+        elif moving and dist < LANE_CHANGE_BEHIND_M:
+            along = (float(getattr(obj, "vx_world", 0.0) or 0.0) * c
+                     + float(getattr(obj, "vy_world", 0.0) or 0.0) * s)
+            if along > 0.3:
+                return f"{kind} coming up that lane, {dist:.0f} m back"
+    return None
+
+
 def pass_options(lane_width_m: float, van_half_width_m: float, full_shift_m: float):
     """The ways round something in the lane, smallest first: (how far over, does it stay in
     our lane).
@@ -660,12 +712,86 @@ class RoutePlanner:
                     total_dist += math.sqrt(dx**2 + dy**2)
                 prev = point
 
-            print(f"[Planner] Route planned: {len(waypoints)} waypoints, {total_dist:.0f}m")
-            return Route(waypoints=waypoints, total_distance=total_dist)
+            planned = Route(waypoints=waypoints, total_distance=total_dist)
+            spread = self.smooth_lane_changes(planned)
+            print(f"[Planner] Route planned: {len(waypoints)} waypoints, {total_dist:.0f}m"
+                  + (f"; {spread} lane change(s) spread over "
+                     f"{self.LANE_CHANGE_OVER_M:.0f} m each" if spread else ""))
+            return planned
 
         except Exception as e:
             print(f"[Planner] Route planning failed: {e}")
             return None
+
+    #: A lane change from the map is a single sideways step between two waypoints two metres
+    #: apart. Driven as it stands, that is a swerve: the van is asked to be 3.5 m to the side
+    #: within one van length. Spread over this much road it is a lane change.
+    LANE_CHANGE_OVER_M = 18.0
+    LANE_CHANGE_STEP_M = 1.2          # a sideways jump bigger than this is a change of lane
+
+    def next_lane_change(self, route: Route, ego_x, ego_y, ego_yaw, within_m: float = 40.0):
+        """(metres to where the van starts moving over, which side) for the next lane change
+        on the route, or None. Side is +1 for the lane to the right, -1 for the left.
+
+        Read off the route's own shape after smooth_lane_changes has spread it: the route
+        leaves the line the van is on and settles a lane over.
+        """
+        wps = route.waypoints if route else None
+        if not wps or len(wps) < 4:
+            return None
+        ci = min(range(len(wps)), key=lambda i: math.hypot(wps[i].x - ego_x, wps[i].y - ego_y))
+        c, s_ = math.cos(ego_yaw), math.sin(ego_yaw)
+        here = wps[ci]
+        along, started, moved = 0.0, None, 0.0
+        for i in range(ci + 1, len(wps)):
+            along += math.hypot(wps[i].x - wps[i - 1].x, wps[i].y - wps[i - 1].y)
+            if along > within_m:
+                break
+            side_m = -(wps[i].x - here.x) * s_ + (wps[i].y - here.y) * c
+            if started is None and abs(side_m) > 0.35:
+                started = max(0.0, along - 2.0)
+            if started is not None:
+                moved = side_m if abs(side_m) > abs(moved) else moved
+                if abs(moved) >= LANE_CHANGE_IS_M:
+                    return (started, 1 if moved > 0 else -1)
+        return None
+
+    def smooth_lane_changes(self, route: Route, over_m: Optional[float] = None) -> int:
+        """Spread every sideways STEP in the route over a length of road. Returns how many.
+
+        CARLA's route planner changes lane by putting the next waypoint in the next lane --
+        "the route changes lane in one 2 m step", as the parking tests have recorded since
+        September. The van then chases it with the steering, which is a swerve, and nothing
+        ever looked at the lane it was swerving into.
+        """
+        over_m = self.LANE_CHANGE_OVER_M if over_m is None else float(over_m)
+        wps = route.waypoints if route else None
+        if not wps or len(wps) < 4:
+            return 0
+        changed = 0
+        for i in range(1, len(wps)):
+            a, b = wps[i - 1], wps[i]
+            c, s_ = math.cos(a.yaw), math.sin(a.yaw)
+            lateral = -(b.x - a.x) * s_ + (b.y - a.y) * c          # + = to the right
+            if abs(lateral) < self.LANE_CHANGE_STEP_M:
+                continue
+            # walk back over_m and slide those points across, so the van arrives in the new
+            # lane at the point the map changes lane rather than jumping there
+            arc, j = 0.0, i - 1
+            while j > 0 and arc < over_m:
+                arc += math.hypot(wps[j].x - wps[j - 1].x, wps[j].y - wps[j - 1].y)
+                j -= 1
+            if arc <= 0.1:
+                continue
+            run = 0.0
+            for k in range(j + 1, i):
+                run += math.hypot(wps[k].x - wps[k - 1].x, wps[k].y - wps[k - 1].y)
+                t = max(0.0, min(1.0, run / arc))
+                shift = lateral * (t * t * (3 - 2 * t))            # smoothstep, no jerk
+                rc, rs = -math.sin(wps[k].yaw), math.cos(wps[k].yaw)
+                wps[k] = replace(wps[k], x=wps[k].x + rc * shift, y=wps[k].y + rs * shift)
+            changed += 1
+        return changed
 
     #: What a blocked stretch of road costs the route search: further than any detour on a
     #: town map, so any other way round wins -- and still finite, so a street with no other way

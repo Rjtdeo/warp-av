@@ -360,6 +360,16 @@ faults.
   never happen; and a rule cannot say "I nearly fired", so what came SECOND is never
   recorded. Traffic lights deliberately stay with the behaviour rather than becoming the
   planner's `blocked_signal` (see planning/instrumentation.py).
+* **Changing lane is a move now, not a swerve.** CARLA's route planner changes lane by
+  putting the next waypoint in the next lane -- a 3.5 m sideways step between two points 2 m
+  apart -- and the van chased it with the steering, having looked at nothing. Every route the
+  van plans now spreads each change over 18 m of road (`planner.smooth_lane_changes`), and
+  before moving over it looks into that lane and waits for a gap: anything standing in it
+  ahead, anything moving in it ahead, or anything coming up it from behind holds the van in
+  its own lane, slowing as it comes up to the move (`planner.lane_change_blocker`, the same
+  question the go-around asks of the lane it borrows). What is still missing: the van cannot
+  decide to change lane on its own -- only the map's route asks for one -- and if the gap
+  never comes it waits rather than re-planning around the change.
 * **A pass needs a lane to borrow.** The go-around plans the path round whatever is standing
   in the lane and slides the van's body along it before taking it (`planner.plan_overtake` +
   `pull_in_blocker`, with moving traffic judged by `planner.overtake_blocker`, which also

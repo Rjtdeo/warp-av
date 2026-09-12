@@ -44,12 +44,14 @@ from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASON
                                EASE_OFF_MPS)
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
                               nothing_is_standing_there, pass_refused, pass_options,
-                              what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M)
+                              what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M,
+                              lane_change_blocker)
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
                                    GROUND_SEEN_FREE, GROUND_BLOCKED, REROUTED, NO_WAY_ROUND,
                                    VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
-                                   JUNCTION_KEEP_CLEAR)
+                                   JUNCTION_KEEP_CLEAR, LANE_CHANGE_WAIT, LANE_CHANGE_WAITING,
+                                   LANE_CHANGE_GO)
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -452,6 +454,63 @@ class WarpAV:
                               f"{other.total_distance:.0f} m, {len(other.waypoints)} points")
         print(f"[Route] blocked {at_m:.1f} m ahead — another way round: {other.total_distance:.0f} m")
 
+    #: Changing lane: how far ahead the van starts looking into the lane it will move into,
+    #: and how close to the move it may still be rolling while that lane is not clear.
+    LANE_CHANGE_LOOK_M = 25.0
+    LANE_CHANGE_HOLD_M = 2.0
+    #: ...and how long it waits for a gap that is not coming before it goes anyway. Only ever
+    #: for something STANDING there -- which is not going to move, so there is nothing to wait
+    #: for beyond being sure it is standing. Traffic MOVING in that lane is waited for however
+    #: long it takes. At 20 s the waiting cost a 510 m mission more than a minute.
+    LANE_CHANGE_GIVE_UP_S = 3.0
+    LANE_CHANGE_GIVE_UP_HOLDS_S = 30.0
+
+    def _wait_for_a_gap(self, pose, perception, behavior_output):
+        """Look into the lane the route moves into before moving into it, and wait for a gap.
+
+        The map's route changes lane where it likes; until 2026-09-11 the van simply swerved
+        across, having looked at nothing. Now it asks the same question the go-around asks of
+        the lane it borrows (planner.lane_change_blocker) and, while the answer is no, holds
+        its own lane: slowing as it comes up to the move, and stopping short of it rather than
+        crossing into what is there.
+        """
+        if not self._route or self._overtake_point is not None or behavior_output.should_stop:
+            return
+        if time.time() < getattr(self, "_gap_given_up_until", 0.0):
+            return                       # already decided to take this one
+        nxt = self.planner.next_lane_change(self._route, pose.x, pose.y, pose.yaw,
+                                            within_m=self.LANE_CHANGE_LOOK_M)
+        if nxt is None:
+            self._gap_wait_since = None
+            return
+        start_m, side = nxt
+        why = lane_change_blocker(perception.objects, side, pose.yaw)
+        if why is None:
+            if getattr(self, "_gap_wait_since", None) is not None:
+                self._note_move(LANE_CHANGE_GO, f"the lane is clear now — moving over")
+                self._gap_wait_since = None
+            return
+        if getattr(self, "_gap_wait_since", None) is None:
+            self._gap_wait_since = time.time()
+            self._note_move(LANE_CHANGE_WAITING,
+                            f"the route moves {'right' if side > 0 else 'left'} in "
+                            f"{start_m:.0f} m, but {why} — waiting for a gap")
+        if "standing" in why and time.time() - self._gap_wait_since > self.LANE_CHANGE_GIVE_UP_S:
+            # ...and it stays given up: reconsidering every tick is how the van spent a whole
+            # mission stopped in 20-second cycles at one kerbside blob (2026-09-11).
+            self._note_move(LANE_CHANGE_GO,
+                            f"{why}, and it is not going to move — taking the lane anyway and "
+                            f"letting the usual rules deal with what is in front")
+            self._gap_wait_since = None
+            self._gap_given_up_until = time.time() + self.LANE_CHANGE_GIVE_UP_HOLDS_S
+            return
+        crawl = max(0.0, min(behavior_output.desired_speed_mps,
+                             0.6 * max(0.0, start_m - self.LANE_CHANGE_HOLD_M)))
+        behavior_output.desired_speed_mps = crawl
+        behavior_output.should_stop = crawl <= 0.05
+        behavior_output.reason += f" | waiting for a gap to move over: {why}"
+        behavior_output.why = LANE_CHANGE_WAIT
+
     def _forget_the_manoeuvre(self):
         """A pass belongs to the mission it was begun in. A mission cancelled mid-pass used to
         leave the rejoin point set for ever, and everything that asks "am I mid-pass?" kept
@@ -459,6 +518,8 @@ class WarpAV:
         ground was switched off for the rest of the stack's life (found live 2026-09-11)."""
         self._overtake_point = None
         self._overtake_retry_at = 0.0
+        self._gap_wait_since = None
+        self._gap_given_up_until = 0.0
         self._blocked_since = None
         self._ground_block = None
 
@@ -947,6 +1008,12 @@ class WarpAV:
                 self._confirm_parking_spot(pose, behavior_output, dest_dist)
             except Exception as e:
                 print(f"[Parking] could not check the spot: {e}")
+
+        # Changing lane: look into the lane the route moves into, and wait for a gap.
+        try:
+            self._wait_for_a_gap(pose, perception, behavior_output)
+        except Exception as e:
+            print(f"[Lane] gap check failed: {e}")
 
         # A street that stays blocked: is there another way to the same destination?
         try:
