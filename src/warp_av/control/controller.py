@@ -74,6 +74,16 @@ class VehicleController:
     SERVICE_BRAKE_CAP = 0.6   # normal slowing never exceeds this (~3.6 m/s^2);
                               # should_stop / e-stop paths still use full brake
     SPEED_SLEW_UP = 0.15      # max increase of the speed target per tick
+    # ...and the same for a FALL, so easing off is a decision the van rides out rather than a
+    # step. 0.40 m/s a tick at ~9 ticks a second is 3.6 m/s2 -- firm, but a ramp rather than a
+    # cliff. It was 0.25 (2.2 m/s2) first, and the closed-loop parking test swung 2 cm wide:
+    # easing off more slowly carries more speed into the pull-in.
+    # A STOP never goes through this: should_stop brakes at once, above. Nor does anything
+    # below walking-about speed: a pull-in is placed to the centimetre and a creep that eases
+    # off half a second late puts the van over the far side of the bay (measured in the
+    # closed-loop parking test the moment this was added).
+    SPEED_SLEW_DOWN = 0.40
+    SLEW_DOWN_ABOVE_MPS = 3.0
                               # (1.5 m/s^2): stops it flooring the throttle
                               # mid-corner-exit; slowing down is never limited
 
@@ -162,7 +172,9 @@ class VehicleController:
 
         # --- SPEED ---
         # Slew-limit target increases (never decreases): smooth pull-away after
-        # corners/stops instead of full throttle while still turning.
+        # corners/stops instead of full throttle while still turning. Easing OFF is shaped
+        # where the van knows what it is doing -- behaviour._decide -- because the last metres
+        # of a parking pull-in must be obeyed to the centimetre, not ridden out.
         if desired_speed <= self._desired_eff:
             self._desired_eff = desired_speed
         else:

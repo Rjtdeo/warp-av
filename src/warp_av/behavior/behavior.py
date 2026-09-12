@@ -51,6 +51,17 @@ class DrivingBehavior(Enum):
     NO_MISSION = "no_mission"
 
 
+#: The wanted speeds that may be EASED into rather than stepped to (main.py applies it, where
+#: the decision has been made and the command is about to be formed): slowing for something in
+#: sight, keeping back from the car ahead, and going back up to cruising speed. Everything
+#: else -- a light, a junction, a yield, the run-in to a parking spot, every stop -- takes
+#: effect the moment it is decided. The decision itself is never shaped: what the van wanted
+#: is what the drive's story records.
+EASE_OFF_REASONS = (OBJECT_AHEAD_SLOW, FOLLOWING_LEAD, ROUTE_CLEAR)
+#: how much the wanted speed may fall per decision: 0.35 m/s at ~9 a second is 3 m/s2
+EASE_OFF_MPS = 0.35
+
+
 #: Colours that mean "do not go". UNKNOWN is deliberately one of them: at a stop line we
 #: know about, not being able to read the light is never permission.
 LIGHT_MEANS_STOP = ("red", "yellow", "unknown")
@@ -149,6 +160,7 @@ class BehaviorSystem:
         # Tuning
         self.cruise_speed = 8.0          # m/s (~18 mph, good for cargo van)
         self.slow_speed = 3.0            # m/s when approaching obstacle
+
         self.stop_distance = 8.0         # meters — informational; the actual stop trigger is perception.danger_distance
         self.slow_distance = 20.0        # meters — slow down (Troy #4: was 15.0)
 
@@ -234,6 +246,8 @@ class BehaviorSystem:
         world=None,                      # the day-7 world model, when the caller has one
         speed_cap_mps: Optional[float] = None,   # safety's cap while a sense is missing (day 8)
         blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
+        speed_limit_mps: Optional[float] = None,  # the limit on this piece of road, from the map
+        seen_ahead_m: Optional[float] = None,     # how far the laser has seen the road ahead FREE
     ) -> BehaviorOutput:
         """One decision cycle: ask the rules in RULES, in order, until one answers.
 
@@ -248,6 +262,8 @@ class BehaviorSystem:
         """
         self._speed_cap_mps = speed_cap_mps
         self._blind_spot_m = blind_spot_m
+        self._speed_limit_mps = speed_limit_mps
+        self._seen_ahead_m = seen_ahead_m
         now = Situation(perception=perception, pose=pose,
                         destination_distance=destination_distance, safety_ok=safety_ok,
                         junction=junction, park_heading_ok=park_heading_ok,
@@ -719,6 +735,17 @@ class BehaviorSystem:
         if blind is not None:
             caps.append((stopping_speed_for(float(blind)),
                          f"cannot see past {float(blind):.1f} m beside the lane"))
+        # ...and the same rule for the road AHEAD: unseen ground is not free ground, so never
+        # travel faster than you could stop inside what the laser has actually seen empty
+        # (Planning V2, P2: the half of unknown_space that does something).
+        seen = getattr(self, "_seen_ahead_m", None)
+        if seen is not None:
+            caps.append((stopping_speed_for(float(seen)),
+                         f"the road is only seen clear for {float(seen):.1f} m"))
+        # The limit on this piece of road, from the map. Not a cap that can be argued with.
+        limit = getattr(self, "_speed_limit_mps", None)
+        if limit is not None:
+            caps.append((float(limit), f"the limit here is {float(limit) * 3.6:.0f} km/h"))
         if caps:
             cap, capped_by = min(caps, key=lambda cw: cw[0])
             if speed > cap:

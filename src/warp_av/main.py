@@ -39,7 +39,8 @@ from .perception.perception import (PerceptionSystem, DetectedObject, ObjectType
 from .perception.camera_lidar_perception import CameraLidarPerception
 from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
-from .behavior.behavior import BehaviorSystem, DrivingBehavior
+from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
+                               EASE_OFF_MPS)
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
                               nothing_is_standing_there, pass_refused, pass_options,
                               what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M)
@@ -770,6 +771,8 @@ class WarpAV:
             predicted_conflict=predicted,
             stop_line_m=getattr(self, "_stop_line_m", None),
             light_id=(signal.light_id if signal is not None else None),
+            speed_limit_mps=self._speed_limit_mps(pose),
+            seen_ahead_m=self._seen_ahead_m(),
         )
 
         # Every change of what the van is doing goes in the mission log, so a drive can be
@@ -864,6 +867,19 @@ class WarpAV:
                     if behavior_output.desired_speed_mps > cap:
                         behavior_output.desired_speed_mps = cap
                     behavior_output.reason += " | getting past something standing in the lane"
+
+        # Comfort: ease off rather than step down, and only where the slowing is for comfort
+        # (behavior.EASE_OFF_REASONS). Live on 2026-09-11 one object crossing the 20 m line
+        # stepped the van 4.0 -> 2.0 -> 4.0 m/s. A light, a junction, a yield, the run-in to a
+        # parking spot and every stop are still obeyed the moment they are decided.
+        if (not behavior_output.should_stop
+                and behavior_output.why in EASE_OFF_REASONS
+                and behavior_output.desired_speed_mps < getattr(self, "_eased_speed", 0.0)):
+            behavior_output.desired_speed_mps = max(behavior_output.desired_speed_mps,
+                                                    self._eased_speed - EASE_OFF_MPS)
+            behavior_output.reason += " | easing off"
+        self._eased_speed = (0.0 if behavior_output.should_stop
+                             else behavior_output.desired_speed_mps)
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         _phase("behaviour")
@@ -1192,6 +1208,9 @@ class WarpAV:
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
             "cruise_speed_mps": self.behavior.cruise_speed,
+            "speed_limit_mps": getattr(self, "_limit_mps", None),
+            "seen_ahead_m": (round(self._seen_ahead_m(), 1) if self._seen_ahead_m() is not None
+                             else None),
             "junction": junction,   # {"distance_m", "direction"} when a turn at a junction is within 20 m, else null
             "junction_ahead_m": junction_ahead,
             "parking_spot": getattr(self, "_parking_spot", None),
@@ -2179,6 +2198,38 @@ class WarpAV:
         self._static_vehicle_pts = pts
         print(f"[Parking] static-layer parked vehicles known: {len(pts)}")
         return pts
+
+    def _speed_limit_mps(self, pose):
+        """The limit on this piece of road, from the MAP -- the same place the stop lines come
+        from. A speed-limit sign in OpenDRIVE is landmark type 274; where a map carries none,
+        the town's own default stands (Town10HD has no speed-limit signs at all: 30 km/h)."""
+        try:
+            wp = self.vehicle_adapter.get_map().get_waypoint(
+                carla.Location(x=pose.x, y=pose.y, z=0.3), lane_type=carla.LaneType.Driving)
+            key = (wp.road_id, wp.lane_id)
+            if key != getattr(self, "_limit_key", None):
+                self._limit_key = key
+                found = [lm for lm in wp.get_landmarks_of_type(150.0, "274")]
+                if found:
+                    value = float(found[0].value)
+                    self._limit_mps = value / 3.6 if found[0].unit in ("km/h", "") else value * 0.44704
+                else:
+                    kmh = float(self.vehicle_adapter.vehicle.get_speed_limit() or 0.0)
+                    self._limit_mps = kmh / 3.6 if kmh > 0 else None
+            return getattr(self, "_limit_mps", None)
+        except Exception:
+            return None
+
+    def _seen_ahead_m(self):
+        """How far ahead the laser has actually seen the road FREE, over a strip as wide as the
+        van. Unseen ground is not free ground, so this caps the speed (behaviour)."""
+        grid = getattr(self.perception, "grid", None)
+        if grid is None or not getattr(grid, "updated", False):
+            return None
+        try:
+            return float(grid.free_distance(0.0, self.footprint_blocking.footprint.swept_half_width))
+        except Exception:
+            return None
 
     def _lane_ok(self, x, y):
         """Is this position on a real driving lane? (overtake feasibility)"""

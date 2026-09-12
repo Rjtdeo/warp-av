@@ -240,9 +240,12 @@ opinion** on the ground the van's body is about to cover (`planner.what_the_grou
 
 Measured 2026-09-11: over a 510 m mission the stop half fired 0 times (no false stops), and
 all three verdicts were seen on real ground. What it still does not do: `unknown_space` is
-recorded but changes nothing by itself (the blind-spot speed cap is the only thing unseen
-ground does), `road_boundary` is still never produced, and the grid generates no paths —
-planning still works off the route polyline and a corridor test.
+`road_boundary` is still never produced, and the grid generates no paths — planning still
+works off the route polyline and a corridor test. Unseen ground now caps the speed as well as
+the blind pocket beside the lane: the van may never go faster than it could stop inside the
+distance the laser has actually seen FREE ahead of it (`OccupancyGrid.free_distance` →
+`seen_ahead_m` → `behavior._decide`). On an open road that is 20 m or more and the cap never
+binds; it bites below about 4 m of seen road.
 
 **This is not "occupancy-based motion planning" and should not be described as such.**
 
@@ -314,7 +317,10 @@ exist yet.
   timeout but no alternative route.
 * **Geofence / ODD enforcement.** 40 `odd_boundary` scenarios define the contract; nothing
   enforces it.
-* **Signs.** Stop, give-way and speed-limit signs are not read.
+* **Signs.** Stop and give-way signs are not read yet. They ARE in the map: Town10HD carries
+  9 stop signs (OpenDRIVE type 206) and one give-way (205), the same place the traffic-light
+  stop lines come from. Speed-limit signs are read where a map has them (type 274); this town
+  has none, so the town default of 30 km/h stands.
 * **Reverse manoeuvres.** Forward pull-over only. A taken parking slot cannot be recovered
   from by reversing.
 * **Multi-fault reporting.** `SafetySupervisor` reports only the first failed check, so a
@@ -364,6 +370,16 @@ faults.
   sitting near the middle of a single-lane road still stops it -- there is no rule for using
   the shoulder, the pavement or the oncoming lane, and none for waiting for a gap in oncoming
   traffic to use it.
+* **Speed is a set of caps, not a plan.** The wanted speed is the cruising speed, capped by
+  the limit on this piece of road (from the map), the bend ahead, the distance the laser has
+  seen clear, the nearest unseen pocket beside the lane, a missing sense, and the car in
+  front — the tightest wins, and none of them can ever speed the van up. Slowing for comfort
+  (something in sight, keeping back from a lead car, returning to cruise) is EASED into at
+  3 m/s² rather than stepped to; a light, a junction, a yield, a parking run-in and every stop
+  take effect the moment they are decided. What is still missing: the cruising speed is a
+  fixed setting (4.0 m/s in the live stack) rather than the limit itself, so the van drives at
+  14 km/h on a 30 km/h street; there is no look-ahead speed profile that plans a stop before
+  it is needed; and stopping is the brake going on rather than a shaped deceleration.
 * **Steering wander.** Full-lock steering for about 7% of one long run. The controller is a
   tuned pure-pursuit with a centreline correction term; a Stanley controller or MPC is the
   longer-term answer.
