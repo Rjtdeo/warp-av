@@ -1222,7 +1222,7 @@ class WarpAV:
 
         while self._running:
             try:
-                started = time.monotonic()
+                started = time.perf_counter()
                 if last_start is not None:
                     period = started - last_start
                     if period > 0:
@@ -1230,7 +1230,7 @@ class WarpAV:
                         self._loop_hz = hz if self._loop_hz is None else 0.9 * self._loop_hz + 0.1 * hz
                 last_start = started
                 self.tick()
-                self._tick_ms = 0.9 * self._tick_ms + 0.1 * (time.monotonic() - started) * 1000.0
+                self._tick_ms = 0.9 * self._tick_ms + 0.1 * (time.perf_counter() - started) * 1000.0
                 sleep_remainder(started, dt)
             except KeyboardInterrupt:
                 print("\n[WarpAV] Shutting down...")

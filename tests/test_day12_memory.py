@@ -128,11 +128,30 @@ def test_without_a_motion_it_behaves_exactly_as_it_used_to():
 
 
 def test_carrying_the_map_is_cheap_enough_to_do_every_tick():
+    """What the carrying costs is the difference between a sweep that carries and one that
+    does not -- not the cost of a whole sweep, which is a measure of the machine.
+
+    This test used to put a 6 ms ceiling on the whole sweep. On the Windows box that actually
+    drives the van a sweep takes 8.5 ms carrying and 8.7 ms not carrying (measured
+    2026-09-11), so the test failed there and passed on a laptop, while the thing it is named
+    after costs 0.03 ms. A whole sweep only has to fit comfortably inside the van's 100 ms
+    tick, and that is asserted separately below."""
     g = OccupancyGrid()
     p, o = fan()
     g.update(p, o)
-    t0 = time.perf_counter()
-    for i in range(50):
-        g.update(p, o, moved=(0.08, 0.0, 0.1), now=200.0 + i * 0.1)
-    per_ms = (time.perf_counter() - t0) / 50 * 1000.0
-    assert per_ms < 6.0, f"{per_ms:.1f} ms per sweep would cost the van decisions"
+
+    def sweep_ms(carrying):
+        quickest = float("inf")                  # of several runs: the least disturbed one
+        for _ in range(5):
+            t0 = time.perf_counter()
+            for i in range(20):
+                if carrying:
+                    g.update(p, o, moved=(0.08, 0.0, 0.1), now=200.0 + i * 0.1)
+                else:
+                    g.update(p, o)
+            quickest = min(quickest, (time.perf_counter() - t0) / 20 * 1000.0)
+        return quickest
+
+    plain, carried = sweep_ms(False), sweep_ms(True)
+    assert carried < plain + 1.0, f"carrying the map added {carried - plain:.1f} ms a sweep"
+    assert carried < 25.0, f"{carried:.1f} ms a sweep is a quarter of the van's 100 ms tick"

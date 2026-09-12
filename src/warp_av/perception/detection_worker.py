@@ -54,7 +54,12 @@ class DetectionWorker:
         self.interval_s = float(interval_s)
         self.name = name
         self._lock = threading.Lock()
-        self._result: Tuple[list, Optional[float], float] = ([], None, 0.0)   # detections, frame ts, published (monotonic)
+        # detections, frame ts, published. The stamp is time.perf_counter(): monotonic like
+        # time.monotonic() but fine on every machine. Windows' monotonic clock steps in
+        # 15.6 ms lumps, so on the machine that actually drives the van an answer published a
+        # moment ago read as exactly 0.0 s old, and "no older than X" could not be asked at
+        # all near zero (found 2026-09-11, by a test that only failed on that machine).
+        self._result: Tuple[list, Optional[float], float] = ([], None, 0.0)
         self._by_view = {}                  # view -> (detections, frame ts, published)
         self._last_ts = {}                  # view -> the frame time last looked at
         self._stop = threading.Event()
@@ -63,7 +68,7 @@ class DetectionWorker:
         self.runs = 0
         self.errors = 0
         self.consecutive_errors = 0
-        self.started_at = None              # monotonic, set by start()
+        self.started_at = None              # perf_counter, set by start()
         self._last_log = 0.0
 
     # ---- lifecycle -------------------------------------------------------
@@ -71,7 +76,7 @@ class DetectionWorker:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self.started_at = time.monotonic()
+        self.started_at = time.perf_counter()
         self._thread = threading.Thread(target=self._loop, name=f"{self.name}-worker", daemon=True)
         self._thread.start()
 
@@ -89,7 +94,7 @@ class DetectionWorker:
         last_frame_ts = None
         next_run = 0.0
         while not self._stop.is_set():
-            now = time.monotonic()
+            now = time.perf_counter()
             if now < next_run:
                 self._stop.wait(min(0.01, next_run - now))
                 continue
@@ -119,12 +124,12 @@ class DetectionWorker:
                 self.errors += 1
                 self.consecutive_errors += 1
                 detections = []
-                if time.monotonic() - self._last_log >= self.LOG_EVERY_S:
-                    self._last_log = time.monotonic()
+                if time.perf_counter() - self._last_log >= self.LOG_EVERY_S:
+                    self._last_log = time.perf_counter()
                     print(f"[{self.name}] detection failed ({self.errors} so far): {e}")
             ms = (time.perf_counter() - t0) * 1000.0
             with self._lock:
-                published = time.monotonic()
+                published = time.perf_counter()
                 if view is None or view == "front":
                     self._result = (detections, ts, published)
                 if view is not None:
@@ -141,7 +146,7 @@ class DetectionWorker:
         out = {}
         with self._lock:
             snapshot = dict(self._by_view)
-        now = time.monotonic()
+        now = time.perf_counter()
         for view, (detections, _, published) in snapshot.items():
             age = now - published
             out[view] = ([], age) if age > max_age_s else (detections, age)
@@ -155,7 +160,7 @@ class DetectionWorker:
             detections, _, published = self._result
         if not published:
             return [], float("inf")
-        age = time.monotonic() - published
+        age = time.perf_counter() - published
         if age > max_age_s:
             return [], age
         return detections, age

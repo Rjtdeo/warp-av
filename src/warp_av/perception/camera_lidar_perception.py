@@ -859,13 +859,13 @@ class CameraLidarPerception:
                 self._cached_camera_detections = []
                 self.last_detection_age_s = 999.0
             elif self.yolox_inline:
-                monotonic_now = time.monotonic()
+                monotonic_now = time.perf_counter()   # fine on every machine (detection_worker)
                 if monotonic_now - self._last_inference_time >= self.inference_interval:
                     t0 = time.perf_counter()
                     self._cached_camera_detections = self.detector.detect(camera.image[:, :, :3])
                     self.last_inference_ms = (time.perf_counter() - t0) * 1000.0
                     self._last_inference_time = monotonic_now
-                self.last_detection_age_s = time.monotonic() - self._last_inference_time
+                self.last_detection_age_s = time.perf_counter() - self._last_inference_time
             else:
                 if self._worker is None:
                     views = {"front": (lambda: self.sensor_adapter.latest_camera)}
@@ -887,7 +887,7 @@ class CameraLidarPerception:
                     return PerceptionOutput(healthy=False,
                                             reason=f"CAMERA_LIDAR_ERROR: detector failed {self._worker.consecutive_errors}x")
                 if (self._worker.runs == 0 and self._worker.started_at is not None
-                        and time.monotonic() - self._worker.started_at > self.detector_stall_s):
+                        and time.perf_counter() - self._worker.started_at > self.detector_stall_s):
                     return PerceptionOutput(healthy=False, reason="CAMERA_LIDAR_ERROR: detector stalled")
             if camera_fault:
                 camera = self._blank_camera_frame(camera)

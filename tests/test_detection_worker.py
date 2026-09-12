@@ -130,9 +130,9 @@ def test_lidar_scan_carries_sim_time_and_camera_frames_are_copies():
 
 def test_sleep_remainder_only_sleeps_what_is_left():
     from warp_av.pacing import sleep_remainder
-    t = time.monotonic() - 0.06                   # 60 ms of work already done in a 100 ms tick
+    t = time.perf_counter() - 0.06                # 60 ms of work already done in a 100 ms tick
     t0 = time.perf_counter()
     slept = sleep_remainder(t, 0.1)
     elapsed = time.perf_counter() - t0
     assert 0.02 <= slept <= 0.045 and elapsed < 0.09
-    assert sleep_remainder(time.monotonic() - 0.5, 0.1) <= 0.005  # already late: only the tiny yield
+    assert sleep_remainder(time.perf_counter() - 0.5, 0.1) <= 0.005  # already late: only the tiny yield
