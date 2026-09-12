@@ -17,7 +17,8 @@ from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict
-from .instrumentation import (PlannerDecision, debug_planning_enabled,
+from .instrumentation import (PlannerDecision, debug_planning_enabled, BLOCKED_OCCUPANCY,
+                              UNKNOWN_SPACE,
                               CLEAR, NO_ROUTE, BLOCKED_TRACKED_OBJECT,
                               BLOCKED_SWEPT_PATH, BLOCKED_SCRAPE, BLOCKED_VRU)
 
@@ -470,6 +471,42 @@ SEEN_FREE_SHARE = 0.97
 SEEN_FREE_STILL_MPS = 0.3
 
 
+#: Reading the ground the van's body is about to cover (P2). Four blocked squares is the same
+#: "four squares and it is taken" the parking-spot check uses: 0.25 m squares, so a quarter of
+#: a square metre of something solid.
+SEEN_BLOCKED_CELLS = 4
+#: How far ahead the ground is read before STOPPING for it, and how much wider than the van's
+#: own body. Five metres is a second and a quarter at cruising speed, and 10 cm either side is
+#: its body and a hand's width -- not the full safety margin, or the kerb would stop it.
+GROUND_LOOK_M = 5.0
+GROUND_KEEP_M = 0.10
+
+
+def what_the_ground_says(counts, blocked_cells: int = SEEN_BLOCKED_CELLS,
+                         free_share: float = SEEN_FREE_SHARE) -> Optional[str]:
+    """What the laser's own free-space map says about the ground the van's body is about to
+    cover, as one of the planner's own reasons -- or None when it has nothing to say.
+
+      BLOCKED_OCCUPANCY  solid squares are on it. Something is there, whether or not anything
+                         was tracked on it: this is the half of the second opinion that can
+                         STOP the van, not only let it through.
+      UNKNOWN_SPACE      too much of it has never been seen. Unseen is not free.
+      CLEAR              every square of it has been seen empty.
+
+    counts is (free, blocked, unseen) from OccupancyGrid.strip_ahead."""
+    if counts is None:
+        return None
+    free, blocked, unseen = counts
+    total = free + blocked + unseen
+    if total == 0:
+        return None
+    if blocked >= blocked_cells:
+        return BLOCKED_OCCUPANCY
+    if free >= free_share * total:
+        return CLEAR
+    return UNKNOWN_SPACE
+
+
 def nothing_is_standing_there(kind: str, speed_mps: float, counts) -> bool:
     """Does the laser's own free-space map say the corridor check drew a body on empty ground?
 
@@ -488,11 +525,9 @@ def nothing_is_standing_there(kind: str, speed_mps: float, counts) -> bool:
         return False
     if abs(float(speed_mps or 0.0)) > SEEN_FREE_STILL_MPS:
         return False
-    if counts is None:
-        return False
-    free, blocked, unseen = counts
-    total = free + blocked + unseen
-    return total > 0 and blocked == 0 and free >= SEEN_FREE_SHARE * total
+    # one solid square is enough to keep the van stopped: letting it drive on is the
+    # generous direction, and generosity there is measured in metres of van
+    return what_the_ground_says(counts, blocked_cells=1) == CLEAR
 
 
 def would_scrape(obj, lat_m: float) -> bool:

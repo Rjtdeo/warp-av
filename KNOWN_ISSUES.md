@@ -226,14 +226,23 @@ FREE / OCCUPIED / UNKNOWN plus a separate ROAD-surface layer, with temporal memo
 believed ~0.5 s, blocked longer) and whole-square ego-motion compensation.
 
 Its influence on driving is a **speed cap** (`blind_spot_ahead()` → `blind_spot_m` in
-`behavior.py`), the parking-spot check (`planning/parking_check.py`), and a **one-way second
-opinion** on things standing in the way: when every square of the ground the van's body is
-about to cover has been SEEN empty, a body the corridor check drew there is not believed
-(`planner.nothing_is_standing_there`, `OccupancyGrid.strip_ahead`, used in `main.py`). It
-validates, slows and unblocks; it does not generate paths, and it can never STOP the van on
-its own — occupied or unseen space ahead is not yet a reason to stop, and the decision is
-taken outside the planner's counted reasons, so `BLOCKED_OCCUPANCY` and `UNKNOWN_SPACE` are
-still never produced. Planning still works off the route polyline and a corridor test.
+`behavior.py`), the parking-spot check (`planning/parking_check.py`), and a **two-way second
+opinion** on the ground the van's body is about to cover (`planner.what_the_ground_says` over
+`OccupancyGrid.strip_ahead`, used in `main.py`):
+
+* seen empty → a body the corridor check drew there is not believed, and the van drives on
+  (never for a person or a rider, never for anything moving, and unseen is never free);
+* solid squares with nothing tracked on them → the van **stops**, and the planner finally
+  produces its own `blocked_occupancy` reason. Four 25 cm squares is the bar, read over the
+  van's body plus 10 cm for 5 m ahead — not the full safety margin, or a kerb would stop it —
+  and not while parking or mid-pass, which both go close to things on purpose. The van will
+  not go ROUND such a block either: there is no measured body to slide its own past.
+
+Measured 2026-09-11: over a 510 m mission the stop half fired 0 times (no false stops), and
+all three verdicts were seen on real ground. What it still does not do: `unknown_space` is
+recorded but changes nothing by itself (the blind-spot speed cap is the only thing unseen
+ground does), `road_boundary` is still never produced, and the grid generates no paths —
+planning still works off the route polyline and a corridor test.
 
 **This is not "occupancy-based motion planning" and should not be described as such.**
 

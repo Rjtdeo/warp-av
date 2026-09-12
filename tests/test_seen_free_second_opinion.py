@@ -126,4 +126,68 @@ def test_the_van_asks_before_it_gives_up_a_parking_spot():
     from pathlib import Path
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
     i = src.index("filter_to_route_corridor(")
-    assert "_unblock_if_the_ground_is_seen_free" in src[i:i + 900]
+    assert "_second_opinion_on_the_ground" in src[i:i + 900]
+
+
+# ---- ...and the half that can STOP the van (P2, 2026-09-11) ------------------------------
+
+from warp_av.planning.planner import (what_the_ground_says, GROUND_LOOK_M,  # noqa: E402
+                                      GROUND_KEEP_M, SEEN_BLOCKED_CELLS)
+from warp_av.planning.instrumentation import (BLOCKED_OCCUPANCY, UNKNOWN_SPACE,  # noqa: E402
+                                              CLEAR, ALL_REASONS)
+
+
+def test_the_ground_can_now_say_all_three_things():
+    assert what_the_ground_says((300, 0, 2)) == CLEAR
+    assert what_the_ground_says((300, SEEN_BLOCKED_CELLS, 0)) == BLOCKED_OCCUPANCY
+    assert what_the_ground_says((100, 0, 100)) == UNKNOWN_SPACE
+    assert what_the_ground_says(None) is None and what_the_ground_says((0, 0, 0)) is None
+    for said in (CLEAR, BLOCKED_OCCUPANCY, UNKNOWN_SPACE):
+        assert said in ALL_REASONS, "the planner has had a name for it since P0"
+
+
+def test_one_stray_square_is_not_a_reason_to_stop():
+    """Four 25 cm squares -- a quarter of a square metre -- is the same bar the parking-spot
+    check uses for "something is in it"."""
+    assert what_the_ground_says((300, SEEN_BLOCKED_CELLS - 1, 0)) == CLEAR
+
+
+def test_solid_squares_beat_a_mostly_seen_road():
+    assert what_the_ground_says((5000, SEEN_BLOCKED_CELLS, 0)) == BLOCKED_OCCUPANCY
+
+
+def test_where_the_ground_first_stops_us():
+    car = [(x, y) for x in np.arange(6.0, 8.0, 0.1) for y in np.arange(-0.9, 0.9, 0.1)]
+    grid = swept_grid(car)
+    at = grid.nearest_block_ahead(2.95, 2.95 + GROUND_LOOK_M, 0.99 + GROUND_KEEP_M)
+    assert at is not None and 5.5 <= at <= 6.5
+    assert swept_grid().nearest_block_ahead(2.95, 7.95, 1.09) is None
+    assert OccupancyGrid().nearest_block_ahead(2.95, 7.95, 1.09) is None
+
+
+def test_the_van_stops_for_solid_ground_and_will_not_go_round_it():
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("def _second_opinion_on_the_ground")
+    body = src[i:i + 3500]
+    assert "perception.path_blocked = True" in body
+    assert "BLOCKED_OCCUPANCY" in body
+    assert "DrivingBehavior.PARKING" in body, "a pull-in goes close to the kerb on purpose"
+    assert 'waiting("solid ground squares ahead that nothing is tracked on' in src
+
+
+def test_a_pass_does_not_outlive_its_mission():
+    """Live 2026-09-11: a mission cancelled mid-pass left the rejoin point set, and everything
+    that asks "am I mid-pass?" kept saying yes -- including the switch that turns off the
+    laser's second opinion on the ground. It was off for the rest of the stack's life."""
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("def _forget_the_manoeuvre")
+    body = src[i:i + 900]
+    for field in ("_overtake_point = None", "_overtake_retry_at = 0.0", "_blocked_since = None",
+                  "_ground_block = None"):
+        assert field in body
+    start = src.index("def start_mission(")
+    assert "_forget_the_manoeuvre()" in src[start:start + 1600], "every mission starts clean"
+    stop = src.index("def api_stop_mission(")
+    assert "_forget_the_manoeuvre()" in src[stop:stop + 400], "and every cancelled one ends clean"

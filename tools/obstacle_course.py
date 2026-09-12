@@ -164,6 +164,7 @@ def main():
         t0 = time.time()
         rows = []
         last_why = None
+        last_ground = None
         sx, sy = start_wp.transform.location.x, start_wp.transform.location.y
         sh = math.radians(start_wp.transform.rotation.yaw)
         ended = None
@@ -209,6 +210,12 @@ def main():
                               f"size {o.get('length_m')}x{o.get('width_m')}x{o.get('height_m')} "
                               f"box {o.get('box_length_m')}x{o.get('box_width_m')} at ({o.get('box_dx')},{o.get('box_dy')}) "
                               f"{o.get('motion_class')}", flush=True)
+            ground = ((s.get("perception") or {}).get("ground_says"),
+                      bool((s.get("perception") or {}).get("ground_blocked")))
+            if ground != last_ground:
+                print(f"t={time.time() - t0:6.1f}  the laser's own map says: {ground[0]}"
+                      + ("  <- STOPPED the van" if ground[1] else ""), flush=True)
+                last_ground = ground
             why = (s.get("behavior_reason") or "")[:110]
             if why != last_why:
                 print(f"t={time.time() - t0:6.1f}  at {van_along:5.1f} m, {van_side:+.1f} m  {s.get('behavior')}: {why}", flush=True)

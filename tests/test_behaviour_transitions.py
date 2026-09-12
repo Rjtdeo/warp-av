@@ -247,7 +247,8 @@ def test_the_van_puts_every_manoeuvre_it_makes_into_the_story():
     """A drive read afterwards must not have holes where the big decisions were."""
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
     for move in (T.GO_AROUND_START, T.GO_AROUND_WAIT, T.GO_AROUND_DONE, T.SPOT_CHOSEN,
-                 T.SPOT_CONFIRMED, T.SPOT_RECHOSEN, T.SPOT_GIVEN_UP, T.GROUND_SEEN_FREE):
+                 T.SPOT_CONFIRMED, T.SPOT_RECHOSEN, T.SPOT_GIVEN_UP, T.GROUND_SEEN_FREE,
+                 T.GROUND_BLOCKED):
         name = move.upper()
         assert f"self._note_move({name}" in src, f"{move} never reaches the story"
 

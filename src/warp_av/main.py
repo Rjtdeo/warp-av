@@ -41,10 +41,11 @@ from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
-                              nothing_is_standing_there, pass_refused, pass_options)
+                              nothing_is_standing_there, pass_refused, pass_options,
+                              what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M)
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
-                                   GROUND_SEEN_FREE)
+                                   GROUND_SEEN_FREE, GROUND_BLOCKED)
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -54,7 +55,8 @@ from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
-from .planning.instrumentation import PhaseTimer, PlannerDecision
+from .planning.instrumentation import (PhaseTimer, PlannerDecision, BLOCKED_OCCUPANCY,
+                                       UNKNOWN_SPACE)
 from .planning.footprint_config import FootprintBlockingConfig
 from .planning.parking_check import spot_view, spot_counts, SPOT_DEFAULT_LEN_M, SPOT_DEFAULT_WID_M
 from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
@@ -298,6 +300,16 @@ class WarpAV:
         print("[Init] All systems ready!")
         print("=" * 60)
 
+    def _forget_the_manoeuvre(self):
+        """A pass belongs to the mission it was begun in. A mission cancelled mid-pass used to
+        leave the rejoin point set for ever, and everything that asks "am I mid-pass?" kept
+        saying yes: the go-around would not start, and the laser's own second opinion on the
+        ground was switched off for the rest of the stack's life (found live 2026-09-11)."""
+        self._overtake_point = None
+        self._overtake_retry_at = 0.0
+        self._blocked_since = None
+        self._ground_block = None
+
     def start_mission(self, dest_x: float, dest_y: float):
         """Begin a mission to the given destination."""
         pose = self.localization.update()
@@ -312,6 +324,7 @@ class WarpAV:
         self._lidar_rescan_tries = 0
         self._hold_short_done = False
         self._give_up = WaitingIsPointless()     # fix 3: a fresh clock for every mission
+        self._forget_the_manoeuvre()             # a pass belongs to the mission it began in
         self.rl_parker.reset()
 
         # Create mission
@@ -576,9 +589,10 @@ class WarpAV:
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
                 footprint=self.footprint_blocking.active_footprint(),
             )
-            # ...and a second opinion on whatever it says is standing in the way
+            # ...and the laser's own ground as a second opinion on it, both ways round
             try:
-                self._unblock_if_the_ground_is_seen_free(perception, pose)
+                self._second_opinion_on_the_ground(perception, pose,
+                                                   self.behavior.current_behavior)
             except Exception as e:
                 print(f"[FreeSpace] second opinion failed: {e}")
         _phase("route corridor")
@@ -1004,6 +1018,9 @@ class WarpAV:
                 "path_blocked": perception.path_blocked,
                 # when the free-space map overruled a body the corridor check drew (P2)
                 "ground_seen_free": getattr(self, "_ground_seen_free", None),
+                # ...when it STOPPED the van instead (P2), and what it says this tick
+                "ground_blocked": getattr(self, "_ground_block", None),
+                "ground_says": getattr(self, "_ground_says", None),
                 "closest_lateral_m": getattr(perception, "closest_obstacle_lateral_m", None),
 
                 # Objects shown on the operator map.
@@ -1800,6 +1817,7 @@ class WarpAV:
         return self.start_mission(dest_x, dest_y)
 
     def api_stop_mission(self):
+        self._forget_the_manoeuvre()
         self.behavior.cancel_mission()
         self.vehicle_adapter.disengage_autonomy()
         if self.mission_manager.current_mission:
@@ -2235,6 +2253,12 @@ class WarpAV:
         if why_not is not None:
             waiting(why_not)
             return
+        if getattr(self, "_ground_block", None):
+            # the laser's squares, with nothing tracked on them: there is no measured body to
+            # slide the van's own past, so there is no way to say a way round is clear (P2)
+            waiting("solid ground squares ahead that nothing is tracked on — not going round "
+                    "what cannot be measured")
+            return
         # Clearance: traffic moving where the pass would go (planner.overtake_blocker)...
         back_in_m = lead_d + self.planner.OVERTAKE_REJOIN_M + 8.0
         why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw)
@@ -2406,23 +2430,70 @@ class WarpAV:
         except Exception:
             pass
 
-    def _unblock_if_the_ground_is_seen_free(self, perception, pose):
-        """A second opinion on something standing in the way: the laser's own free-space map
-        (planner.nothing_is_standing_there, which says when it counts).
+    def _second_opinion_on_the_ground(self, perception, pose, behaviour=None):
+        """The laser's own free-space map, read over the ground the van's body is about to
+        cover, as a second opinion on the corridor check -- both ways round (Planning V2, P2).
 
-        The van's body is about to cover the next few metres of ground. If the laser has seen
-        every square of it empty, nothing is standing there, and the van drives on -- slowly,
-        since the behaviour still slows for whatever it can see."""
-        if not perception.path_blocked or not pose.healthy:
-            return
+        It can say DRIVE ON: when every square of that ground has been SEEN empty, a body the
+        corridor check drew there is not there (planner.nothing_is_standing_there). Never for
+        a person or a rider, never for anything moving, and unseen is never free.
+
+        And it can say STOP: when solid squares sit on that ground and nothing is tracked on
+        them. Perception builds objects by clustering laser points and a thing can fall
+        between the clusters; the squares themselves cannot. That is `blocked_occupancy`, a
+        reason the planner has had a name for since P0 and has never been able to produce.
+
+        Not while parking or mid-pass: both go close to things on purpose, and a kerb is 12 cm
+        of solid squares.
+        """
+        self._ground_says, self._ground_block = None, None
         grid = getattr(self.perception, "grid", None)
-        if grid is None:
+        if grid is None or not pose.healthy:
             return
-        blocker_m = float(getattr(perception, "closest_obstacle_distance", 0.0) or 0.0)
         front = self.behavior.front_offset_m
+        if perception.path_blocked:
+            self._drive_on_if_the_ground_is_seen_free(perception, pose, grid, front)
+            return
+        if behaviour == DrivingBehavior.PARKING or self._overtake_point is not None:
+            return
+        half = self.footprint_blocking.footprint.half_width + GROUND_KEEP_M
+        counts = grid.strip_ahead(front, front + GROUND_LOOK_M, half)
+        self._ground_says = what_the_ground_says(counts)
+        if self._ground_says != BLOCKED_OCCUPANCY:
+            return
+        at = grid.nearest_block_ahead(front, front + GROUND_LOOK_M, half)
+        if at is None:
+            return
+        free, blocked, unseen = counts
+        perception.path_blocked = True
+        perception.closest_obstacle_distance = min(perception.closest_obstacle_distance, at)
+        perception.closest_obstacle_type = ObjectType.UNKNOWN     # solid squares, not a thing
+        self._ground_block = {"at_m": round(at, 1), "squares": blocked, "looked_m": GROUND_LOOK_M}
+        try:
+            self.planner.last_decision.reason = BLOCKED_OCCUPANCY
+            self.planner.last_decision.blocker_distance_m = at
+            self.planner.last_decision.blocker_kind = "solid squares"
+        except Exception:
+            pass
+        if time.time() - getattr(self, "_ground_block_at", 0.0) > 2.0:
+            self._ground_block_at = time.time()
+            self._note_move(GROUND_BLOCKED,
+                            f"{blocked} solid squares on the ground the van would cover, the "
+                            f"nearest {at:.1f} m ahead, and nothing tracked on them")
+            self.logger.log_event(
+                "ground_blocked",
+                f"nothing is tracked in the way, but the laser has {blocked} solid squares on "
+                f"the ground the van would cover, the nearest {at:.1f} m ahead -- stopping")
+            print(f"[FreeSpace] {blocked} solid squares {at:.1f} m ahead, nothing tracked "
+                  f"there -- stopping")
+
+    def _drive_on_if_the_ground_is_seen_free(self, perception, pose, grid, front):
+        """The half of the second opinion that lets the van drive on (see above)."""
+        blocker_m = float(getattr(perception, "closest_obstacle_distance", 0.0) or 0.0)
         look = min(SEEN_FREE_LOOK_M, max(SEEN_FREE_MIN_LOOK_M, blocker_m - front + 1.0))
         counts = grid.strip_ahead(front, front + look,
                                   self.footprint_blocking.footprint.swept_half_width)
+        self._ground_says = what_the_ground_says(counts)
         what = perception.closest_obstacle_type.value
         if not nothing_is_standing_there(what, getattr(perception, "closest_obstacle_speed", 0.0),
                                          counts):
@@ -2433,14 +2504,14 @@ class WarpAV:
                                   "looked_m": round(look, 1), "free": free, "unseen": unseen}
         if time.time() - getattr(self, "_ground_seen_free_at", 0.0) > 2.0:
             self._ground_seen_free_at = time.time()
+            self._note_move(GROUND_SEEN_FREE,
+                            f"a {what} said to be in the way {blocker_m:.1f} m ahead, but all "
+                            f"{free} squares of the next {look:.1f} m of ground are seen empty")
             self.logger.log_event(
                 "ground_seen_free",
                 f"the corridor check says a {what} is in the way {blocker_m:.1f} m ahead, but the "
                 f"laser has seen all {free} squares of the next {look:.1f} m of ground empty "
                 f"-- driving on")
-            self._note_move(GROUND_SEEN_FREE,
-                            f"a {what} said to be in the way {blocker_m:.1f} m ahead, but all "
-                            f"{free} squares of the next {look:.1f} m of ground are seen empty")
             print(f"[FreeSpace] a {what} at {blocker_m:.1f} m, but the next {look:.1f} m of ground "
                   f"is seen empty -- driving on")
 

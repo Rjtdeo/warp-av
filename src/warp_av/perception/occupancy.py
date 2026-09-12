@@ -438,6 +438,22 @@ class OccupancyGrid:
         blocked = int((cells == OCCUPIED).sum())
         return free, blocked, int(cells.size) - free - blocked
 
+    def nearest_block_ahead(self, from_m: float, to_m: float, half_width_m: float):
+        """How far ahead the nearest solid square is, over the same strip of ground
+        strip_ahead counts -- or None when there is none. Metres from the van's middle."""
+        if not self.updated or to_m <= from_m or half_width_m <= 0:
+            return None
+        step = self.cell_m
+        xs = np.arange(from_m, to_m + 1e-6, step)
+        ys = np.arange(-half_width_m, half_width_m + 1e-6, step)
+        gx, gy = np.meshgrid(xs, ys, indexing="ij")          # rows are distance ahead
+        r, c = self.to_cell(gx, gy)
+        inside = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
+        cells = np.zeros(r.shape, dtype=np.uint8)
+        cells[inside] = self.cells[r[inside], c[inside]]
+        rows = np.flatnonzero((cells == OCCUPIED).any(axis=1))
+        return float(xs[rows[0]]) if rows.size else None
+
     def drivable_at(self, x_m: float, y_m: float) -> bool:
         """Free AND road: somewhere the van could actually put a wheel."""
         r, c = self.to_cell(x_m, y_m)

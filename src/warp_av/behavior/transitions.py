@@ -66,9 +66,11 @@ SPOT_CONFIRMED = "spot_confirmed"           # the laser has seen it free: turnin
 SPOT_RECHOSEN = "spot_rechosen"
 SPOT_GIVEN_UP = "spot_given_up"
 GROUND_SEEN_FREE = "ground_seen_free"       # a body the corridor check drew on empty ground
+GROUND_BLOCKED = "ground_blocked"           # ...and solid ground nothing was tracked on
 
 ALL_MOVES = (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
-             SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP, GROUND_SEEN_FREE)
+             SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP, GROUND_SEEN_FREE,
+             GROUND_BLOCKED)
 
 ALL_WHY = (
     SAFETY_HOLD, LOCALIZATION_LOST, PERCEPTION_LOST, NO_MISSION,
