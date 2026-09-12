@@ -36,6 +36,7 @@ ALIASES = {
     "car": "vehicle.tesla.model3", "suv": "vehicle.nissan.patrol", "van": "vehicle.volkswagen.t2",
     "truck": "vehicle.carlamotors.carlacola", "ambulance": "vehicle.ford.ambulance",
     "motorbike": "vehicle.yamaha.yzf", "bicycle": "vehicle.bh.crossbike",
+    "person": "walker.pedestrian.0001", "person2": "walker.pedestrian.0012",
     "box": "static.prop.box01", "boxes": "static.prop.box02", "barrel": "static.prop.barrel",
     "cone": "static.prop.trafficcone01", "workcone": "static.prop.constructioncone",
     "barrier": "static.prop.streetbarrier", "worksign": "static.prop.warningconstruction",

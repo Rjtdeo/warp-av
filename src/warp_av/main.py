@@ -34,13 +34,14 @@ from flask_socketio import SocketIO
 # Our modules
 from .adapters.carla_vehicle_adapter import CarlaVehicleAdapter
 from .adapters.carla_sensor_adapter import CarlaSensorAdapter
-from .perception.perception import PerceptionSystem, DetectedObject, ObjectType
+from .perception.perception import (PerceptionSystem, DetectedObject, ObjectType,
+                                    VULNERABLE_TYPES)
 from .perception.camera_lidar_perception import CameraLidarPerception
 from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .behavior.behavior import BehaviorSystem, DrivingBehavior
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
-                              nothing_is_standing_there)
+                              nothing_is_standing_there, pass_refused)
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
                                    GROUND_SEEN_FREE)
@@ -2161,21 +2162,34 @@ class WarpAV:
         except Exception:
             return False
 
+    #: What the van will go round, once it has stood still for OVERTAKE_AFTER_S: a dead car,
+    #: and anything else standing in the lane that is not a person. Never a person or someone
+    #: riding -- they may step aside, and the van waits for them however long it takes.
+    #: A thing is only passed while the camera is working: dead ahead in its view, a thing it
+    #: has NOT called a person is a thing it looked at and did not call a person. With the
+    #: camera stale or missing that is not a judgement, it is ignorance (perception.degraded).
+    OVERTAKE_STATES = (DrivingBehavior.STOPPED_VEHICLE, DrivingBehavior.STOPPED_OBSTACLE,
+                       DrivingBehavior.STOPPED_BLOCKED)
+    OVERTAKE_AFTER_S = 10.0
+
     def _maybe_overtake(self, pose, perception, behavior_output, junction_ahead):
-        """A lead vehicle that stays dead for 10 s on an open straight gets
-        passed: swing one lane left, by, and back. Conservative by design —
-        any doubt (lights, junctions, other traffic, bends) means keep
-        waiting."""
+        """Anything that stays dead in our lane for 10 s on an open straight gets passed:
+        swing one lane left, by, and back. Conservative by design — any doubt (lights,
+        junctions, other traffic, bends, a body the way round would touch) means keep waiting.
+
+        Until 2026-09-11 this was for a stopped CAR only, and everything else -- a barrel, a
+        box, a cone -- stopped the van until a person came. Measured that day: a 0.45 m barrel
+        in the lane, stopped 8.7 m short, still there when the test ended."""
         if self._overtake_point is not None:
             return
-        if behavior_output.behavior != DrivingBehavior.STOPPED_VEHICLE:
+        if behavior_output.behavior not in self.OVERTAKE_STATES:
             self._blocked_since = None
             return
         now = time.time()
         if self._blocked_since is None:
             self._blocked_since = now
             return
-        if now - self._blocked_since < 10.0 or now < self._overtake_retry_at:
+        if now - self._blocked_since < self.OVERTAKE_AFTER_S or now < self._overtake_retry_at:
             return
         def waiting(why):
             if now - getattr(self, "_overtake_why_at", 0.0) > 20.0:
@@ -2192,8 +2206,14 @@ class WarpAV:
         lead_d = perception.closest_obstacle_distance
         if lead_d is None or lead_d > 14.0:
             return
-        if getattr(perception, "closest_obstacle_speed", 0.0) > 0.3:
-            return                       # it's moving — keep following
+        # WHAT it is decides whether a pass may even be considered (planner.pass_refused);
+        # whether the way round is clear is the geometry below.
+        what = getattr(perception.closest_obstacle_type, "value", "thing")
+        why_not = pass_refused(what, getattr(perception, "closest_obstacle_speed", 0.0),
+                               bool(getattr(perception, "degraded", False)))
+        if why_not is not None:
+            waiting(why_not)
+            return
         # Clearance: traffic moving where the pass would go (planner.overtake_blocker)...
         back_in_m = lead_d + self.planner.OVERTAKE_REJOIN_M + 8.0
         why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw)
@@ -2222,13 +2242,14 @@ class WarpAV:
         try:
             self.logger.log_event(
                 "overtake",
-                f"lead vehicle dead for 10 s — passing on the left, rejoining {self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
+                f"a {what} has been in the way for {self.OVERTAKE_AFTER_S:.0f} s — passing on the "
+                f"left, rejoining {self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
         except Exception:
             pass
         self._note_move(GO_AROUND_START,
-                        f"dead vehicle at {lead_d:.1f} m — passing on the left, rejoining "
+                        f"{what} standing at {lead_d:.1f} m — passing on the left, rejoining "
                         f"{self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
-        print(f"[Overtake] dead vehicle at {lead_d:.1f} m — passing on the left")
+        print(f"[Overtake] {what} standing at {lead_d:.1f} m — passing on the left")
 
     def _static_vehicle_objects(self, pose):
         """Nearby static-layer parked cars as pseudo-detections (VEHICLE,

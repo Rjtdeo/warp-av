@@ -357,6 +357,35 @@ PASS_LOOK_BACK_M = 40.0
 PASS_LOOK_PAST_LEAD_M = 45.0
 
 
+#: How fast a thing may be drifting and still count as standing in the way.
+PASS_STILL_MPS = 0.3
+
+
+def pass_refused(kind: str, speed_mps: float, camera_degraded: bool) -> Optional[str]:
+    """Why the van may not go round the thing standing in its way -- or None when it may.
+
+    Nothing here is about geometry: whether the way round is clear is plan_overtake,
+    overtake_blocker and the swept path. This is about WHAT the thing is.
+
+      * A person, or someone riding, is never driven round. They may step aside, and waiting
+        is what the van does for them, however long it takes.
+      * Something moving is followed, not passed.
+      * Anything the camera has not named is passed only while the camera is working. The
+        thing is dead ahead in its view, so a thing it has NOT called a person is a thing it
+        looked at and did not call a person. With the camera stale or missing that is not a
+        judgement but ignorance, and the van waits.
+
+    Until 2026-09-11 only a stopped CAR was ever passed and everything else -- a barrel, a
+    box, a cone -- stopped the van until a person came to it."""
+    if kind in ("pedestrian", "cyclist"):
+        return "a person in the way is waited for, never driven round"
+    if float(speed_mps or 0.0) > PASS_STILL_MPS:
+        return "it is moving — following it, not passing it"
+    if kind != "vehicle" and camera_degraded:
+        return "the camera is not naming things just now, so what that is is unknown"
+    return None
+
+
 def body_centre(obj):
     """Where a thing's body is centred, in the van frame (x ahead, y to the right).
 

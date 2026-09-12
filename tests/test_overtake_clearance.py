@@ -160,3 +160,44 @@ def test_things_beside_the_lane_on_the_right_do_not():
     cone = thing(24.0, 2.3, kind=ObjectType.OBSTACLE, h=0.7, w=0.4, l=0.4)
     box = thing(20.0, 1.9, kind=ObjectType.OBSTACLE, h=0.5, w=0.5, l=0.5)
     assert standing_in_the_way([lead(), bin_, cone, box]) is None
+
+
+# ---- what may be gone round at all (2026-09-11: not only cars) ---------------------------
+
+from warp_av.planning.planner import pass_refused   # noqa: E402
+
+
+def test_a_barrel_in_the_lane_may_be_passed():
+    """Live that day: a 0.45 m barrel in the lane stopped the van 8.7 m short and it was still
+    standing there when the test ended."""
+    assert pass_refused("obstacle", 0.0, camera_degraded=False) is None
+    assert pass_refused("unknown", 0.0, camera_degraded=False) is None
+    assert pass_refused("vehicle", 0.0, camera_degraded=False) is None
+
+
+def test_a_person_is_never_driven_round():
+    assert "waited for" in pass_refused("pedestrian", 0.0, camera_degraded=False)
+    assert "waited for" in pass_refused("cyclist", 0.0, camera_degraded=False)
+    assert "waited for" in pass_refused("pedestrian", 0.0, camera_degraded=True)
+
+
+def test_something_moving_is_followed_not_passed():
+    assert "moving" in pass_refused("vehicle", 1.5, camera_degraded=False)
+    assert "moving" in pass_refused("obstacle", 0.9, camera_degraded=False)
+    assert pass_refused("vehicle", 0.2, camera_degraded=False) is None      # noise, not motion
+
+
+def test_an_unnamed_thing_is_only_passed_while_the_camera_works():
+    """Dead ahead in the camera's view, a thing it has not called a person is a thing it
+    looked at and did not call a person. With the camera stale, that is ignorance."""
+    assert "not naming things" in pass_refused("obstacle", 0.0, camera_degraded=True)
+    assert "not naming things" in pass_refused("unknown", 0.0, camera_degraded=True)
+    assert pass_refused("vehicle", 0.0, camera_degraded=True) is None       # a car is a car
+
+
+def test_the_van_asks_this_before_it_goes_round_anything():
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    assert "why_not = pass_refused(" in src
+    i = src.index("OVERTAKE_STATES = ")
+    assert "STOPPED_OBSTACLE" in src[i:i + 200] and "STOPPED_BLOCKED" in src[i:i + 200]

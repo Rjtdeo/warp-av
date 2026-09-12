@@ -336,12 +336,18 @@ faults.
   never happen; and a rule cannot say "I nearly fired", so what came SECOND is never
   recorded. Traffic lights deliberately stay with the behaviour rather than becoming the
   planner's `blocked_signal` (see planning/instrumentation.py).
-* **Only a dead CAR is passed.** The go-around plans the path round a stopped vehicle and
-  slides the van's body along it before taking it (`planner.plan_overtake` +
+* **A pass needs a lane to borrow.** The go-around plans the path round whatever is standing
+  in the lane and slides the van's body along it before taking it (`planner.plan_overtake` +
   `pull_in_blocker`, with moving traffic judged by `planner.overtake_blocker`, which also
-  looks behind). Anything else standing in the lane -- a box, a barrel, a cone -- stops the
-  van, which waits for an operator: measured 2026-09-11 with a 0.45 m barrel in the lane
-  (stopped 8.7 m short, waited until the test ended) and a box poking 0.15 m into it.
+  looks behind). Since 2026-09-11 that is not only a car: `planner.pass_refused` says a
+  person or a rider is waited for and never driven round, something moving is followed, and
+  anything the camera has not named is passed only while the camera is working -- the thing
+  is dead ahead in its view, so "not called a person" is a judgement, and with a stale or
+  missing camera it is not. Measured that day: a 0.45 m barrel passed with 1.97 m to spare, a
+  0.65 m box with 2.05 m, a person standing in the lane waited for until the test ended.
+  What is still missing is the narrow version: the van always swings a full lane, so on a
+  single-lane road, or with the next lane occupied, a barrel still stops it. Squeezing past
+  inside the lane on a measured gap is not built.
 * **Steering wander.** Full-lock steering for about 7% of one long run. The controller is a
   tuned pure-pursuit with a centreline correction term; a Stanley controller or MPC is the
   longer-term answer.
