@@ -65,6 +65,7 @@ from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_bra
 from .planning.instrumentation import (PlannerDecision, PATH_CLEAR, PATH_SLOW, PATH_UNSURE,
                                       PATH_BLOCKED, GROUND_RELEASED, PhaseTimer, PlannerDecision, BLOCKED_OCCUPANCY,
                                        UNKNOWN_SPACE, CLEAR, ROAD_BOUNDARY)
+from .planning.trajectory import plan_trajectory
 from .planning.footprint_config import FootprintBlockingConfig
 from .planning.parking_check import spot_view, spot_counts, SPOT_DEFAULT_LEN_M, SPOT_DEFAULT_WID_M
 from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
@@ -270,6 +271,10 @@ class WarpAV:
         # The path record: what is in the way this tick, as the planner concluded (Planning V2
         # task 2). Perception's own fields are never written; everything reads this.
         self._path = None
+        # The next few seconds, written down (Planning V2 task 3): the path the controller
+        # would drive, aiming at the route the way it does, with the speed the behaviour asked
+        # for. Built at the end of every tick; the off-route body sweep reads it on the next.
+        self._trajectory = None
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -863,6 +868,7 @@ class WarpAV:
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
                 footprint=self.footprint_blocking.active_footprint(),
+                intended_path=(self._trajectory.xy() if self._trajectory is not None else None),
             )
             # ...and the laser's own ground as a second opinion on it, both ways round
             try:
@@ -1234,6 +1240,22 @@ class WarpAV:
 
         _phase("control target")
 
+        # 5b. The next few seconds, written down (Planning V2 task 3). Predicts, never
+        # commands: the controller still steers at the aim point, the behaviour still sets
+        # the speed. Read by the off-route body sweep next tick, shown on the API.
+        try:
+            self._trajectory = plan_trajectory(
+                (pose.x, pose.y, pose.yaw), pose.speed,
+                self._route.waypoints if self._route else [],
+                (target_x, target_y) if self._route else None,
+                0.0 if behavior_output.should_stop else max(0.0, behavior_output.desired_speed_mps),
+                decel=self.planner.A_DECEL, lat_accel=self.planner.A_LAT_MAX,
+                v_turn_min=self.planner.V_TURN_MIN)
+        except Exception as e:
+            self._trajectory = None
+            self._trajectory_error = repr(e)
+        _phase("trajectory")
+
         # 6. Compute vehicle command
         cmd = self.controller.compute_command(
             current_x=pose.x, current_y=pose.y,
@@ -1513,6 +1535,8 @@ class WarpAV:
             # what is in the way, as concluded this tick (task 2). The "perception" block above
             # says what perception saw; this says what was made of it.
             "planner": (self._path.as_dict() if getattr(self, "_path", None) is not None else None),
+            # the next few seconds (task 3): where the van intends to be, how fast, and when
+            "trajectory": (self._trajectory.as_dict() if getattr(self, "_trajectory", None) is not None else None),
             "autonomy_state": self.vehicle_adapter._autonomy_state.value,
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
@@ -2552,6 +2576,29 @@ class WarpAV:
         except Exception:
             return False
 
+    def _same_way_lane_ok(self, x, y, ego_yaw):
+        """Is this position on a driving lane that runs the way WE are going?
+
+        The only ground a whole-lane pass may use, either side (planner.pass_options). The van
+        used to borrow the lane on the LEFT whatever ran in it -- on an ordinary street that is
+        the oncoming carriageway, and it crossed the centre line to get past a parked car.
+        Rajat, watching one on 2026-09-14: "its safety concern it should never overtake from
+        opposite side lane". So: a lane whose heading is within 45 degrees of ours, or no
+        whole-lane pass at all. What is left on a single-carriageway street is the nudge inside
+        our own lane and the hard shoulder; where neither fits, the van waits, and waiting on
+        the right side of the road is the answer we want.
+        """
+        try:
+            wp = self.vehicle_adapter.get_map().get_waypoint(
+                carla.Location(x=x, y=y, z=0.3), project_to_road=False,
+                lane_type=carla.LaneType.Driving)
+            if wp is None:
+                return False
+            dyaw = abs((math.degrees(ego_yaw) - wp.transform.rotation.yaw + 180.0) % 360.0 - 180.0)
+            return dyaw < 45.0
+        except Exception:
+            return False
+
     def _shoulder_ok(self, x, y):
         """May the van stand here, half on the lane and half on what is beside it?
 
@@ -2654,38 +2701,49 @@ class WarpAV:
             waiting("solid ground squares ahead that nothing is tracked on — not going round "
                     "what cannot be measured")
             return
-        # Clearance: traffic moving where the pass would go (planner.overtake_blocker)...
+        # ...then the way round itself: the SMALLEST one that works. A nudge inside our own
+        # lane first, either way round, then a whole lane -- the one on the RIGHT first, where
+        # it runs our way, before borrowing the one on the left (planner.pass_options).
+        # Each is planned on a copy, because plan_overtake rewrites the route it is given.
         back_in_m = lead_d + self.planner.OVERTAKE_REJOIN_M + 8.0
         cruise = max(2.0, float(getattr(self.behavior, "cruise_speed", 4.0)))
         pass_takes_s = back_in_m / cruise
-        why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw,
-                               pass_takes_s=pass_takes_s, ego_speed_mps=pose.speed)
-        if why is not None:
-            waiting(why)
-            return
-        # ...then the way round itself: the SMALLEST one that works. A nudge inside our own
-        # lane first, either way round, and only then a whole lane (planner.pass_options).
-        # Each is planned on a copy, because plan_overtake rewrites the route it is given.
         taken, refused = None, "geometry refused (bend/junction/no lane/route end)"
         for over_m, in_lane, on_shoulder in pass_options(
                 self._lane_width(pose), self.footprint_blocking.footprint.half_width,
                 self.planner.OVERTAKE_SHIFT_M):
+            # Traffic moving where THIS way round would go (planner.overtake_blocker). Asked
+            # per way round since 2026-09-14: a car coming up the lane on the left is a reason
+            # not to pull out into it, and no reason at all not to go by on the right.
+            why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw,
+                                   pass_takes_s=pass_takes_s, ego_speed_mps=pose.speed,
+                                   side=(1 if over_m < 0 else -1))
+            if why is not None:
+                refused = why
+                continue
+            if on_shoulder:
+                lane_ok = self._shoulder_ok
+            elif not in_lane:
+                # a whole lane, either side: only one that runs OUR way. Never the oncoming
+                # one -- see _same_way_lane_ok (Rajat, 2026-09-14).
+                lane_ok = lambda x, y, _yaw=pose.yaw: self._same_way_lane_ok(x, y, _yaw)
+            else:
+                lane_ok = self._lane_ok           # a nudge stays inside our own lane
             trial = Route(waypoints=list(self._route.waypoints),
                           total_distance=self._route.total_distance)
             rejoin = self.planner.plan_overtake(
-                trial, pose.x, pose.y, lead_d, shift_m=over_m,
-                lane_ok=self._shoulder_ok if on_shoulder else self._lane_ok)
+                trial, pose.x, pose.y, lead_d, shift_m=over_m, lane_ok=lane_ok)
             if rejoin is None:
-                refused = (f"{abs(over_m):.2f} m over "
-                           f"{'onto the shoulder ' if on_shoulder else ''}is refused by the "
-                           f"geometry (bend/junction/no ground to use/route end)")
+                refused = (f"{abs(over_m):.2f} m over to the {'left' if over_m > 0 else 'right'}"
+                           f"{' onto the shoulder' if on_shoulder else ''} is refused by the "
+                           f"geometry (bend/junction/no lane of ours to use/route end)")
                 continue
             # ...and what stands on it: the van's body slid along that path, as before a pull-in
             in_way = self.planner.pull_in_blocker(perception, trial, pose.x, pose.y, pose.yaw,
                                                   self.footprint_blocking.footprint,
                                                   horizon_m=back_in_m)
             if in_way is None:
-                taken = (over_m, in_lane, trial, rejoin)
+                taken = (over_m, in_lane, on_shoulder, trial, rejoin)
                 break
             obj, dist, hit, where, box = in_way
             stands = getattr(getattr(obj, "object_type", None), "value", "thing")
@@ -2695,11 +2753,11 @@ class WarpAV:
         if taken is None:
             waiting(refused)
             return
-        over_m, in_lane, trial, rejoin = taken
+        over_m, in_lane, on_shoulder, trial, rejoin = taken
         way = (f"squeezing past inside our own lane, {abs(over_m):.2f} m over to the "
                f"{'left' if over_m > 0 else 'right'}" if in_lane else
                f"onto the hard shoulder, {abs(over_m):.1f} m over to the right"
-               if on_shoulder else "passing on the left")
+               if on_shoulder else f"passing on the {'left' if over_m > 0 else 'right'}")
         self._route.waypoints = trial.waypoints          # one swap: the tick may be reading it
         self._overtake_point = rejoin
         # While squeezing, the thing IS close: the abort line has to be the body's, not the

@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
-from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict
+from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict, _polyline
 from .instrumentation import (PlannerDecision, debug_planning_enabled,
                               PATH_CLEAR, PATH_SLOW, PATH_BLOCKED, BLOCKED_OCCUPANCY,
                               UNKNOWN_SPACE,
@@ -431,23 +431,34 @@ def lane_change_blocker(objects, side: int, ego_yaw: float) -> Optional[str]:
 
 
 def pass_options(lane_width_m: float, van_half_width_m: float, full_shift_m: float):
-    """The ways round something in the lane, smallest first: (how far over, does it stay in our
-    lane, may it use the hard shoulder).
+    """The ways round something in the lane, safest first: (how far over, does it stay in our
+    lane, may it use the hard shoulder). Positive is to the LEFT.
 
     A nudge inside our own lane first, either way round, and only then the whole lane. On a
     3.5 m lane a 1.98 m van has 0.75 m of room to move over before its body is on the line,
     which is enough for something poking into the lane but never for something sitting in the
     middle of it -- that still needs a lane to borrow. Live on 2026-09-11 the van stopped dead
     for 116 s in front of a box that reached 0.15 m into its lane, with 0.6 m of road beside
-    it."""
+    it.
+
+    A whole lane on EITHER side is offered, the right one first -- and the caller allows both
+    only into a lane that runs OUR way (main.py: _same_way_lane_ok). Two things changed on
+    2026-09-14. The right was not offered at all, so on a two-lane one-way road, the van in the
+    left lane and the right one empty, a car standing in front of it was a wall: three separate
+    1 km runs ended stopped 9.7 m behind one, "1.80 m over onto the shoulder is refused by the
+    geometry" repeating to the timeout. And the left was offered whatever ran in it, so on an
+    ordinary street the van crossed the centre line into the oncoming lane to get past a parked
+    car -- which it must never do. Where no lane of ours is free, what is left is the nudge and
+    the shoulder, and then waiting."""
     room = 0.5 * float(lane_width_m) - float(van_half_width_m) - LANE_EDGE_KEEP_M
     out = []
     if room > 0.1:
         out.append((round(room, 2), True, False))     # left, staying in our lane
         out.append((round(-room, 2), True, False))    # right, staying in our lane
-    out.append((float(full_shift_m), False, False))   # then a whole lane to the left
+    out.append((-float(full_shift_m), False, False))  # a whole lane to the right, if it is ours
+    out.append((float(full_shift_m), False, False))   # ...then one to the left
     # ...and last of all, the hard shoulder on the right: only where the map says there is one
-    # wide enough to stand the van on, and never before the lane has been tried.
+    # wide enough to stand the van on, and never before the lanes have been tried.
     out.append((-SHOULDER_SHIFT_M, False, True))
     return out
 
@@ -488,8 +499,13 @@ def body_centre(obj):
 
 
 def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: float,
-                     pass_takes_s: float = PASS_TAKES_S, ego_speed_mps: float = 0.0) -> Optional[str]:
+                     pass_takes_s: float = PASS_TAKES_S, ego_speed_mps: float = 0.0,
+                     side: int = -1) -> Optional[str]:
     """Why MOVING traffic says the van may not swing out past a dead lead vehicle now, or None.
+
+    `side` is which way the pass would go: -1 to the left (the default, and the only way the
+    van went until 2026-09-14), +1 to the right. It moves the band this looks in, so traffic
+    in the lane on the left is no longer a reason to refuse a pass on the right.
 
     Judged by where it is and where it is going:
       * the passing lane ahead -- anything moving there
@@ -508,6 +524,8 @@ def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: floa
     (prediction.could_use_a_road): kerb fragments slide along the kerb too."""
     from .prediction import could_use_a_road
     c, s = math.cos(ego_yaw), math.sin(ego_yaw)
+    lo, hi = (PASSING_LANE_BAND_M if side < 0
+              else (-PASSING_LANE_BAND_M[1], -PASSING_LANE_BAND_M[0]))
     for obj in objects or []:
         moving = (float(getattr(obj, "speed", 0.0) or 0.0) > 0.3
                   and not getattr(obj, "stationary", False) and could_use_a_road(obj))
@@ -516,7 +534,7 @@ def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: floa
         x, y = body_centre(obj)
         dist = math.hypot(x, y)
         kind = getattr(getattr(obj, "object_type", None), "value", "thing")
-        in_passing = PASSING_LANE_BAND_M[0] < y < PASSING_LANE_BAND_M[1]
+        in_passing = lo < y < hi
         in_ours = OUR_LANE_BAND_M[0] <= y <= OUR_LANE_BAND_M[1]
         if x >= -2.0:
             if in_passing:
@@ -1558,7 +1576,8 @@ class RoutePlanner:
 
     def filter_to_route_corridor(self, perception, route: Route, ego_x, ego_y, ego_yaw,
                                  corridor_halfwidth_m=1.75, block_halfwidth_m=1.40,
-                                 danger_m=8.0, max_ahead_m=50.0, footprint=None):
+                                 danger_m=8.0, max_ahead_m=50.0, footprint=None,
+                                 intended_path=None):
         """
         Recompute perception's "in my path" verdict against the ROUTE CORRIDOR
         instead of a straight box along the vehicle's nose.
@@ -1578,6 +1597,11 @@ class RoutePlanner:
         1.40 m / 2.20 m centre-line bands. Everything else - moving objects,
         pedestrians, junction segments, the slow zone, what counts as
         "closest" - is unchanged. None (the default) = exactly the old rules.
+
+        intended_path (Planning V2 task 3, optional): the trajectory the van is
+        steering along, as points from its centre onwards. Off the route, the
+        body sweep slides along THIS instead of a straight line from the nose:
+        a van steering back to its lane is not going straight ahead.
         """
         if not route or len(route.waypoints) < 2:
             # nothing to judge against: perception's own straight-ahead verdict stands
@@ -1628,10 +1652,15 @@ class RoutePlanner:
         # (test_tilted_van_ignores_vehicle_off_route).
         off_route = footprint is not None and ego_lat > corridor_halfwidth_m
         nose_reach_m = danger_m + footprint.swept_half_length if off_route else 0.0
-        nose_line = ([(ego_x, ego_y),
-                      (ego_x + cos_y * (nose_reach_m + 2.0 * footprint.half_length),
-                       ego_y + sin_y * (nose_reach_m + 2.0 * footprint.half_length))]
-                     if off_route else None)
+        nose_line = None
+        if off_route:
+            # the path the van is actually steering along when it has one (task 3);
+            # straight ahead from the nose when it does not
+            nose_line = _polyline(intended_path) if intended_path else []
+            if len(nose_line) < 2:
+                nose_line = [(ego_x, ego_y),
+                             (ego_x + cos_y * (nose_reach_m + 2.0 * footprint.half_length),
+                              ego_y + sin_y * (nose_reach_m + 2.0 * footprint.half_length))]
         # How far ahead the path stops being a plain road. The swept-body check is only
         # trustworthy on a straight-ish stretch, so this is where it must hand back.
         #
@@ -1962,9 +1991,10 @@ class RoutePlanner:
         the moved-over position is ground the van may use. Returns the rejoin point
         (Waypoint) or None when the geometry does not allow a safe pass.
 
-        `shift_m` is how far over to go: OVERTAKE_SHIFT_M (a whole lane to the LEFT) by
-        default, a smaller number for a nudge that stays inside our own lane, and a negative
-        one to move right. See pass_options."""
+        `shift_m` is how far over to go: positive is LEFT (OVERTAKE_SHIFT_M, a whole lane, by
+        default), a smaller number for a nudge that stays inside our own lane, and a negative
+        one to move right. Which of those the van is allowed is pass_options and the `lane_ok`
+        the caller passes -- a whole lane only where it runs our way, never the oncoming one."""
         wps = route.waypoints
         n = len(wps)
         if n < 10 or obstacle_along_m is None:

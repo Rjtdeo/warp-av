@@ -224,9 +224,11 @@ from warp_av.planning.planner import (pass_options, LANE_EDGE_KEEP_M,  # noqa: E
 
 def test_the_nudge_is_tried_before_the_whole_lane_and_the_shoulder_last():
     ways = pass_options(3.5, 0.99, 3.6)
-    assert [w[0] for w in ways] == [0.71, -0.71, 3.6, -SHOULDER_SHIFT_M]
-    assert [w[1] for w in ways] == [True, True, False, False]
-    assert [w[2] for w in ways] == [False, False, False, True], "only the last may use it"
+    # a nudge either way; then a whole lane on the RIGHT, where it runs our way (2026-09-14),
+    # before borrowing the one on the left; the shoulder last of all
+    assert [w[0] for w in ways] == [0.71, -0.71, -3.6, 3.6, -SHOULDER_SHIFT_M]
+    assert [w[1] for w in ways] == [True, True, False, False, False]
+    assert [w[2] for w in ways] == [False, False, False, False, True], "only the last may use it"
 
 
 def test_a_nudge_never_puts_the_body_over_the_line():
@@ -235,8 +237,9 @@ def test_a_nudge_never_puts_the_body_over_the_line():
         assert over + 0.99 <= lane / 2.0 - LANE_EDGE_KEEP_M + 1e-9
 
 
-def test_a_lane_too_narrow_to_move_in_offers_the_lane_and_the_shoulder():
-    assert pass_options(2.0, 0.99, 3.6) == [(3.6, False, False), (-SHOULDER_SHIFT_M, False, True)]
+def test_a_lane_too_narrow_to_move_in_offers_the_lanes_and_the_shoulder():
+    assert pass_options(2.0, 0.99, 3.6) == [(-3.6, False, False), (3.6, False, False),
+                                            (-SHOULDER_SHIFT_M, False, True)]
 
 
 def test_the_path_of_a_nudge_stays_where_it_should():
@@ -287,7 +290,9 @@ def test_but_something_in_the_middle_of_the_lane_still_needs_a_lane_to_borrow():
         if p.pull_in_blocker(_Seen([barrel]), trial, 0.0, 0.0, 0.0, van, horizon_m=REJOIN) is None:
             taken = (over, in_lane)
             break
-    assert taken == (3.6, False)
+    # the first WHOLE lane offered: the one on the right. Whether it exists and runs our way is
+    # the caller's question (main.py: _same_way_lane_ok); this is bare geometry on a straight.
+    assert taken == (-3.6, False)
 
 
 def test_the_van_tries_them_in_that_order_and_creeps_while_it_squeezes():
@@ -296,6 +301,81 @@ def test_the_van_tries_them_in_that_order_and_creeps_while_it_squeezes():
     assert "for over_m, in_lane, on_shoulder in pass_options(" in src
     assert "SQUEEZE_ABORT_M if (in_lane or on_shoulder) else PASS_ABORT_M" in src
     assert "SQUEEZE_SPEED_MPS if (in_lane or on_shoulder)" in src
-    assert "self._shoulder_ok if on_shoulder else self._lane_ok" in src, \
-        "only the shoulder option may use the shoulder"
+    assert "lane_ok = self._shoulder_ok" in src, "only the shoulder option may use the shoulder"
+    i = src.index("elif not in_lane:")
+    assert "self._same_way_lane_ok(x, y, _yaw)" in src[i:i + 400], \
+        "a whole-lane pass, either side, only goes into a lane running our way"
+    assert "lane_ok = self._lane_ok" in src, "a nudge stays inside our own lane"
     assert "pass_takes_s=pass_takes_s, ego_speed_mps=pose.speed" in src
+    assert "side=(1 if over_m < 0 else -1)" in src, "the traffic check follows the side of the pass"
+
+
+# ---- going round on the RIGHT (2026-09-14) ----------------------------------------------
+#
+# The van only ever passed on the left, or onto the shoulder. On a two-lane one-way road with
+# the van in the left lane, a car standing in front of it was a wall: three 1 km runs ended
+# stopped 9.7 m behind one, repeating "1.80 m over onto the shoulder is refused by the
+# geometry" until the run timed out.
+
+from warp_av.planning.planner import overtake_blocker, PASSING_LANE_BAND_M  # noqa: E402
+
+
+def moving(x, y, speed=6.0, vx=0.0, vy=0.0):
+    o = thing(x, y, kind=ObjectType.VEHICLE)
+    o.speed, o.stationary, o.vx_world, o.vy_world = speed, False, vx, vy
+    return o
+
+
+def test_a_car_coming_up_the_left_lane_no_longer_forbids_a_pass_on_the_right():
+    left_lane_y = 0.5 * (PASSING_LANE_BAND_M[0] + PASSING_LANE_BAND_M[1])     # -3.65 m
+    coming = moving(-20.0, left_lane_y, vx=8.0)                               # 20 m back, gaining
+    assert overtake_blocker([coming], LEAD, REJOIN, 0.0, side=-1) is not None, "not into that lane"
+    assert overtake_blocker([coming], LEAD, REJOIN, 0.0, side=1) is None, "...but the right is free"
+
+
+def test_a_car_in_the_right_lane_does_forbid_a_pass_on_the_right():
+    right_lane_y = -0.5 * (PASSING_LANE_BAND_M[0] + PASSING_LANE_BAND_M[1])   # +3.65 m
+    there = moving(15.0, right_lane_y)
+    assert overtake_blocker([there], LEAD, REJOIN, 0.0, side=1) is not None
+    assert overtake_blocker([there], LEAD, REJOIN, 0.0, side=-1) is None
+
+
+def test_the_left_side_is_still_the_default_and_unchanged():
+    left_lane_y = 0.5 * (PASSING_LANE_BAND_M[0] + PASSING_LANE_BAND_M[1])
+    there = moving(15.0, left_lane_y)
+    assert overtake_blocker([there], LEAD, REJOIN, 0.0) == overtake_blocker([there], LEAD, REJOIN, 0.0, side=-1)
+    assert overtake_blocker([there], LEAD, REJOIN, 0.0) is not None
+
+
+def test_no_room_to_pull_back_in_is_judged_the_same_either_way():
+    ours = moving(6.0, 0.0)                     # moving car in OUR lane, inside the rejoin room
+    for side in (-1, 1):
+        assert "pull back in" in (overtake_blocker([ours], LEAD, REJOIN, 0.0, side=side) or "")
+
+
+def test_a_lane_going_the_other_way_is_not_ours_to_pass_in():
+    """The van must never overtake using the oncoming lane (Rajat, 2026-09-14). _same_way_lane_ok
+    gates BOTH whole-lane ways round: a lane whose heading is not roughly ours is not ground the
+    van may pass in, whichever side of it that lane lies."""
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("def _same_way_lane_ok")
+    body = src[i:src.index("def _shoulder_ok", i)]
+    assert "lane_type=carla.LaneType.Driving" in body and "project_to_road=False" in body
+    assert "dyaw < 45.0" in body, "same way means roughly our heading"
+
+
+def test_neither_whole_lane_may_be_the_oncoming_one():
+    """The left lane used to be taken on `_lane_ok` alone -- any driving lane, including the
+    other carriageway. Live on 2026-09-14 the van crossed the centre line to get past a parked
+    car. Now both whole-lane ways round ask _same_way_lane_ok, and only the nudge -- which
+    never leaves our own lane -- still asks _lane_ok."""
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("for over_m, in_lane, on_shoulder in pass_options(")
+    loop = src[i:src.index("if taken is None:", i)]
+    assert "elif not in_lane:" in loop and "_same_way_lane_ok" in loop
+    # the only _lane_ok left in the loop is the nudge's
+    assert loop.count("self._lane_ok") == 1
+    j = loop.index("self._lane_ok")
+    assert "else:" in loop[max(0, j - 120):j], "plain _lane_ok is the nudge's branch only"
