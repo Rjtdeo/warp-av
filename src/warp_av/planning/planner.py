@@ -1606,8 +1606,28 @@ class RoutePlanner:
                 arc += seg
             return best_arc, math.sqrt(best_d2), best_i
 
-        ego_arc, _, _ = arc_pos(ego_x, ego_y)
+        ego_arc, ego_lat, _ = arc_pos(ego_x, ego_y)
         cos_y, sin_y = math.cos(ego_yaw), math.sin(ego_yaw)
+        # Off-route blindness (Planning V2 task 1). Everything below judges an object by how
+        # far it sits from the ROUTE LINE, and nothing further than 2.2-2.6 m from that line
+        # is looked at. A van that has drifted 3 m off its route, with something five metres
+        # in front of its own nose, therefore reported the road clear -- 999 m. Seen live on
+        # 2026-09-13: wandered off the road, saw a mailbox on every reading, drove into it.
+        # So while the van's centre is OUTSIDE the corridor it is checking (further than
+        # corridor_halfwidth_m from the line -- the corridor's own half-width, nothing new),
+        # its own body is ALSO slid straight ahead from where it actually is, over the next
+        # danger_m -- the distance the band rules already call "this close and in the way:
+        # stop". Same body, same boxes, same margins (sweep_conflict along a two-point line
+        # through the pose); stationary objects only, off junctions and off bends only,
+        # exactly as the route sweep. On the route nothing here runs, so a van mid-turn with
+        # its nose pointing across the next lane keeps ignoring that lane
+        # (test_tilted_van_ignores_vehicle_off_route).
+        off_route = footprint is not None and ego_lat > corridor_halfwidth_m
+        nose_reach_m = danger_m + footprint.swept_half_length if off_route else 0.0
+        nose_line = ([(ego_x, ego_y),
+                      (ego_x + cos_y * (nose_reach_m + 2.0 * footprint.half_length),
+                       ego_y + sin_y * (nose_reach_m + 2.0 * footprint.half_length))]
+                     if off_route else None)
         # How far ahead the path stops being a plain road. The swept-body check is only
         # trustworthy on a straight-ish stretch, so this is where it must hand back.
         #
@@ -1709,6 +1729,36 @@ class RoutePlanner:
             # footprint mode a stationary object is kept for the sweep up to
             # the van's own reach; the sweep itself decides precisely.
             lat_limit = (footprint.swept_half_length + 1.0) if sweep_decides else 2.20
+            if (off_route and stationary and not near_junction and obj.x > -1.0
+                    and (plain_road_m is None or obj.x + footprint_reach <= plain_road_m)):
+                # the van's own body, straight ahead from where it really is (see off_route)
+                box_n = obstacle_box_for(obj, ego_yaw)
+                where_n = (wx, wy)
+                if box_n is not None:
+                    where_n = (wx + cos_y * box_n.dx - sin_y * box_n.dy,
+                               wy + sin_y * box_n.dx + cos_y * box_n.dy)
+                body_n = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
+                          if kerb_like(obj) else footprint)
+                radius_n = obstacle_radius_m(obj)
+                hit_n = sweep_conflict(nose_line, (ego_x, ego_y), body_n, where_n,
+                                       obstacle_radius=radius_n, horizon_m=nose_reach_m,
+                                       obstacle_box=box_n)
+                if hit_n is not None and can_pass_with_care(obj):
+                    tight_n = replace(footprint, safety_margin=min(footprint.safety_margin, PASS_CLEARANCE_M))
+                    if sweep_conflict(nose_line, (ego_x, ego_y), tight_n, where_n,
+                                      obstacle_radius=radius_n, horizon_m=nose_reach_m,
+                                      obstacle_box=box_n) is None:
+                        hit_n = None                  # only the margin in the way: pass with care
+                if hit_n is not None:
+                    found = True
+                    dist = max(0.0, float(obj.x))     # straight ahead of the steering point
+                    if dist < closest:
+                        closest = dist
+                        closest_type = obj.object_type
+                        closest_speed = obj.speed
+                        closest_lat = round(lat, 2)
+                    blocked = True
+                    _note_block(BLOCKED_SWEPT_PATH, obj, dist, lat)
             if lat > lat_limit:
                 continue
             if want_detail:
