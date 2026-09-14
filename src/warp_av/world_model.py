@@ -287,7 +287,8 @@ class WorldModel:
 
 
 def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_lidar",
-                      now: Optional[float] = None, free_space: Optional[dict] = None) -> WorldModel:
+                      now: Optional[float] = None, free_space: Optional[dict] = None,
+                      path=None) -> WorldModel:
     """Turn one tick of perception, plus where the van is, into the sheet.
 
     `pose` is anything with x, y, yaw (radians) and optionally speed and healthy.
@@ -332,16 +333,19 @@ def build_world_model(perception: PerceptionOutput, pose, source: str = "camera_
             box_yaw_deg=float(getattr(o, "box_yaw_deg", 0.0) or 0.0),
         ))
 
-    closest = perception.closest_obstacle_distance
+    # What is in the way: the planner's path record when one was made this tick (Planning V2
+    # task 2), otherwise perception's own straight-ahead verdict. The same five numbers.
+    verdict = path if path is not None else perception
+    closest = verdict.closest_obstacle_distance
     if closest is not None and closest >= 900.0:
-        closest = None                     # perception's "nothing there" sentinel
-    kind = perception.closest_obstacle_type
+        closest = None                     # the "nothing there" sentinel
+    kind = verdict.closest_obstacle_type
     path = PathState(
-        blocked=bool(perception.path_blocked),
+        blocked=bool(verdict.path_blocked),
         closest_distance_m=closest,
         closest_kind=kind.value if isinstance(kind, ObjectType) else str(kind or ObjectType.UNKNOWN.value),
-        closest_speed_mps=float(perception.closest_obstacle_speed or 0.0),
-        closest_lateral_m=perception.closest_obstacle_lateral_m,
+        closest_speed_mps=float(verdict.closest_obstacle_speed or 0.0),
+        closest_lateral_m=verdict.closest_obstacle_lateral_m,
     )
     if path.closest_distance_m is not None:
         near = [o for o in objects if abs(o.distance_m - path.closest_distance_m) < 1.5 and o.x > 0]

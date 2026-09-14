@@ -17,7 +17,8 @@ from dataclasses import dataclass, field, replace
 from typing import List, Optional
 
 from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict
-from .instrumentation import (PlannerDecision, debug_planning_enabled, BLOCKED_OCCUPANCY,
+from .instrumentation import (PlannerDecision, debug_planning_enabled,
+                              PATH_CLEAR, PATH_SLOW, PATH_BLOCKED, BLOCKED_OCCUPANCY,
                               UNKNOWN_SPACE,
                               CLEAR, NO_ROUTE, BLOCKED_TRACKED_OBJECT,
                               BLOCKED_SWEPT_PATH, BLOCKED_SCRAPE, BLOCKED_VRU)
@@ -1566,7 +1567,9 @@ class RoutePlanner:
         flags vehicles that are not on our path (false stop) and misses
         obstacles around the bend (late stop). Here an object counts only if it
         lies within corridor_halfwidth of the route polyline AND ahead of us
-        along the route. Mutates and returns the PerceptionOutput.
+        along the route. Returns the path record (a PlannerDecision: level,
+        the nearest thing, the reason, the evidence) and never writes into
+        perception, which keeps saying what it saw (Planning V2 task 2).
 
         footprint (Planning V2, optional): a VehicleFootprint. When given, a
         STATIONARY object on a non-junction stretch hard-blocks only if the
@@ -1577,12 +1580,13 @@ class RoutePlanner:
         "closest" - is unchanged. None (the default) = exactly the old rules.
         """
         if not route or len(route.waypoints) < 2:
-            self.last_decision = PlannerDecision(reason=NO_ROUTE)
-            return perception
+            # nothing to judge against: perception's own straight-ahead verdict stands
+            self.last_decision = PlannerDecision.from_perception(perception, reason=NO_ROUTE)
+            return self.last_decision
         if not getattr(perception, "objects", None):
             self.last_decision = PlannerDecision(reason=CLEAR,
                                                  route_points_used=len(route.waypoints))
-            return perception
+            return self.last_decision
 
         wps = route.waypoints
         n = len(wps)
@@ -1663,7 +1667,7 @@ class RoutePlanner:
         front_bumper_m = (footprint.half_length if footprint is not None else VAN_HALF_LENGTH_M)
 
         closest = 999.0
-        closest_type = perception.closest_obstacle_type
+        closest_type = None                 # set with the nearest thing found; None = nothing
         closest_speed = 0.0
         closest_lat = None
         blocked = False
@@ -1871,16 +1875,15 @@ class RoutePlanner:
                     blocked = True
                     _note_block(BLOCKED_SWEPT_PATH, obj, along, lat)
 
-        perception.closest_obstacle_distance = closest
-        perception.closest_obstacle_speed = closest_speed
-        perception.closest_obstacle_lateral_m = closest_lat
-        perception.path_blocked = blocked
-        if found:
-            perception.closest_obstacle_type = closest_type
-
-        # --- phase 0: say what was decided and on what evidence. Reads the same state the
-        # lines above just wrote; it cannot and must not change any of it.
+        # The path record (Planning V2 task 2): what was decided, the numbers the behaviour
+        # acts on, and the evidence. RETURNED, never written into perception, so perception
+        # keeps saying what it saw and this says what was made of it.
         decision = PlannerDecision(reason=CLEAR,
+                                   level=(PATH_BLOCKED if blocked else PATH_SLOW if found else PATH_CLEAR),
+                                   closest_distance_m=closest,
+                                   closest_kind=(closest_type if found else None),
+                                   closest_speed_mps=closest_speed,
+                                   closest_lateral_m=closest_lat,
                                    objects_considered=seen,
                                    objects_in_corridor=in_corridor,
                                    route_points_used=n,
@@ -1906,7 +1909,7 @@ class RoutePlanner:
             decision.passing_id = int(getattr(passing_obj[0], "id", 0) or 0) or None
             decision.passing_lateral_m = passing_obj[2]
         self.last_decision = decision
-        return perception
+        return decision
 
     def blend_departure(self, route: Route, ego_x, ego_y):
         """Ease OUT of a parking bay at mission start: the route begins on

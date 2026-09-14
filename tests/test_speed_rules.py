@@ -185,5 +185,5 @@ def test_the_van_asks_the_laser_kerb_lines_not_the_map():
     body = src[i:i + 1200]
     assert 'edges = getattr(self.perception, "road_edges", None)' in body
     assert "edges.drivable(x, y) is False" in body, "no answer is not a wrong answer"
-    assert "self.planner.last_decision.reason = ROAD_BOUNDARY" in src
+    assert "path.reason = ROAD_BOUNDARY" in src
     assert ROAD_BOUNDARY in ALL_REASONS

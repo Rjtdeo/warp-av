@@ -46,8 +46,8 @@ def judge(obj, with_care=True):
     try:
         per = PerceptionOutput(objects=[obj])
         p = RoutePlanner.__new__(RoutePlanner)
-        p.filter_to_route_corridor(per, lane_turning_left(), 0.0, 0.0, 0.0, footprint=SPRINTER)
-        return per, p.last_decision
+        out = p.filter_to_route_corridor(per, lane_turning_left(), 0.0, 0.0, 0.0, footprint=SPRINTER)
+        return out, p.last_decision
     finally:
         P.can_pass_with_care = saved
 

@@ -71,8 +71,7 @@ def thing(x, y, size, yaw_deg=0.0, kind=ObjectType.OBSTACLE):
 def blocks(o, footprint=FOOT):
     p = RoutePlanner.__new__(RoutePlanner)
     per = PerceptionOutput(objects=[o])
-    p.filter_to_route_corridor(per, road(), 0.0, 0.0, 0.0, footprint=footprint)
-    return per.path_blocked
+    return p.filter_to_route_corridor(per, road(), 0.0, 0.0, 0.0, footprint=footprint).path_blocked
 
 
 def test_a_kerb_strip_along_the_road_no_longer_stops_the_van():

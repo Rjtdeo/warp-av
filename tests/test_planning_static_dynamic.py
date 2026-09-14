@@ -221,8 +221,8 @@ def test_static_in_the_path_still_blocks():
                               motion_class=label, static_rule="pole" if label == "static" else "")
         per = PerceptionOutput(objects=[post])
         road = Route(waypoints=[Waypoint(x=-20.0 + i * 2.0, y=0.0) for i in range(61)])
-        RoutePlanner.__new__(RoutePlanner).filter_to_route_corridor(per, road, 0.0, 0.0, 0.0)
-        assert per.path_blocked, f"a {label} post in the lane must stop the van"
+        out = RoutePlanner.__new__(RoutePlanner).filter_to_route_corridor(per, road, 0.0, 0.0, 0.0)
+        assert out.path_blocked, f"a {label} post in the lane must stop the van"
 
 
 def test_the_switch_turns_it_off():

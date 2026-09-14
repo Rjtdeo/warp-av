@@ -538,7 +538,8 @@ def execute_run(spec, rng, points, out_dir, log):
             tl = st.get("traffic_light") or {}
             jm = st.get("junction_ahead_m")
             speed = pose.get("speed", 0.0)
-            closest = per.get("closest_distance", 999.0)
+            # the planner's path record (what the van acts on); older stacks had it in perception
+            closest = (st.get("planner") or {}).get("closest_distance_m", per.get("closest_distance", 999.0))
             mission_state = (st.get("mission") or {}).get("state", "?")
 
             behaviors.add(beh)

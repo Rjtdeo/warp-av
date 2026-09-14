@@ -62,7 +62,8 @@ from .testing.fault_injector import FaultInjector
 from .vehicle_interface import VehicleCommand, GearState
 from .planning.sensed_slots import sensed_parking_slots, nearest_free_slot, consistent_with, hold_short_point
 from .planning.rl_parker import RLParker, box_outline_points, stop_overrides_brain
-from .planning.instrumentation import (PhaseTimer, PlannerDecision, BLOCKED_OCCUPANCY,
+from .planning.instrumentation import (PlannerDecision, PATH_CLEAR, PATH_SLOW, PATH_UNSURE,
+                                      PATH_BLOCKED, GROUND_RELEASED, PhaseTimer, PlannerDecision, BLOCKED_OCCUPANCY,
                                        UNKNOWN_SPACE, CLEAR, ROAD_BOUNDARY)
 from .planning.footprint_config import FootprintBlockingConfig
 from .planning.parking_check import spot_view, spot_counts, SPOT_DEFAULT_LEN_M, SPOT_DEFAULT_WID_M
@@ -266,6 +267,9 @@ class WarpAV:
         # Current state for the API/console
         self._current_state = {}
         self._route = None
+        # The path record: what is in the way this tick, as the planner concluded (Planning V2
+        # task 2). Perception's own fields are never written; everything reads this.
+        self._path = None
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -416,7 +420,8 @@ class WarpAV:
         mission = self.mission_manager.current_mission
         if not self._route or mission is None or self._overtake_point is not None:
             return
-        blocked = behavior_output.why in self.BLOCKED_REASONS or perception.path_blocked
+        path = getattr(self, "_path", None) or PlannerDecision.from_perception(perception)
+        blocked = behavior_output.why in self.BLOCKED_REASONS or path.blocked
         if not blocked:
             self._blocked_road_since = None
             return
@@ -428,7 +433,7 @@ class WarpAV:
                 or now - getattr(self, "_reroute_asked_at", 0.0) < self.REROUTE_EVERY_S:
             return
         self._reroute_asked_at = now
-        at_m = float(getattr(perception, "closest_obstacle_distance", 0.0) or 0.0)
+        at_m = float(path.closest_distance_m)
         if at_m <= 0.0 or at_m > self.REROUTE_WITHIN_M:
             return
         span = self.planner.junction_span(self._route, pose.x, pose.y)
@@ -854,20 +859,23 @@ class WarpAV:
                         self._static_vehicle_objects(pose)
                 except Exception:
                     pass
-            perception = self.planner.filter_to_route_corridor(
+            self._path = self.planner.filter_to_route_corridor(
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
                 footprint=self.footprint_blocking.active_footprint(),
             )
             # ...and the laser's own ground as a second opinion on it, both ways round
             try:
-                self._second_opinion_on_the_ground(perception, pose,
+                self._second_opinion_on_the_ground(self._path, pose,
                                                    self.behavior.current_behavior)
             except Exception as e:
                 print(f"[FreeSpace] second opinion failed: {e}")
+        else:
+            # nothing to judge against: perception's own straight-ahead verdict is the record
+            self._path = PlannerDecision.from_perception(perception)
         _phase("route corridor")
 
-        self._last_perception = perception      # the learned parker's stop-override rule reads this
+        self._last_perception = perception      # the parking pull-in check reads its objects (pull_in_blocker)
         # One sheet saying what the van knows, built once and read by everyone else
         # (Perception V2 day 7). It is a view of the numbers above, never a second opinion.
         try:
@@ -882,7 +890,7 @@ class WarpAV:
             if free_space is not None:
                 free_space["blind_spot_m"] = self._blind_spot_m
             self._world = build_world_model(perception, pose, source=self.perception_mode,
-                                            free_space=free_space)
+                                            free_space=free_space, path=self._path)
         except Exception as e:
             self._world = None
             self._blind_spot_m = None
@@ -895,8 +903,8 @@ class WarpAV:
                 frame = build_frame((pose.x, pose.y, pose.yaw), self.footprint_blocking.footprint,
                                     self._route.waypoints, perception.objects,
                                     blocking_enabled=self.footprint_blocking.enabled,
-                                    planner_blocked=perception.path_blocked,
-                                    planner_distance=perception.closest_obstacle_distance)
+                                    planner_blocked=self._path.blocked,
+                                    planner_distance=self._path.closest_distance_m)
                 self._footprint_drawer.draw(frame, z=pose.z + 0.15)
             except Exception as e:
                 self._footprint_drawer.note_failure(e)
@@ -1032,6 +1040,7 @@ class WarpAV:
             sign_m, sign_kind, sign_at = (None, None, None)
         behavior_output = self.behavior.update(
             perception=perception,
+            path=self._path,                   # task 2: what is in the way, as the planner concluded
             world=self._world,                 # day 7: the one sheet of what the van knows
             speed_cap_mps=safety_output.speed_cap_mps,   # day 8: slow while a sense is missing
             blind_spot_m=getattr(self, "_blind_spot_m", None),   # day 12: how near the unseen is
@@ -1305,7 +1314,7 @@ class WarpAV:
             safety_state=safety_output.state.value,
             safety_reason=safety_output.reason,
             perception_objects=len(perception.objects),
-            closest_obstacle=perception.closest_obstacle_distance,
+            closest_obstacle=self._path.closest_distance_m,
             mission_state=mission_state,
         )
 
@@ -1501,9 +1510,9 @@ class WarpAV:
             "slowest_phase": self._phases.worst_phase(),
             # ...and WHY the path was judged the way it was. "blocked = true" cannot tell a
             # parked lorry from the same kerb sliver reported forty times.
-            "planner": (self.planner.last_decision.as_dict()
-                        if getattr(self, "planner", None) is not None
-                        and getattr(self.planner, "last_decision", None) is not None else None),
+            # what is in the way, as concluded this tick (task 2). The "perception" block above
+            # says what perception saw; this says what was made of it.
+            "planner": (self._path.as_dict() if getattr(self, "_path", None) is not None else None),
             "autonomy_state": self.vehicle_adapter._autonomy_state.value,
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
@@ -2627,13 +2636,14 @@ class WarpAV:
         if junction_ahead is not None and junction_ahead < 25.0:
             waiting(f"junction only {junction_ahead:.0f} m ahead")
             return
-        lead_d = perception.closest_obstacle_distance
+        path = getattr(self, "_path", None) or PlannerDecision.from_perception(perception)
+        lead_d = path.closest_distance_m
         if lead_d is None or lead_d > 14.0:
             return
         # WHAT it is decides whether a pass may even be considered (planner.pass_refused);
         # whether the way round is clear is the geometry below.
-        what = getattr(perception.closest_obstacle_type, "value", "thing")
-        why_not = pass_refused(what, getattr(perception, "closest_obstacle_speed", 0.0),
+        what = getattr(path.closest_kind, "value", "thing")
+        why_not = pass_refused(what, path.closest_speed_mps,
                                bool(getattr(perception, "degraded", False)))
         if why_not is not None:
             waiting(why_not)
@@ -2789,7 +2799,7 @@ class WarpAV:
             self._give_up = WaitingIsPointless()
         blocked = behavior_output.behavior in (DrivingBehavior.STOPPED_OBSTACLE,
                                                DrivingBehavior.STOPPED_BLOCKED)
-        bid = getattr(self.planner.last_decision, "blocker_id", None)
+        bid = getattr(getattr(self, "_path", None), "blocker_id", None)
         obj = next((o for o in perception.objects if int(getattr(o, "id", 0) or 0) == bid), None) \
             if bid is not None else None
         what = self._give_up.update(blocked, dest_dist, obj, time.time())
@@ -2836,7 +2846,7 @@ class WarpAV:
         except Exception:
             pass
 
-    def _second_opinion_on_the_ground(self, perception, pose, behaviour=None):
+    def _second_opinion_on_the_ground(self, path, pose, behaviour=None):
         """The laser's own free-space map, read over the ground the van's body is about to
         cover, as a second opinion on the corridor check -- both ways round (Planning V2, P2).
 
@@ -2857,8 +2867,8 @@ class WarpAV:
         if grid is None or not pose.healthy:
             return
         front = self.behavior.front_offset_m
-        if perception.path_blocked:
-            self._drive_on_if_the_ground_is_seen_free(perception, pose, grid, front)
+        if path.blocked:
+            self._drive_on_if_the_ground_is_seen_free(path, pose, grid, front)
             return
         if behaviour == DrivingBehavior.PARKING or self._overtake_point is not None:
             return
@@ -2869,26 +2879,26 @@ class WarpAV:
             if self._ground_says is not None and self._road_edge_ahead(pose):
                 # the laser's own kerb line says the van's body would be over it
                 self._ground_says = ROAD_BOUNDARY
-                try:
-                    if self.planner.last_decision.reason == CLEAR:
-                        self.planner.last_decision.reason = ROAD_BOUNDARY
-                except Exception:
-                    pass
+                if path.reason == CLEAR:
+                    path.reason = ROAD_BOUNDARY
+            if self._ground_says in (UNKNOWN_SPACE, ROAD_BOUNDARY):
+                # said on the record; the speed rules already act on it, the stop rules do not
+                path.second_opinion = self._ground_says
+                if self._ground_says == UNKNOWN_SPACE and path.level == PATH_CLEAR:
+                    path.level = PATH_UNSURE
             return
         at = grid.nearest_block_ahead(front, front + GROUND_LOOK_M, half)
         if at is None:
             return
         free, blocked, unseen = counts
-        perception.path_blocked = True
-        perception.closest_obstacle_distance = min(perception.closest_obstacle_distance, at)
-        perception.closest_obstacle_type = ObjectType.UNKNOWN     # solid squares, not a thing
+        path.level = PATH_BLOCKED
+        path.closest_distance_m = min(path.closest_distance_m, at)
+        path.closest_kind = ObjectType.UNKNOWN     # solid squares, not a thing
+        path.reason = BLOCKED_OCCUPANCY
+        path.second_opinion = BLOCKED_OCCUPANCY
+        path.blocker_distance_m = at
+        path.blocker_kind = "solid squares"
         self._ground_block = {"at_m": round(at, 1), "squares": blocked, "looked_m": GROUND_LOOK_M}
-        try:
-            self.planner.last_decision.reason = BLOCKED_OCCUPANCY
-            self.planner.last_decision.blocker_distance_m = at
-            self.planner.last_decision.blocker_kind = "solid squares"
-        except Exception:
-            pass
         if time.time() - getattr(self, "_ground_block_at", 0.0) > 2.0:
             self._ground_block_at = time.time()
             self._note_move(GROUND_BLOCKED,
@@ -2901,19 +2911,21 @@ class WarpAV:
             print(f"[FreeSpace] {blocked} solid squares {at:.1f} m ahead, nothing tracked "
                   f"there -- stopping")
 
-    def _drive_on_if_the_ground_is_seen_free(self, perception, pose, grid, front):
+    def _drive_on_if_the_ground_is_seen_free(self, path, pose, grid, front):
         """The half of the second opinion that lets the van drive on (see above)."""
-        blocker_m = float(getattr(perception, "closest_obstacle_distance", 0.0) or 0.0)
+        blocker_m = float(path.closest_distance_m)
         look = min(SEEN_FREE_LOOK_M, max(SEEN_FREE_MIN_LOOK_M, blocker_m - front + 1.0))
         counts = grid.strip_ahead(front, front + look,
                                   self.footprint_blocking.footprint.swept_half_width)
         self._ground_says = what_the_ground_says(counts)
-        what = perception.closest_obstacle_type.value
-        if not nothing_is_standing_there(what, getattr(perception, "closest_obstacle_speed", 0.0),
-                                         counts):
+        what = getattr(path.closest_kind, "value", "unknown")
+        if not nothing_is_standing_there(what, path.closest_speed_mps, counts):
             return
         free, _, unseen = counts
-        perception.path_blocked = False
+        # released: still the nearest thing ahead, so the slow zone applies, not a stop. The
+        # planner's reason stays on the record next to what the ground said about it.
+        path.level = PATH_SLOW
+        path.second_opinion = GROUND_RELEASED
         self._ground_seen_free = {"what": what, "at_m": round(blocker_m, 1),
                                   "looked_m": round(look, 1), "free": free, "unseen": unseen}
         if time.time() - getattr(self, "_ground_seen_free_at", 0.0) > 2.0:
@@ -3327,14 +3339,13 @@ class WarpAV:
         # A stop demanded by the behaviour layer (obstacle, pedestrian, safety)
         # is honoured: the learned parker waits with the brakes on.
         if behavior_output.should_stop and behavior_output.behavior != DrivingBehavior.PARKING:
-            per = getattr(self, "_last_perception", None)
-            otype = getattr(getattr(per, "closest_obstacle_type", None), "value", "unknown") if per else "unknown"
-            if per is None or stop_overrides_brain(otype, getattr(per, "closest_obstacle_speed", 0.0),
-                                                   getattr(per, "closest_obstacle_distance", None)):
+            path = getattr(self, "_path", None)
+            otype = getattr(getattr(path, "closest_kind", None), "value", "unknown") if path else "unknown"
+            if path is None or stop_overrides_brain(otype, path.closest_speed_mps, path.closest_distance_m):
                 return cmd, behavior_output
             # a stationary vehicle farther than 2 m: the brain sees it through its
             # feelers and drives on (the stop would freeze us beside a parked car)
-            behavior_output.reason = f"learned parker driving past a stationary {otype} ({per.closest_obstacle_distance:.1f} m)"
+            behavior_output.reason = f"learned parker driving past a stationary {otype} ({path.closest_distance_m:.1f} m)"
         out = rl.act(pose.x, pose.y, pose.yaw, pose.speed, sp,
                      obstacle_points=getattr(self, "_obstacle_points_xy", None))
         cmd = VehicleCommand(steering=out["steering"], throttle=out["throttle"], brake=out["brake"],

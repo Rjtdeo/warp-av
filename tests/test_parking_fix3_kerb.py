@@ -37,8 +37,7 @@ def blocked(obj):
     per = PerceptionOutput(objects=[obj])
     road = Route(waypoints=[Waypoint(x=-20.0 + i * 2.0, y=0.0) for i in range(61)])
     p = planner()
-    p.filter_to_route_corridor(per, road, 0.0, 0.0, 0.0, footprint=SPRINTER)
-    return per.path_blocked
+    return p.filter_to_route_corridor(per, road, 0.0, 0.0, 0.0, footprint=SPRINTER).path_blocked
 
 
 # ---- what counts as a kerb ---------------------------------------------------------------

@@ -173,12 +173,45 @@ ALL_REASONS = (CLEAR, BLOCKED_TRACKED_OBJECT, BLOCKED_SWEPT_PATH, BLOCKED_SCRAPE
                BLOCKED_VRU, NO_ROUTE, BLOCKED_OCCUPANCY, UNKNOWN_SPACE, ROAD_BOUNDARY,
                BLOCKED_SIGNAL)
 
+# How usable the path is: the one word the behaviour acts on (the reason says why).
+# Planning V2 task 2. Until then the record held only blocked yes/no, and "something is in
+# the corridor, ease off" or "the ground ahead has never been seen" had no word of their own.
+PATH_CLEAR = "clear"          # nothing in the corridor ahead
+PATH_SLOW = "slow"            # something is in the corridor but not in the way: the slow zone
+PATH_UNSURE = "unsure"        # too much of the ground the van must cover has never been seen
+PATH_BLOCKED = "blocked"      # something is in the way: stop
+PATH_LEVELS = (PATH_CLEAR, PATH_SLOW, PATH_UNSURE, PATH_BLOCKED)
+#: The laser's own ground map, read afterwards as a second opinion (main.py), let the van
+#: drive on: the body the corridor check drew there stands on ground seen empty.
+GROUND_RELEASED = "ground_seen_free"
+
 
 @dataclass
 class PlannerDecision:
-    """What the planner concluded about the path this tick, and on what evidence."""
+    """The path record: what the planner concluded about the path this tick, the numbers the
+    behaviour acts on, and on what evidence.
+
+    Planning V2 task 2. Before it, the planner wrote its verdict INTO perception's own fields
+    (path_blocked, closest_obstacle_*), the ground map's second opinion wrote over that, and
+    nothing could say afterwards what perception had actually seen. Now perception says what
+    it saw and is never written; this record says what was made of it, and is the one thing
+    the behaviour, the world model, the log and the API read. `blocked` follows `level`, so
+    the record cannot say "blocked" in one field and "not blocked" in another -- which the
+    old pair (planner.blocked from the reason, perception.path_blocked from the release) did.
+    """
 
     reason: str = NO_ROUTE
+    #: how usable the path is (PATH_LEVELS). None when built = worked out from the reason.
+    level: Optional[str] = None
+    #: the nearest thing in the corridor ahead, what the stop and slow rules act on.
+    #: 999 m means nothing there: the sentinel every rule already compares against.
+    closest_distance_m: float = 999.0
+    closest_kind: object = None                 # its ObjectType; None when nothing is there
+    closest_speed_mps: float = 0.0
+    closest_lateral_m: Optional[float] = None
+    #: what the ground map added afterwards: BLOCKED_OCCUPANCY, UNKNOWN_SPACE, ROAD_BOUNDARY
+    #: or GROUND_RELEASED; None when it had nothing to say
+    second_opinion: Optional[str] = None
     blocker_id: Optional[int] = None
     blocker_kind: Optional[str] = None
     blocker_distance_m: Optional[float] = None
@@ -195,13 +228,62 @@ class PlannerDecision:
     #: everything the planner weighed, only when WARP_PLAN_DEBUG is on
     candidates: list = field(default_factory=list)
 
+    def __post_init__(self):
+        if self.level is None:
+            self.level = PATH_CLEAR if self.reason in (CLEAR, NO_ROUTE) else PATH_BLOCKED
+
     @property
     def blocked(self) -> bool:
-        return self.reason not in (CLEAR, NO_ROUTE)
+        return self.level == PATH_BLOCKED
+
+    @classmethod
+    def from_perception(cls, perception, reason: str = NO_ROUTE) -> "PlannerDecision":
+        """Perception's own straight-ahead verdict as the path record: what the van drives on
+        when there is no route to judge against (and what every rule read before this record
+        existed)."""
+        closest = getattr(perception, "closest_obstacle_distance", None)
+        closest = 999.0 if closest is None else float(closest)
+        blocked = bool(getattr(perception, "path_blocked", False))
+        return cls(reason=reason,
+                   level=PATH_BLOCKED if blocked else (PATH_SLOW if closest < 900.0 else PATH_CLEAR),
+                   closest_distance_m=closest,
+                   closest_kind=getattr(perception, "closest_obstacle_type", None),
+                   closest_speed_mps=float(getattr(perception, "closest_obstacle_speed", 0.0) or 0.0),
+                   closest_lateral_m=getattr(perception, "closest_obstacle_lateral_m", None))
+
+    # The names the verdict had while it lived in perception. The corridor tests and the
+    # demos read them; read-only, the same numbers.
+    @property
+    def path_blocked(self) -> bool:
+        return self.blocked
+
+    @property
+    def closest_obstacle_distance(self) -> float:
+        return self.closest_distance_m
+
+    @property
+    def closest_obstacle_type(self):
+        return self.closest_kind
+
+    @property
+    def closest_obstacle_speed(self) -> float:
+        return self.closest_speed_mps
+
+    @property
+    def closest_obstacle_lateral_m(self) -> Optional[float]:
+        return self.closest_lateral_m
 
     def as_dict(self) -> dict:
+        kind = self.closest_kind
         out = {"reason": self.reason,
+               "level": self.level,
                "blocked": self.blocked,
+               "closest_distance_m": round(self.closest_distance_m, 1),
+               "closest_kind": getattr(kind, "value", kind),
+               "closest_speed_mps": round(self.closest_speed_mps, 2),
+               "closest_lateral_m": (None if self.closest_lateral_m is None
+                                     else round(self.closest_lateral_m, 2)),
+               "second_opinion": self.second_opinion,
                "blocker_id": self.blocker_id,
                "blocker_kind": self.blocker_kind,
                "blocker_distance_m": (None if self.blocker_distance_m is None
@@ -221,9 +303,10 @@ class PlannerDecision:
 
     def one_line(self) -> str:
         """For a log or a console, when a table is too much."""
+        ground = "" if self.second_opinion is None else f" ground={self.second_opinion}"
         if not self.blocked:
-            return f"reason={self.reason}"
+            return f"{self.level} reason={self.reason}{ground}"
         where = "" if self.blocker_distance_m is None else f" at {self.blocker_distance_m:.1f} m"
         who = "" if self.blocker_id is None else f" blocker={self.blocker_id}"
         kind = "" if self.blocker_kind is None else f" ({self.blocker_kind})"
-        return f"reason={self.reason}{who}{kind}{where}"
+        return f"{self.level} reason={self.reason}{who}{kind}{where}{ground}"

@@ -170,7 +170,7 @@ def test_the_van_stops_for_solid_ground_and_will_not_go_round_it():
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
     i = src.index("def _second_opinion_on_the_ground")
     body = src[i:i + 3500]
-    assert "perception.path_blocked = True" in body
+    assert "path.level = PATH_BLOCKED" in body, "the ground block goes on the path record (task 2)"
     assert "BLOCKED_OCCUPANCY" in body
     assert "DrivingBehavior.PARKING" in body, "a pull-in goes close to the kerb on purpose"
     assert 'waiting("solid ground squares ahead that nothing is tracked on' in src

@@ -48,8 +48,8 @@ def thing(x, y=0.3, kind=ObjectType.OBSTACLE, size=None, speed=0.0, ident=1):
 def blocks(objs, ego=(0.0, 0.0, 0.0), footprint=None):
     p = planner()
     per = PerceptionOutput(objects=list(objs))
-    p.filter_to_route_corridor(per, road(), ego[0], ego[1], ego[2], footprint=footprint)
-    return per.path_blocked, p.last_decision
+    out = p.filter_to_route_corridor(per, road(), ego[0], ego[1], ego[2], footprint=footprint)
+    return out.path_blocked, p.last_decision
 
 
 CONE = (0.4, 0.4, 0.7)

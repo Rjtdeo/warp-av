@@ -220,9 +220,10 @@ def test_a_blocker_is_named_by_id_kind_and_distance():
     """The whole point of phase 0: not 'blocked = true'."""
     p = _planner()
     per = PerceptionOutput(objects=[_obj(6.0, 0.4, kind=ObjectType.VEHICLE, ident=17)])
-    _run(p, per, _route())
+    out = _run(p, per, _route())
     d = p.last_decision
-    assert per.path_blocked is True, "the decision under test must actually be a block"
+    assert out.path_blocked is True, "the decision under test must actually be a block"
+    assert per.path_blocked is False, "perception's own record must not be written (task 2)"
     assert d.blocked is True
     assert d.blocker_id == 17
     assert d.blocker_kind == "vehicle"
@@ -234,8 +235,8 @@ def test_a_person_gets_its_own_reason():
     """'the van stopped' and 'the van stopped FOR A PERSON' are different lines in a report."""
     p = _planner()
     per = PerceptionOutput(objects=[_obj(5.0, 0.3, kind=ObjectType.PEDESTRIAN, ident=4)])
-    _run(p, per, _route())
-    assert per.path_blocked is True
+    out = _run(p, per, _route())
+    assert out.path_blocked is True
     assert p.last_decision.reason == BLOCKED_VRU
     assert p.last_decision.blocker_kind == "pedestrian"
 
@@ -254,8 +255,8 @@ def test_the_swept_body_check_says_so_when_it_is_the_one_deciding():
     p = _planner()
     foot = VehicleFootprint(half_length=2.96, half_width=0.99, safety_margin=0.30)
     per = PerceptionOutput(objects=[_obj(5.0, 0.9, kind=ObjectType.VEHICLE, ident=3)])
-    _run(p, per, _route(), footprint=foot)
-    if per.path_blocked:
+    out = _run(p, per, _route(), footprint=foot)
+    if out.path_blocked:
         assert p.last_decision.reason == BLOCKED_SWEPT_PATH
         assert p.last_decision.used_footprint is True
 
@@ -284,6 +285,6 @@ def test_the_decision_does_not_change_the_verdict():
     p = _planner()
     for wy in (0.2, 1.0, 1.6, 2.1, 3.0, 6.0):
         per = PerceptionOutput(objects=[_obj(5.0, wy, kind=ObjectType.VEHICLE, ident=1)])
-        _run(p, per, _route())
-        # the record agrees with the flag it was derived from -- neither leads the other
-        assert p.last_decision.blocked == per.path_blocked, f"disagreed at {wy} m"
+        out = _run(p, per, _route())
+        # one record, one answer: the returned verdict IS the decision (task 2)
+        assert out is p.last_decision and out.blocked == out.path_blocked, f"disagreed at {wy} m"

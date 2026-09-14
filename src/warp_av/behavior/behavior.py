@@ -21,6 +21,7 @@ from enum import Enum
 from typing import Optional
 
 from ..perception.perception import PerceptionOutput, ObjectType, VULNERABLE_TYPES
+from ..planning.instrumentation import PlannerDecision
 from ..localization.localization import Pose, LocalizationQuality
 from ..perception.road_signs import STOP, GIVE_WAY
 from .transitions import (TransitionLog, SAFETY_HOLD, LOCALIZATION_LOST, PERCEPTION_LOST,
@@ -130,6 +131,9 @@ class Situation:
     instead of being handed fourteen arguments."""
     perception: PerceptionOutput
     pose: Pose
+    #: the path record: what is in the way, as the planner concluded (Planning V2 task 2).
+    #: The stop, slow and follow rules read THIS, never perception's own fields.
+    path: PlannerDecision = None
     destination_distance: Optional[float] = None
     safety_ok: bool = True
     junction: Optional[dict] = None
@@ -271,6 +275,7 @@ class BehaviorSystem:
         stop_line_m: Optional[float] = None,     # front bumper to the light's stop line, along the route
         light_id: Optional[int] = None,          # which light that is
         world=None,                      # the day-7 world model, when the caller has one
+        path: Optional[PlannerDecision] = None,  # the path record (task 2); None = perception's own verdict
         speed_cap_mps: Optional[float] = None,   # safety's cap while a sense is missing (day 8)
         blind_spot_m: Optional[float] = None,    # how near the nearest unseen pocket is (day 12)
         speed_limit_mps: Optional[float] = None,  # the limit on this piece of road, from the map
@@ -297,9 +302,12 @@ class BehaviorSystem:
         self._speed_limit_mps = speed_limit_mps
         self._seen_ahead_m = seen_ahead_m
         self._over_the_kerb = bool(over_the_kerb)
+        if path is None:
+            # no planner ran (or an old caller): perception's straight-ahead verdict is the record
+            path = PlannerDecision.from_perception(perception)
         now = Situation(sign_m=sign_m, sign_kind=sign_kind, sign_at=sign_at,
                         junction_span=junction_span,
-                        perception=perception, pose=pose,
+                        perception=perception, path=path, pose=pose,
                         destination_distance=destination_distance, safety_ok=safety_ok,
                         junction=junction, park_heading_ok=park_heading_ok,
                         park_position_ok=park_position_ok, predicted_conflict=predicted_conflict,
@@ -391,10 +399,10 @@ class BehaviorSystem:
     def _rule_blocked_too_long(self, now):
         """A pedestrian or stopped vehicle is a temporary road situation, not automatically a
         blocked route. Only static/other obstacles can become a persistent blocked road."""
-        perception = now.perception
+        path = now.path
         if (
-            perception.path_blocked
-            and perception.closest_obstacle_type
+            path.blocked
+            and path.closest_kind
             not in (
                 ObjectType.PEDESTRIAN,
                 ObjectType.CYCLIST,     # a cyclist will move on; the road is not blocked
@@ -411,8 +419,8 @@ class BehaviorSystem:
                     DrivingBehavior.STOPPED_BLOCKED,
                     (
                         f"Route blocked for {blocked_duration:.1f}s by "
-                        f"{perception.closest_obstacle_type.value} "
-                        f"at {perception.closest_obstacle_distance:.1f}m "
+                        f"{getattr(path.closest_kind, 'value', path.closest_kind)} "
+                        f"at {path.closest_distance_m:.1f}m "
                         f"— replan or operator action required"
                     ),
                     speed=0.0,
@@ -424,38 +432,35 @@ class BehaviorSystem:
 
     def _rule_vru_in_path(self, now):
         """A person on foot or on a bike: ALWAYS stop."""
-        perception = now.perception
-        if perception.path_blocked and perception.closest_obstacle_type in VULNERABLE_TYPES:
-            self._note_block(DrivingBehavior.STOPPED_PEDESTRIAN,
-                             perception.closest_obstacle_distance)
-            who = perception.closest_obstacle_type.value.upper()
+        path = now.path
+        if path.blocked and path.closest_kind in VULNERABLE_TYPES:
+            self._note_block(DrivingBehavior.STOPPED_PEDESTRIAN, path.closest_distance_m)
+            who = path.closest_kind.value.upper()
             return self._decide(
                 DrivingBehavior.STOPPED_PEDESTRIAN,
-                f"{who} in path at {perception.closest_obstacle_distance:.1f}m — stopped",
+                f"{who} in path at {path.closest_distance_m:.1f}m — stopped",
                 speed=0.0, stop=True, why=VRU_IN_PATH
             )
         return None
 
     def _rule_vehicle_in_path(self, now):
-        perception = now.perception
-        if perception.path_blocked and perception.closest_obstacle_type == ObjectType.VEHICLE:
-            self._note_block(DrivingBehavior.STOPPED_VEHICLE,
-                             perception.closest_obstacle_distance)
+        path = now.path
+        if path.blocked and path.closest_kind == ObjectType.VEHICLE:
+            self._note_block(DrivingBehavior.STOPPED_VEHICLE, path.closest_distance_m)
             return self._decide(
                 DrivingBehavior.STOPPED_VEHICLE,
-                f"VEHICLE blocking path at {perception.closest_obstacle_distance:.1f}m — stopped",
+                f"VEHICLE blocking path at {path.closest_distance_m:.1f}m — stopped",
                 speed=0.0, stop=True, why=VEHICLE_IN_PATH
             )
         return None
 
     def _rule_obstacle_in_path(self, now):
-        perception = now.perception
-        if perception.path_blocked:
-            self._note_block(DrivingBehavior.STOPPED_OBSTACLE,
-                             perception.closest_obstacle_distance)
+        path = now.path
+        if path.blocked:
+            self._note_block(DrivingBehavior.STOPPED_OBSTACLE, path.closest_distance_m)
             return self._decide(
                 DrivingBehavior.STOPPED_OBSTACLE,
-                f"OBSTACLE in path at {perception.closest_obstacle_distance:.1f}m — stopped",
+                f"OBSTACLE in path at {path.closest_distance_m:.1f}m — stopped",
                 speed=0.0, stop=True, why=OBSTACLE_IN_PATH
             )
         return None
@@ -571,7 +576,7 @@ class BehaviorSystem:
         entry_m, exit_m = float(span[0]), float(span[1])
         if entry_m > JUNCTION_ENTER_WITHIN_M:
             return None                           # not about to enter one
-        blocker = getattr(now.perception, "closest_obstacle_distance", None)
+        blocker = now.path.closest_distance_m
         if blocker is None or blocker > exit_m + self.keep_clear_m or blocker <= entry_m:
             return None                           # nothing beyond it, or it is on this side
         return self._decide(
@@ -635,12 +640,12 @@ class BehaviorSystem:
 
     def _rule_following_lead(self, now):
         """A moving vehicle ahead: follow at a time gap instead of stop-and-go."""
-        perception = now.perception
-        if (perception.closest_obstacle_type == ObjectType.VEHICLE
-                and perception.closest_obstacle_speed > self.follow_min_lead_mps
-                and perception.closest_obstacle_distance < self.follow_engage_m):
-            gap = perception.closest_obstacle_distance
-            lead = perception.closest_obstacle_speed
+        path = now.path
+        if (path.closest_kind == ObjectType.VEHICLE
+                and path.closest_speed_mps > self.follow_min_lead_mps
+                and path.closest_distance_m < self.follow_engage_m):
+            gap = path.closest_distance_m
+            lead = path.closest_speed_mps
             desired_gap = self.follow_standstill_m + self.follow_time_gap_s * lead
             target = lead + self.follow_gain * (gap - desired_gap)
             target = max(0.0, min(self.cruise_speed, target))
@@ -658,7 +663,7 @@ class BehaviorSystem:
         Once slowing, keep slowing until it is well past the line (slow_release_m) or a moment
         has gone by (slow_hold_s). One object crossing the 20 m line back and forth made the
         van change its mind nine times in a minute, 4.0 -> 2.0 -> 4.0 m/s each time."""
-        seen = now.perception.closest_obstacle_distance
+        seen = now.path.closest_distance_m
         near = seen < self.slow_distance
         if near:
             self._slowing_since = time.time()
@@ -684,7 +689,7 @@ class BehaviorSystem:
         destination_distance = now.destination_distance
         if destination_distance is not None and destination_distance < self.park_zone_m:
             creep = max(0.5, min(2.5, 0.35 * destination_distance))
-            seen = now.perception.closest_obstacle_distance
+            seen = now.path.closest_distance_m
             if seen is not None and seen < self.slow_distance:
                 creep = min(creep, self.slow_speed)
                 return self._decide(
