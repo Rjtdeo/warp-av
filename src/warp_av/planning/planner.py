@@ -970,7 +970,8 @@ class RoutePlanner:
     AVOID_COST_M = 5000.0
 
     def plan_route_avoiding(self, start_x, start_y, end_x, end_y,
-                            avoid_x, avoid_y, clear_m: float = 4.0) -> Optional[Route]:
+                            avoid_x, avoid_y, clear_m: float = 4.0,
+                            why: dict = None) -> Optional[Route]:
         """A route to the destination that does NOT use the piece of road at (avoid_x, avoid_y).
 
         The map's own road graph is what CARLA's route search walks, and a blocked street is
@@ -978,14 +979,25 @@ class RoutePlanner:
         run again, and the cost put back. When the answer still goes through the blockage --
         a dead end, a one-way street with no other way out -- there is no way round, and this
         returns None rather than the same route under a different name.
+
+        `why`, if a dict is passed in, is filled with {"code", "text"} saying which of the
+        three noes it was: the blocked road could not be found on the map, the search found
+        nothing at all, or what it found still runs through the blockage. Diagnostic only
+        (2026-09-15): the returned route and every decision here are exactly as they were.
         """
+        def no(code, text):
+            if why is not None:
+                why["code"], why["text"] = code, text
+            return None
+
         try:
             wp = self.carla_map.get_waypoint(carla.Location(x=float(avoid_x), y=float(avoid_y), z=0.3))
             edge_ids = self._grp._road_id_to_edge[wp.road_id][wp.section_id][wp.lane_id]
             edge = self._grp._graph.edges[edge_ids[0], edge_ids[1]]
         except Exception as e:
             print(f"[Planner] cannot find the blocked road on the map: {e}")
-            return None
+            return no("BLOCKED_ROAD_NOT_ON_MAP",
+                      f"the blocked road at ({avoid_x:.1f}, {avoid_y:.1f}) is not on the map: {e}")
         was = edge.get("length", 0.0)
         try:
             edge["length"] = was + self.AVOID_COST_M
@@ -993,10 +1005,17 @@ class RoutePlanner:
         finally:
             edge["length"] = was
         if route is None or not route.waypoints:
-            return None
+            return no("NO_ALTERNATE_ROUTE",
+                      "the map found no route at all to the destination with that road made expensive")
         near = min(math.hypot(w.x - avoid_x, w.y - avoid_y) for w in route.waypoints)
-        if near <= clear_m:
-            return None                       # the only way to the destination is through it
+        if near <= clear_m:                   # the only way to the destination is through it
+            return no("ALTERNATE_ROUTE_STILL_HITS_BLOCKER",
+                      f"the best other route still passes {near:.1f} m from the blockage, "
+                      f"inside the {clear_m:.1f} m it must clear it by")
+        if why is not None:
+            why["code"], why["text"] = "REROUTE_ACCEPTED", (
+                f"another route of {route.total_distance:.0f} m that clears the blockage by "
+                f"{near:.1f} m")
         return route
 
     # --- Curve-aware speed (Troy #2/#3: left & right turns) ---

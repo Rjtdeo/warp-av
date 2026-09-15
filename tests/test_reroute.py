@@ -21,7 +21,7 @@ def test_the_map_is_asked_by_making_the_blocked_road_expensive():
     other way out still plans and the caller can see the answer goes through it anyway."""
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "planning" / "planner.py").read_text()
     i = src.index("def plan_route_avoiding")
-    body = src[i:i + 2200]
+    body = src[i:i + 3000]
     assert "_road_id_to_edge[wp.road_id][wp.section_id][wp.lane_id]" in body
     assert 'edge["length"] = was + self.AVOID_COST_M' in body
     assert 'finally:' in body and 'edge["length"] = was' in body, "the cost is always put back"
@@ -32,10 +32,17 @@ def test_the_map_is_asked_by_making_the_blocked_road_expensive():
 def test_the_van_only_asks_when_there_is_somewhere_to_turn_off():
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
     i = src.index("def _maybe_reroute")
-    body = src[i:i + 3200]
+    body = src[i:i + 7000]
     assert "span = self.planner.junction_span" in body
-    assert "if span is None or span[0] > at_m:" in body, \
-        "no junction between us and the block means no way round without reversing"
+    # The junction is looked for from where the van could still turn off FROM -- it backs out
+    # at most REVERSE_MAX_M -- and must lie between there and the blockage, never beyond it.
+    assert "back_x, back_y = pose.x - c * self.REVERSE_MAX_M" in body, \
+        "a turn-off the van has just crept past is still one it can reach"
+    assert "span = self.planner.junction_span(self._route, back_x, back_y)" in body
+    assert "reach = at_m + self.REVERSE_MAX_M" in body
+    assert "if span is None or span[0] > reach:" in body, \
+        "no junction between the van's reach and the block means nothing to turn off at"
+    assert "at_m" in body and "self.REVERSE_MAX_M" in body
     assert "NO_WAY_ROUND" in body and "REROUTED" in body
     assert "self._dress_route_for_parking()" in body, "a new route needs a new parking spot"
     assert "REROUTE_AFTER_S" in body and "REROUTE_EVERY_S" in body, \

@@ -281,6 +281,8 @@ class WarpAV:
         self._askew_since = None
         #: what was decided about every way round the last time one was weighed (diagnostic)
         self._go_around = None
+        #: ...and the same for going round the whole blocked road (diagnostic)
+        self._reroute = None
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -418,6 +420,33 @@ class WarpAV:
     BLOCKED_REASONS = (VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
                        JUNCTION_KEEP_CLEAR)
 
+    #: An unchanged reroute verdict is rewritten to the drive's log this often, the same
+    #: cadence the go-around record uses. The record itself is on /api/state every tick.
+    REROUTE_LOG_EVERY_S = 20.0
+
+    def _record_reroute(self, code, text, **extra):
+        """Why the road ahead was or was not gone round, kept where it can be read afterwards.
+
+        Diagnostic only: nothing here is read by anything that drives. It lands in the two
+        places the stack already has -- `/api/state.reroute` for looking live, and one
+        `reroute_decision` event per change in the mission log with the fields in `data`.
+        Before this every refusal was one of two prose lines and the gate that produced it
+        could not be counted (2026-09-15).
+        """
+        try:
+            record = {"code": code, "reason": text, **extra}
+            self._reroute = record
+            now = time.time()
+            if code == getattr(self, "_reroute_code", None) and \
+                    now - getattr(self, "_reroute_logged_at", 0.0) < self.REROUTE_LOG_EVERY_S:
+                return
+            self._reroute_code, self._reroute_logged_at = code, now
+            self.logger.log_event("reroute_decision", f"{code} — {text}", data=record)
+        except Exception as e:
+            if not getattr(self, "_reroute_moaned", False):
+                self._reroute_moaned = True
+                print(f"[Route] could not record the reroute decision (said once): {e}")
+
     def _maybe_reroute(self, pose, perception, behavior_output):
         """A street that stays blocked is a street to go round: ask the map for another way to
         the same destination, and take it if there is one.
@@ -435,33 +464,93 @@ class WarpAV:
         blocked = behavior_output.why in self.BLOCKED_REASONS or path.blocked
         if not blocked:
             self._blocked_road_since = None
+            self._record_reroute("NOT_BLOCKED", "the road ahead is not blocked")
             return
         now = time.time()
         if getattr(self, "_blocked_road_since", None) is None:
             self._blocked_road_since = now
+            self._record_reroute("REROUTE_NOT_READY", "the road has only just become blocked")
             return
         if now - self._blocked_road_since < self.REROUTE_AFTER_S \
                 or now - getattr(self, "_reroute_asked_at", 0.0) < self.REROUTE_EVERY_S:
+            if now - self._blocked_road_since < self.REROUTE_AFTER_S:
+                self._record_reroute(
+                    "REROUTE_NOT_READY",
+                    f"blocked {now - self._blocked_road_since:.0f} s of the "
+                    f"{self.REROUTE_AFTER_S:.0f} s a road is watched before the map is asked",
+                    blocked_for_s=round(now - self._blocked_road_since, 1))
+            else:
+                self._record_reroute(
+                    "REROUTE_COOLDOWN",
+                    f"the map was asked {now - self._reroute_asked_at:.0f} s ago and is asked "
+                    f"at most every {self.REROUTE_EVERY_S:.0f} s",
+                    asked_ago_s=round(now - self._reroute_asked_at, 1))
             return
         self._reroute_asked_at = now
-        at_m = float(path.closest_distance_m)
-        if at_m <= 0.0 or at_m > self.REROUTE_WITHIN_M:
+        at_m = path.closest_distance_m
+        if at_m is None or float(at_m) <= 0.0 or float(at_m) > self.REROUTE_WITHIN_M:
+            self._record_reroute(
+                "NO_BLOCKER",
+                ("the road is called blocked but nothing has a distance" if at_m is None else
+                 f"the blockage is {float(at_m):.0f} m ahead, outside the "
+                 f"{self.REROUTE_WITHIN_M:.0f} m a reroute is asked for"),
+                blocker_distance_m=(None if at_m is None else round(float(at_m), 2)))
             return
-        span = self.planner.junction_span(self._route, pose.x, pose.y)
-        if span is None or span[0] > at_m:
+        at_m = float(at_m)
+        c, s_ = math.cos(pose.yaw), math.sin(pose.yaw)
+        # Somewhere to turn off, judged from where the van could still turn off FROM.
+        #
+        # Until 2026-09-15 this asked for a junction nearer than the blocker itself. By the
+        # time a blocked road has been watched for REROUTE_AFTER_S the van has crept up and is
+        # standing a metre or two from it, so that asked for a junction under its own wheels:
+        # live in F_reroute it refused all 19 asks with the blocker 1.1-2.6 m ahead, and the
+        # van waited out the whole 300 s drive. The gate was unsatisfiable exactly when it was
+        # wanted.
+        #
+        # What the van can actually reach is the question. It backs out up to REVERSE_MAX_M
+        # (_start_backing_out), so a turn-off it has just crept past is still one it can take;
+        # a junction BEYOND the blockage is not, because it cannot drive through it. So look
+        # from REVERSE_MAX_M behind, and take a junction anywhere between there and the block.
+        back_x, back_y = pose.x - c * self.REVERSE_MAX_M, pose.y - s_ * self.REVERSE_MAX_M
+        span = self.planner.junction_span(self._route, back_x, back_y)
+        reach = at_m + self.REVERSE_MAX_M
+        if span is None or span[0] > reach:
             self._note_move(NO_WAY_ROUND,
                             f"the way is blocked {at_m:.0f} m ahead and there is no junction "
                             f"between here and it — nothing to turn off at")
+            self._record_reroute(
+                "NO_DIVERSION_POINT",
+                (f"no junction on the route within {reach:.0f} m of where the van could turn "
+                 f"off from" if span is None else
+                 f"the next junction is {span[0]:.0f} m along, past the blockage at "
+                 f"{reach:.0f} m — the van cannot drive through it to reach it"),
+                blocker_distance_m=round(at_m, 2), diversion_reach_m=round(reach, 2),
+                next_junction_m=(None if span is None else round(span[0], 2)),
+                back_out_m=float(self.REVERSE_MAX_M))
             return
-        c, s_ = math.cos(pose.yaw), math.sin(pose.yaw)
         bx, by = pose.x + c * at_m, pose.y + s_ * at_m
         dest = (mission.destination_x, mission.destination_y)
-        other = self.planner.plan_route_avoiding(pose.x, pose.y, dest[0], dest[1], bx, by)
+        search = {}
+        other = self.planner.plan_route_avoiding(pose.x, pose.y, dest[0], dest[1], bx, by,
+                                                 why=search)
         if other is None:
             self._note_move(NO_WAY_ROUND,
                             f"every way to the destination goes through the blockage "
                             f"{at_m:.0f} m ahead — waiting")
+            self._record_reroute(
+                search.get("code", "NO_ALTERNATE_ROUTE"),
+                search.get("text", "the map found no other way to the destination"),
+                blocker_distance_m=round(at_m, 2), blockage_at=[round(bx, 2), round(by, 2)],
+                diversion_at_m=round(span[0], 2), old_route_m=round(self._route.total_distance, 1))
             return
+        self._record_reroute(
+            "REROUTE_ACCEPTED",
+            search.get("text", f"another route of {other.total_distance:.0f} m"),
+            blocker_distance_m=round(at_m, 2), blockage_at=[round(bx, 2), round(by, 2)],
+            diversion_at_m=round(span[0], 2), old_route_m=round(self._route.total_distance, 1),
+            new_route_m=round(other.total_distance, 1),
+            new_route_clears_blocker_m=round(
+                min(math.hypot(w.x - bx, w.y - by) for w in other.waypoints), 2))
         self._route = other
         self._dress_route_for_parking()
         if self._signal_lookahead is not None:
@@ -470,9 +559,16 @@ class WarpAV:
         self._note_move(REROUTED,
                         f"the road is blocked {at_m:.0f} m ahead — going round: a new route of "
                         f"{other.total_distance:.0f} m to the same destination")
-        self.logger.log_event("rerouted",
-                              f"blocked {at_m:.1f} m ahead at ({bx:.1f}, {by:.1f}); new route "
-                              f"{other.total_distance:.0f} m, {len(other.waypoints)} points")
+        try:
+            # The route is already swapped above. Writing it down must not be able to undo
+            # that: the go-around's own log call has been wrapped this way since it was
+            # written, and this one was the odd one out (2026-09-15).
+            self.logger.log_event("rerouted",
+                                  f"blocked {at_m:.1f} m ahead at ({bx:.1f}, {by:.1f}); new "
+                                  f"route {other.total_distance:.0f} m, "
+                                  f"{len(other.waypoints)} points")
+        except Exception:
+            pass
         print(f"[Route] blocked {at_m:.1f} m ahead — another way round: {other.total_distance:.0f} m")
 
     #: Changing lane: how far ahead the van starts looking into the lane it will move into,
@@ -1711,6 +1807,8 @@ class WarpAV:
             # every way round the van weighed for the blocker in front of it, and why (task:
             # per-option go-around diagnostics, 2026-09-15)
             "go_around": getattr(self, "_go_around", None),
+            # why the blocked road ahead was or was not gone round (2026-09-15)
+            "reroute": getattr(self, "_reroute", None),
             "signal_ahead": (self._signal_ahead.as_dict() if self._signal_ahead is not None else None),
             "road_sign": ({"kind": sign_kind, "to_line_m": round(sign_m, 1), "at": sign_at}
                           if sign_kind is not None and sign_m is not None else None),
