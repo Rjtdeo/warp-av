@@ -315,18 +315,27 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
         if hs is not None:
             hv = [p[2] for p in pts if p[2] is not None and p[2] == p[2]]
             height = max(hv) if hv else None
+        # The footprint is measured from the points the van could REACH -- everything at or
+        # below its own roof (FOOTPRINT_MAX_HEIGHT_M). A lamp arm three metres up is not ground
+        # the van has to steer around, and folding it in turns a column into a long body. Where
+        # the height of a point is unknown, or too few are low enough to measure, all of them
+        # are used, which is what happened before this and is the cautious answer.
+        low = [p for p in pts if p[2] is None or p[2] != p[2] or p[2] <= FOOTPRINT_MAX_HEIGHT_M]
+        foot = low if len(low) >= FOOTPRINT_MIN_POINTS else pts
+        fx = sum(p[0] for p in foot) / len(foot)
+        fy = sum(p[1] for p in foot) / len(foot)
         # direction of the blob's long axis, 0 = along the van's forward axis,
         # 90 = across it (from the 2x2 covariance of its points)
-        sxx = sum((p[0] - mx) ** 2 for p in pts)
-        syy = sum((p[1] - my) ** 2 for p in pts)
-        sxy = sum((p[0] - mx) * (p[1] - my) for p in pts)
-        theta = 0.5 * math.atan2(2.0 * sxy, sxx - syy) if len(pts) > 1 else 0.0
+        sxx = sum((p[0] - fx) ** 2 for p in foot)
+        syy = sum((p[1] - fy) ** 2 for p in foot)
+        sxy = sum((p[0] - fx) * (p[1] - fy) for p in foot)
+        theta = 0.5 * math.atan2(2.0 * sxy, sxx - syy) if len(foot) > 1 else 0.0
         axis_deg = abs(math.degrees(theta))
         # the blob's footprint: how long it is along that axis and how wide across it.
         # The LiDAR only ever sees the near face of a thing, so both are lower bounds.
         ct, st = math.cos(theta), math.sin(theta)
-        along = [(p[0] - mx) * ct + (p[1] - my) * st for p in pts]
-        across = [-(p[0] - mx) * st + (p[1] - my) * ct for p in pts]
+        along = [(p[0] - fx) * ct + (p[1] - fy) * st for p in foot]
+        across = [-(p[0] - fx) * st + (p[1] - fy) * ct for p in foot]
         length_m = max(along) - min(along)
         width_m = max(across) - min(across)
         # The rectangle the planner judges it by (fit_rectangle): near the van, the smallest
@@ -334,12 +343,12 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
         # middle, not on the average of the points, which a side-on car piles at one corner.
         a_mid = 0.5 * (max(along) + min(along))
         c_mid = 0.5 * (max(across) + min(across))
-        box_x = mx + a_mid * ct - c_mid * st
-        box_y = my + a_mid * st + c_mid * ct
+        box_x = fx + a_mid * ct - c_mid * st
+        box_y = fy + a_mid * st + c_mid * ct
         box_len, box_wid, box_yaw = length_m, width_m, None
-        if (len(pts) >= BOX_FIT_MIN_POINTS and math.hypot(mx, my) <= BOX_FIT_RANGE_M
+        if (len(foot) >= BOX_FIT_MIN_POINTS and math.hypot(mx, my) <= BOX_FIT_RANGE_M
                 and abs(my) <= BOX_FIT_MAX_SIDEWAYS_M):
-            box_x, box_y, box_len, box_wid, box_yaw = fit_rectangle([(p[0], p[1]) for p in pts])
+            box_x, box_y, box_len, box_wid, box_yaw = fit_rectangle([(p[0], p[1]) for p in foot])
         if width_m > length_m:                       # keep 'length' the longer side
             length_m, width_m = width_m, length_m
             theta += math.pi / 2
@@ -426,6 +435,15 @@ CLASS_SIZE_LIMITS = {
 # grows with range because the LiDAR's points spread out. Measured on the four recordings:
 # a walker at 6 m swings 0.05-0.17 m, a barrel at 9 m 0.15 m, a bin at 12 m 0.27 m, a car at
 # 22 m 0.32 m, while a blob that merges with its neighbour swings 1.1-2.7 m.
+# What the van could actually drive into. Its own roof is 2.56 m (the Sprinter), and nothing
+# above that can be touched by it -- so nothing above that belongs in the FOOTPRINT, the ground
+# area the planner steers around. Live in E3 on 2026-09-15 a street light's lamp arm, 3.04 m
+# across at 3.05 m up (Town10HD BP_StreetLight_simple72), was folded in with its 0.14 m column
+# and the pair came out as one 2.66 m long body lying across a parking approach. Turned across
+# the way in, a box that long reaches about a metre sideways, and that is what refused it.
+# A wall keeps its length: the points below the roof span it just the same.
+FOOTPRINT_MAX_HEIGHT_M = 2.8      # the van's roof, plus a little for pitch and range error
+FOOTPRINT_MIN_POINTS = 2          # ...below it, or there is nothing to measure and all are used
 SIZE_SPREAD_BASE_M = 0.15
 SIZE_SPREAD_PER_M = 0.02
 # What the van should leave room for, whatever it measured. People change direction without
