@@ -230,3 +230,57 @@ def test_the_record_says_it_all_in_one_dict():
     assert out["closest_distance_m"] == 6.2 and out["closest_kind"] == "vehicle"
     assert out["closest_lateral_m"] == 0.82 and out["second_opinion"] is None
     assert d.one_line().startswith("blocked reason=blocked_swept_path blocker=3")
+
+
+# ---- the ground can only vouch for ground it looked at (E3, 2026-09-15) ------------------
+
+def test_a_blocker_nearer_than_the_nose_line_is_never_released_by_the_ground():
+    """The strip starts at the van's nose, 2.95 m out, and runs forward. A barrel 1.9 m ahead
+    is nearer than that, so the laser never looked at where it is -- and said the ground was
+    empty, which it was. Live in E3 the swept check blocked on exactly that barrel while the
+    van turned into a bay, this released the block, and the van drove into it at 1.8 m/s."""
+    path = PlannerDecision(reason=BLOCKED_SWEPT_PATH, closest_distance_m=1.9,
+                           closest_kind=ObjectType.OBSTACLE, closest_speed_mps=0.0)
+    path.level = PATH_BLOCKED
+    s = system(Grid(counts=(400, 0, 0)))          # every square the strip saw was empty
+    s.second_opinion(path, Pose(healthy=True))
+    assert path.blocked is True, "the block stands: that ground was never looked at"
+    assert path.second_opinion != GROUND_RELEASED
+
+
+def test_a_blocker_the_strip_does_cover_is_still_released():
+    """No change to the case this rule was written for."""
+    path = PlannerDecision(reason=BLOCKED_SWEPT_PATH, closest_distance_m=6.0,
+                           closest_kind=ObjectType.VEHICLE, closest_speed_mps=0.0)
+    s = system(Grid(counts=(400, 0, 0)))
+    s.second_opinion(path, Pose(healthy=True))
+    assert path.blocked is False and path.second_opinion == GROUND_RELEASED
+
+
+def test_the_near_boundary_is_the_nose_line_itself():
+    for at_m, released in ((2.90, False), (3.10, True)):
+        path = PlannerDecision(reason=BLOCKED_SWEPT_PATH, closest_distance_m=at_m,
+                               closest_kind=ObjectType.VEHICLE, closest_speed_mps=0.0)
+        path.level = PATH_BLOCKED
+        s = system(Grid(counts=(400, 0, 0)))
+        s.second_opinion(path, Pose(healthy=True))
+        got = path.second_opinion == GROUND_RELEASED
+        assert got is released, f"{at_m} m: released={got}, expected {released}"
+
+
+def test_ground_that_stops_short_of_the_blocker_cannot_vouch_for_it_either():
+    """The strip reaches 7 m past the nose at most. A thing 40 m off is beyond it."""
+    path = PlannerDecision(reason=BLOCKED_SWEPT_PATH, closest_distance_m=40.0,
+                           closest_kind=ObjectType.VEHICLE, closest_speed_mps=0.0)
+    path.level = PATH_BLOCKED
+    s = system(Grid(counts=(400, 0, 0)))
+    s.second_opinion(path, Pose(healthy=True))
+    assert path.blocked is True and path.second_opinion != GROUND_RELEASED
+
+
+def test_a_person_is_still_never_released_however_far_off():
+    path = PlannerDecision(reason=BLOCKED_TRACKED_OBJECT, closest_distance_m=6.0,
+                           closest_kind=ObjectType.PEDESTRIAN)
+    s = system(Grid(counts=(400, 0, 0)))
+    s.second_opinion(path, Pose(healthy=True))
+    assert path.blocked is True and path.second_opinion is None

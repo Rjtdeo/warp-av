@@ -3538,6 +3538,17 @@ class WarpAV:
                                   self.footprint_blocking.footprint.swept_half_width)
         self._ground_says = what_the_ground_says(counts)
         what = getattr(path.closest_kind, "value", "unknown")
+        # The strip starts at the van's NOSE and runs forward. A thing nearer than that is not
+        # in the ground the laser just looked at, so that ground says nothing about it and
+        # cannot vouch for it. Live in E3 on 2026-09-15 the swept check blocked on a barrel
+        # 1.9 m ahead while the van was turning into a bay; the nose line is 2.95 m out, so
+        # this looked at 2.95-6.95 m, found it empty -- it was, the barrel is nearer than that
+        # -- and released the block. The van drove into the barrel at 1.8 m/s with no brake.
+        # The far end matters for the same reason: ground that stops short of the blocker has
+        # not been looked at either.
+        if not (front <= blocker_m <= front + look):
+            self._ground_seen_free = None
+            return
         if not nothing_is_standing_there(what, path.closest_speed_mps, counts):
             return
         free, _, unseen = counts
