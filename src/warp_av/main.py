@@ -2988,6 +2988,14 @@ class WarpAV:
     OVERTAKE_STATES = (DrivingBehavior.STOPPED_VEHICLE, DrivingBehavior.STOPPED_OBSTACLE,
                        DrivingBehavior.STOPPED_BLOCKED)
     OVERTAKE_AFTER_S = 10.0
+    #: How soon the ways round are weighed again when the only thing refusing them is a body
+    #: perception has said it is unsure of the size of, instead of the ten seconds a settled
+    #: refusal waits. Live in E3 on 2026-09-15 a 0.05 m wide post beside a parking bay sat
+    #: 2.42 m from the route with a 0.06 m spread, against a threshold of about that -- so the
+    #: same unchanged scene was refused 27 times and accepted once, and the van stood 151 s
+    #: waiting for a measurement to land on the other side of its own noise. Asking again
+    #: sooner changes no verdict: it only stops a coin-flip costing two and a half minutes.
+    OVERTAKE_RETRY_UNSURE_S = 2.0
 
     #: Getting back to the lane centre: above this speed the van eases off rather than
     #: steering harder, and while it is this far off the line it may not go faster than
@@ -3241,7 +3249,12 @@ class WarpAV:
                     blocker_id=(int(getattr(obj, "id", 0) or 0) or None), blocker_kind=stands,
                     blocker_distance_m=round(float(dist), 2),
                     touch_along_m=round(float(hit.along_m), 2),
-                    touch_lateral_m=round(float(hit.lateral_m), 2))
+                    touch_lateral_m=round(float(hit.lateral_m), 2),
+                    blocker_size_uncertain=bool(getattr(obj, "size_uncertain", False)),
+                    # nought metres along means the measured box overlaps the van where it
+                    # stands. The van is demonstrably not touching it, so that is a merged or
+                    # mis-sized body, not a thing in the way (F_reroute, 2026-09-15)
+                    measurement_overlaps_van=bool(float(hit.along_m) <= 0.01))
         # Every option the loop never reached -- it stops at the first way round that works --
         # is named too, so one record always accounts for all of them. pass_options is a pure
         # function of the two widths, so this is the same list in the same order, and exactly
@@ -3254,6 +3267,13 @@ class WarpAV:
         self._record_go_around(what, lead_d, attempts)
         if taken is None:
             waiting(refused)
+            # ...and when the only thing refusing every way round is a body whose size
+            # perception has admitted it is unsure of, that refusal is not settled. Ask again
+            # in OVERTAKE_RETRY_UNSURE_S instead of ten seconds. This changes no verdict --
+            # only how long the van stands waiting for one that wobbles.
+            if any(a.get("blocker_size_uncertain") for a in attempts):
+                self._overtake_retry_at = min(self._overtake_retry_at,
+                                              now + self.OVERTAKE_RETRY_UNSURE_S)
             return
         over_m, in_lane, on_shoulder, trial, rejoin = taken
         way = (f"squeezing past inside our own lane, {abs(over_m):.2f} m over to the "
@@ -3549,6 +3569,31 @@ class WarpAV:
         if sp.get("kind") == "kerb":
             self._check_the_kerb_is_empty(sp, pose)
             return
+        if sp.get("kind") == "lane":
+            # A stop in the lane is written down confirmed, so the checks below never ran on
+            # one. Run the way-in test anyway and put the answer on the record: it is what
+            # said nothing at all while the van drove into a car in E3 (2026-09-15). It only
+            # reports -- the route is not changed here, because this spot IS the route.
+            in_way = self._way_in_blocker(self._route.waypoints, pose)
+            sp["way_in"] = "blocked" if in_way is not None else "clear"
+            if in_way is not None and time.time() - getattr(self, "_last_lane_stop_log", 0.0) > 2.0:
+                self._last_lane_stop_log = time.time()
+                obj, dist, hit, where, box = in_way
+                what = getattr(getattr(obj, "object_type", None), "value", "thing")
+                try:
+                    self.logger.log_event(
+                        "parking_lane_stop_way_in",
+                        f"{what} id {getattr(obj, 'id', None)} {dist:.1f} m away would be "
+                        f"touched {hit.along_m:.1f} m on, {hit.lateral_m:+.1f} m off the way "
+                        f"in to the lane stop",
+                        data={"blocker_id": (int(getattr(obj, "id", 0) or 0) or None),
+                              "blocker_kind": what,
+                              "blocker_distance_m": round(float(dist), 2),
+                              "touch_along_m": round(float(hit.along_m), 2),
+                              "touch_lateral_m": round(float(hit.lateral_m), 2)})
+                except Exception:
+                    pass
+            return
         if sp.get("kind") not in ("slot", "bay") or sp.get("confirmed"):
             return
         area = self._pull_in_area(sp)
@@ -3699,11 +3744,34 @@ class WarpAV:
                 return route.waypoints, spot
         return None
 
+    def _way_in_blocker(self, wps, pose):
+        """What the van's body would touch on the way to a stop at the end of `wps`, or None.
+
+        The same question _confirm_parking_spot asks of a slot or a bay, asked of a stop in
+        the lane, which until 2026-09-15 was never asked it at all (E3).
+        """
+        try:
+            trial = Route(waypoints=list(wps), total_distance=self._route.total_distance)
+            return self.planner.pull_in_blocker(
+                getattr(self, "_last_perception", None), trial, pose.x, pose.y, pose.yaw,
+                self.footprint_blocking.footprint)
+        except Exception as e:
+            print(f"[Parking] could not check the way in: {e}")
+            return None
+
     def _rechoose_parking(self, pose, why):
         """The spot we were heading for will not do. Choose again, from the route as planned
         before any pull-in, skipping every spot already turned down, and only where the
         pull-in starts ahead of the van. Nothing left: stop at the pin, straight, in the lane
         -- or just ahead, if the pin is already behind."""
+        if self._overtake_point is not None:
+            # Not while a way round is being driven. Choosing again cuts the route back, and
+            # a spot BEHIND the thing the van is passing turns it across that thing: live in
+            # E3 on 2026-09-15 the spot moved from a bay 19 m ahead to a lane stop 7.7 m
+            # ahead while the van was still alongside the car it had just gone round, and
+            # 1.4 s later it swung its tail into it. The pass finishes first; this is asked
+            # again on the next tick, and every tick after, once it has.
+            return
         sp = self._parking_spot or {}
         self._parking_rejected.append((sp.get("x", 0.0), sp.get("y", 0.0)))
         self._parking_wait_since = None
@@ -3723,6 +3791,34 @@ class WarpAV:
             here = min(range(len(base)), key=lambda k: (base[k].x - pose.x) ** 2 + (base[k].y - pose.y) ** 2)
             if here + 2 >= len(wps):                    # the pin is behind us: stop just ahead
                 wps = list(base[:min(len(base), here + 4)])
+            # Every other kind of spot is asked what the van's body would touch on the way in
+            # (_confirm_parking_spot, pull_in_blocker). A stop in the lane was not: it was the
+            # last resort, so it was written down already confirmed and nothing ever looked.
+            # In E3 that last resort was taken while a car stood beside the van, and the route
+            # it cut turned straight across it. Ask the same question here, and where the
+            # answer is no, stay on the route the van is already following rather than cutting
+            # to a stop it cannot reach.
+            in_way = self._way_in_blocker(wps, pose)
+            if in_way is not None:
+                obj, dist, hit, where, box = in_way
+                what = getattr(getattr(obj, "object_type", None), "value", "thing")
+                held = (f"{why} — and the way in to a stop in the lane is not clear: {what} "
+                        f"(id {getattr(obj, 'id', None)}) {dist:.1f} m away would be touched "
+                        f"{hit.along_m:.1f} m on, {hit.lateral_m:+.1f} m off it — staying on "
+                        f"the route")
+                try:
+                    self.logger.log_event(
+                        "parking_lane_stop_blocked", held,
+                        data={"blocker_id": (int(getattr(obj, "id", 0) or 0) or None),
+                              "blocker_kind": what,
+                              "blocker_distance_m": round(float(dist), 2),
+                              "touch_along_m": round(float(hit.along_m), 2),
+                              "touch_lateral_m": round(float(hit.lateral_m), 2)})
+                except Exception:
+                    pass
+                self._note_move(SPOT_RECHOSEN, held)
+                print(f"[Parking] {held}")
+                return
             self._route.waypoints = wps
             last = wps[-1]
             self._parking_spot = {"x": last.x, "y": last.y, "yaw": last.yaw, "kind": "lane",

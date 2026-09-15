@@ -79,6 +79,7 @@ def van(route=None, lane_ok=True, same_way_ok=True, shoulder_ok=True, grid=None,
     s._ground_block = ground_block
     s.OVERTAKE_STATES = WarpAV.OVERTAKE_STATES
     s.OVERTAKE_AFTER_S = WarpAV.OVERTAKE_AFTER_S
+    s.OVERTAKE_RETRY_UNSURE_S = WarpAV.OVERTAKE_RETRY_UNSURE_S
     s.WAY_ROUND_SEEN_SHARE = WarpAV.WAY_ROUND_SEEN_SHARE
     s.GO_AROUND_LOG_EVERY_S = 0.0                # in a test every change is written
     s.planner = RoutePlanner.__new__(RoutePlanner)          # no CARLA: geometry only
@@ -488,3 +489,73 @@ def test_the_recorder_is_a_real_method_and_swallows_everything_it_can():
     s.logger = None                     # about as broken as it gets
     WarpAV._record_go_around(s, "vehicle", 10.0, [])
     assert s._go_around["options"] == [] and s._go_around["blocker_kind"] == "vehicle"
+
+
+# ---- a refusal that wobbles is asked again sooner (E3, 2026-09-15) ---------------------
+
+def test_a_refusal_from_a_body_of_unsure_size_is_asked_again_sooner():
+    """E3 stood 151 s behind a car because the one thing refusing the way round was a 0.05 m
+    post 2.42 m from the route, measured with a 0.06 m spread against a threshold of about
+    that. The same unchanged scene was refused 27 times and accepted once. Waiting the full
+    ten seconds between looks turned a coin flip into two and a half minutes."""
+    hit = SimpleNamespace(along_m=12.4, lateral_m=-0.6)
+    for unsure in (False, True):
+        obj = standing(12.0, -0.6)
+        obj.id, obj.size_uncertain = 4471, unsure
+        s = van()
+        s.planner.pull_in_blocker = lambda *a, **k: (obj, 12.03, hit, (12.0, -0.6), None)
+        began = time.time()
+        s.go()
+        waits = s._overtake_retry_at - began
+        if unsure:
+            assert waits <= WarpAV.OVERTAKE_RETRY_UNSURE_S + 0.5, \
+                f"an unsure refusal should be asked again in {WarpAV.OVERTAKE_RETRY_UNSURE_S} s"
+        else:
+            assert 9.0 < waits < 11.0, "a settled refusal still waits the usual ten seconds"
+
+
+def test_asking_again_sooner_changes_no_verdict():
+    """It changes WHEN the question is asked, never the answer."""
+    hit = SimpleNamespace(along_m=12.4, lateral_m=-0.6)
+    verdicts = []
+    for unsure in (False, True):
+        obj = standing(12.0, -0.6)
+        obj.id, obj.size_uncertain = 4471, unsure
+        s = van()
+        s.planner.pull_in_blocker = lambda *a, **k: (obj, 12.03, hit, (12.0, -0.6), None)
+        s.go()
+        verdicts.append([(r["option"], r["status"], r["reason_code"])
+                         for r in s._go_around["options"]])
+        assert s._overtake_point is None, "no way round was taken either way"
+    assert verdicts[0] == verdicts[1]
+
+
+def test_an_accepted_way_round_is_not_made_to_wait_at_all():
+    s = van()
+    s.go()
+    assert s._go_around["taken"] == "NUDGE_LEFT" and s._overtake_point is not None
+
+
+def test_the_record_says_when_a_body_was_of_unsure_size_or_overlapped_the_van():
+    """F blamed a merged cluster whose box overlapped the van where it stood, so the contact
+    was reported at nought metres along -- which is not a thing in the way, it is a bad
+    measurement. The record now distinguishes the two."""
+    overlapping = SimpleNamespace(along_m=0.0, lateral_m=1.88)
+    obj = standing(2.0, 1.7)
+    obj.id, obj.size_uncertain = 600, True
+    s = van()
+    s.planner.pull_in_blocker = lambda *a, **k: (obj, 2.93, overlapping, (2.0, 1.7), None)
+    s.go()
+    r = by_option(s)["NUDGE_LEFT"]
+    assert r["reason_code"] == "PULL_IN_BLOCKED"
+    assert r["blocker_size_uncertain"] is True
+    assert r["measurement_overlaps_van"] is True, "nought metres along means it overlaps the van"
+
+    ahead = SimpleNamespace(along_m=6.0, lateral_m=0.72)
+    plain = standing(12.0, 0.0)
+    plain.id, plain.size_uncertain = 849, False
+    s2 = van()
+    s2.planner.pull_in_blocker = lambda *a, **k: (plain, 9.76, ahead, (12.0, 0.0), None)
+    s2.go()
+    r2 = by_option(s2)["NUDGE_LEFT"]
+    assert r2["blocker_size_uncertain"] is False and r2["measurement_overlaps_van"] is False

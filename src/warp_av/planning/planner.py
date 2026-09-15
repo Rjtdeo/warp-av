@@ -295,14 +295,35 @@ def fit_is_believable(obj) -> bool:
     51.1 x 2.8 m came out as a 22.6 x 12.4 m block -- 281 square metres of "body" from 144
     of points -- centred inside the building, reaching across the pavement into the van's
     way. The van gave up a parking spot for it. When the fit claims that much more ground
-    than the points, it is not describing the thing: fall back to the measured spread."""
-    fit = (float(getattr(obj, "box_length_m", 0.0) or 0.0)
-           * float(getattr(obj, "box_width_m", 0.0) or 0.0))
+    than the points, it is not describing the thing: fall back to the measured spread.
+
+    It also has to be a size its kind can be. Perception already throws away a SIGHTING that
+    is impossible for its class (tracking.plausible_size: a vehicle is at most 4.0 m across,
+    however long a bus is), but the fitted rectangle went to the planner untested. Live in
+    F_reroute on 2026-09-15 a stopped truck merged with the kerb beside it and came out as a
+    "vehicle" 4.4 to 5.4 m wide -- wider than any vehicle -- centred 5 m from the truck and
+    overlapping the van's own body, so every way round was refused at nought metres along.
+    An impossible rectangle is a merge: fall back to the spread of the points, which is what
+    the laser actually saw."""
+    fit_l = float(getattr(obj, "box_length_m", 0.0) or 0.0)
+    fit_w = float(getattr(obj, "box_width_m", 0.0) or 0.0)
+    fit = fit_l * fit_w
     points = (float(getattr(obj, "length_m", 0.0) or 0.0)
               * float(getattr(obj, "width_m", 0.0) or 0.0))
     if fit <= 0.0 or points <= 0.0:
         return True                      # no rectangle fitted, or nothing to judge it against
-    return fit <= FIT_AREA_SLACK * points
+    if fit > FIT_AREA_SLACK * points:
+        return False
+    try:
+        from ..perception.tracking import plausible_size
+        kind = getattr(getattr(obj, "object_type", None), "value", "unknown")
+        long_side, short_side = max(fit_l, fit_w), min(fit_l, fit_w)
+        height = float(getattr(obj, "height_m", 0.0) or 0.0)
+        if not plausible_size(kind, long_side, short_side, height):
+            return False
+    except Exception:
+        pass                             # the size table is perception's; never fail on it
+    return True
 
 
 def obstacle_box_for(obj, ego_yaw: float):
