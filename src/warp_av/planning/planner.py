@@ -604,7 +604,7 @@ def body_centre(obj):
 
 def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: float,
                      pass_takes_s: float = PASS_TAKES_S, ego_speed_mps: float = 0.0,
-                     side: int = -1) -> Optional[str]:
+                     side: int = -1, why: dict = None) -> Optional[str]:
     """Why MOVING traffic says the van may not swing out past a dead lead vehicle now, or None.
 
     `side` is which way the pass would go: -1 to the left (the default, and the only way the
@@ -615,6 +615,11 @@ def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: floa
       * the passing lane ahead -- anything moving there
       * our own lane ahead -- anything moving within the room needed to pull back in
       * the passing lane BEHIND -- traffic coming up it would meet us as we pull out
+    `why`, if a dict is passed in, is filled with the refusal in parts -- which rule said no,
+    which object, how far off, when it would meet us and how long the pass needs -- so a
+    refusal can be counted up after a drive instead of read out of the sentence. Diagnostic
+    only (2026-09-15): the returned string and every decision above are exactly as they were.
+
     Things standing still are not judged here but by the path itself: RoutePlanner.
     pull_in_blocker slides the van's body along the planned way round and asks what it would
     touch. A band only guesses at that: the SUV parked in the oncoming lane beside the van
@@ -627,6 +632,15 @@ def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: floa
     the tracker to have given up calling it parked, and a shape that could use a road
     (prediction.could_use_a_road): kerb fragments slide along the kerb too."""
     from .prediction import could_use_a_road
+
+    def no(code, text, obj, dist, **extra):
+        if why is not None:
+            why.update(code=code, text=text, blocker_id=(int(getattr(obj, "id", 0) or 0) or None),
+                       blocker_kind=getattr(getattr(obj, "object_type", None), "value", None),
+                       blocker_distance_m=round(float(dist), 2),
+                       pass_needs_s=round(float(pass_takes_s), 1), **extra)
+        return text
+
     c, s = math.cos(ego_yaw), math.sin(ego_yaw)
     lo, hi = (PASSING_LANE_BAND_M if side < 0
               else (-PASSING_LANE_BAND_M[1], -PASSING_LANE_BAND_M[0]))
@@ -651,17 +665,25 @@ def overtake_blocker(objects, lead_d: float, rejoin_room_m: float, ego_yaw: floa
                 if along < -0.3 and closing > 0.3:
                     meets_in = dist / closing
                     if meets_in < pass_takes_s + PASS_GAP_MARGIN_S:
-                        return (f"oncoming {kind} {dist:.0f} m away meets us in {meets_in:.0f} s "
-                                f"and the pass needs {pass_takes_s:.0f} s")
+                        return no("ONCOMING_CONFLICT",
+                                  f"oncoming {kind} {dist:.0f} m away meets us in {meets_in:.0f} s "
+                                  f"and the pass needs {pass_takes_s:.0f} s", obj, dist,
+                                  meets_in_s=round(float(meets_in), 1),
+                                  gap_margin_s=float(PASS_GAP_MARGIN_S))
                 elif dist < lead_d + PASS_LOOK_PAST_LEAD_M:
-                    return f"moving {kind} in the passing lane {dist:.0f} m ahead"
+                    return no("MOVING_BLOCKER",
+                              f"moving {kind} in the passing lane {dist:.0f} m ahead", obj, dist)
             if in_ours and x > 0.0 and dist < rejoin_room_m:
-                return f"no room to pull back in: moving {kind} {dist:.0f} m ahead"
+                return no("NO_REJOIN_ROOM",
+                          f"no room to pull back in: moving {kind} {dist:.0f} m ahead", obj, dist,
+                          rejoin_room_m=round(float(rejoin_room_m), 1))
         elif in_passing and dist < PASS_LOOK_BACK_M:
             along = (float(getattr(obj, "vx_world", 0.0) or 0.0) * c
                      + float(getattr(obj, "vy_world", 0.0) or 0.0) * s)
             if along > 0.3:
-                return f"{kind} coming up behind in the passing lane, {dist:.0f} m back"
+                return no("REAR_GAP",
+                          f"{kind} coming up behind in the passing lane, {dist:.0f} m back",
+                          obj, dist, look_back_m=float(PASS_LOOK_BACK_M))
     return None
 
 
@@ -2089,7 +2111,7 @@ class RoutePlanner:
     OVERTAKE_REJOIN_M = 16.0     # fully back in lane this far beyond it
 
     def plan_overtake(self, route: Route, ego_x, ego_y, obstacle_along_m,
-                      lane_ok=None, shift_m=None):
+                      lane_ok=None, shift_m=None, why=None, lane_ok_why=None):
         """Rewrite the route to move over around something standing ahead and rejoin beyond
         it (straights only: refuses near junctions or in bends). `lane_ok(x, y)` must confirm
         the moved-over position is ground the van may use. Returns the rejoin point
@@ -2098,11 +2120,26 @@ class RoutePlanner:
         `shift_m` is how far over to go: positive is LEFT (OVERTAKE_SHIFT_M, a whole lane, by
         default), a smaller number for a nudge that stays inside our own lane, and a negative
         one to move right. Which of those the van is allowed is pass_options and the `lane_ok`
-        the caller passes -- a whole lane only where it runs our way, never the oncoming one."""
+        the caller passes -- a whole lane only where it runs our way, never the oncoming one.
+
+        `why` and `lane_ok_why` are DIAGNOSTIC ONLY and change nothing about the answer
+        (2026-09-15). This used to return a bare None for five different reasons, and the
+        caller printed all five as one string -- "bend/junction/no lane of ours to use/route
+        end" -- so 38 refusals in one campaign said nothing about which it was. Pass a dict as
+        `why` and the reason is written into it as {"code", "text"}; pass `lane_ok_why(x, y)`
+        and it is asked, only when `lane_ok` has already said no, to explain that no.
+        """
+        def no(code, text):
+            if why is not None:
+                why["code"], why["text"] = code, text
+            return None
+
         wps = route.waypoints
         n = len(wps)
         if n < 10 or obstacle_along_m is None:
-            return None
+            return no("ROUTE_TOO_FEW_POINTS",
+                      f"the route has {n} points and the blocker is at "
+                      f"{obstacle_along_m if obstacle_along_m is not None else 'an unknown distance'}")
         ci = min(range(n), key=lambda i: math.hypot(wps[i].x - ego_x,
                                                     wps[i].y - ego_y))
         # cumulative arc from the ego's nearest waypoint
@@ -2117,17 +2154,24 @@ class RoutePlanner:
         shift_done = obstacle_along_m + 1.0
         pass_end = obstacle_along_m + self.OVERTAKE_PASS_M
         rejoin = obstacle_along_m + self.OVERTAKE_REJOIN_M
-        if arcs[-1] < rejoin + 3.0:
-            return None                       # destination too close — hold
+        if arcs[-1] < rejoin + 3.0:           # destination too close — hold
+            return no("ROUTE_TOO_SHORT",
+                      f"only {arcs[-1]:.1f} m of route remains, {rejoin + 3.0:.1f} m required "
+                      f"(blocker at {obstacle_along_m:.1f} m + {self.OVERTAKE_REJOIN_M:.0f} m "
+                      f"to rejoin + 3 m)")
         # straight-and-open guard over the whole detour region
         for k, i in enumerate(range(ci, min(ci + len(arcs), n))):
             if arcs[k] > rejoin + 2.0:
                 break
             if wps[i].is_junction:
-                return None
+                return no("JUNCTION_ON_DETOUR",
+                          f"a junction sits {arcs[k]:.1f} m along, inside the "
+                          f"{rejoin + 2.0:.1f} m the pass needs")
             dyaw = abs((wps[i].yaw - wps[ci].yaw + math.pi) % (2 * math.pi) - math.pi)
-            if dyaw > math.radians(14):
-                return None                   # bend — sight lines too poor
+            if dyaw > math.radians(14):       # bend — sight lines too poor
+                return no("BEND_TOO_SHARP",
+                          f"the route turns {math.degrees(dyaw):.0f} deg by {arcs[k]:.1f} m "
+                          f"along, more than the 14 deg a pass allows")
         new_tail = []
         rejoin_wp = None
         for k, i in enumerate(range(ci, n)):
@@ -2146,8 +2190,17 @@ class RoutePlanner:
             off = -over * s                   # minus right-vector = LEFT
             nx, ny = wp.x + right[0] * off, wp.y + right[1] * off
             if s > 0.5 and lane_ok is not None and k % 4 == 0:
-                if not lane_ok(nx, ny):
-                    return None               # no drivable lane to borrow
+                if not lane_ok(nx, ny):       # no drivable lane to borrow
+                    code, text = "LANE_INVALID", (f"the ground {a:.1f} m along, {abs(over):.2f} m "
+                                                  f"over, is not one the van may use")
+                    if lane_ok_why is not None:
+                        try:
+                            got = lane_ok_why(nx, ny)
+                            if got:
+                                code, text = got[0], got[1]
+                        except Exception:
+                            pass
+                    return no(code, text)
             new_tail.append(Waypoint(x=nx, y=ny, z=wp.z, yaw=wp.yaw,
                                      speed=wp.speed, is_junction=wp.is_junction))
             if rejoin_wp is None and a >= rejoin:

@@ -279,6 +279,8 @@ class WarpAV:
         self._recovering = False
         #: since when the van has been standing with part of itself over the lane line
         self._askew_since = None
+        #: what was decided about every way round the last time one was weighed (diagnostic)
+        self._go_around = None
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -1706,6 +1708,9 @@ class WarpAV:
                         "parked_cars": len(getattr(self, "_parked_cars", []))},
             "oncoming": getattr(self, "_oncoming", None),
             "pull_in_side": getattr(self, "_pull_in_side", None),
+            # every way round the van weighed for the blocker in front of it, and why (task:
+            # per-option go-around diagnostics, 2026-09-15)
+            "go_around": getattr(self, "_go_around", None),
             "signal_ahead": (self._signal_ahead.as_dict() if self._signal_ahead is not None else None),
             "road_sign": ({"kind": sign_kind, "to_line_m": round(sign_m, 1), "at": sign_at}
                           if sign_kind is not None and sign_m is not None else None),
@@ -2724,13 +2729,26 @@ class WarpAV:
 
     def _lane_ok(self, x, y):
         """Is this position on a real driving lane? (overtake feasibility)"""
+        return self._lane_ok_why(x, y)[0]
+
+    def _lane_ok_why(self, x, y):
+        """The same question, with the answer's reason: (ok, code, text).
+
+        The three lane checks used to be silent booleans -- a way round could be refused and
+        the log would say only "no lane of ours to use" lumped with three other causes
+        (2026-09-15). The plain boolean above is what the planner still calls; this is what
+        explains it afterwards. Same map query, same verdict.
+        """
         try:
             wp = self.vehicle_adapter.get_map().get_waypoint(
                 carla.Location(x=x, y=y, z=0.3), project_to_road=False,
                 lane_type=carla.LaneType.Driving)
-            return wp is not None
-        except Exception:
-            return False
+            if wp is None:
+                return (False, "LANE_INVALID",
+                        f"({x:.1f}, {y:.1f}) is not on a driving lane")
+            return (True, "CLEAR", "on a driving lane")
+        except Exception as e:
+            return (False, "MAP_ERROR", f"the map could not be asked: {e}")
 
     def _same_way_lane_ok(self, x, y, ego_yaw):
         """Is this position on a driving lane that runs the way WE are going?
@@ -2744,16 +2762,24 @@ class WarpAV:
         our own lane and the hard shoulder; where neither fits, the van waits, and waiting on
         the right side of the road is the answer we want.
         """
+        return self._same_way_lane_ok_why(x, y, ego_yaw)[0]
+
+    def _same_way_lane_ok_why(self, x, y, ego_yaw):
+        """The same question, with the answer's reason: (ok, code, text). See _lane_ok_why."""
         try:
             wp = self.vehicle_adapter.get_map().get_waypoint(
                 carla.Location(x=x, y=y, z=0.3), project_to_road=False,
                 lane_type=carla.LaneType.Driving)
             if wp is None:
-                return False
+                return (False, "LANE_INVALID",
+                        f"({x:.1f}, {y:.1f}) is not on a driving lane")
             dyaw = abs((math.degrees(ego_yaw) - wp.transform.rotation.yaw + 180.0) % 360.0 - 180.0)
-            return dyaw < 45.0
-        except Exception:
-            return False
+            if dyaw < 45.0:
+                return (True, "CLEAR", f"a lane of ours ({dyaw:.0f} deg off our heading)")
+            return (False, "LANE_NOT_OURS",
+                    f"the lane at ({x:.1f}, {y:.1f}) runs {dyaw:.0f} deg off our heading")
+        except Exception as e:
+            return (False, "MAP_ERROR", f"the map could not be asked: {e}")
 
     def _shoulder_ok(self, x, y):
         """May the van stand here, half on the lane and half on what is beside it?
@@ -2766,36 +2792,48 @@ class WarpAV:
         Only ever asked for the last way round something (planner.pass_options): a street with
         nothing to borrow and something in the middle of it.
         """
+        return self._shoulder_ok_why(x, y)[0]
+
+    def _shoulder_ok_why(self, x, y):
+        """The same question, with the answer's reason: (ok, code, text). See _lane_ok_why."""
         try:
             cmap = self.vehicle_adapter.get_map()
             wp = cmap.get_waypoint(carla.Location(x=x, y=y, z=0.3), lane_type=carla.LaneType.Driving)
             if wp is None:
-                return False
+                return (False, "SHOULDER_INVALID", f"({x:.1f}, {y:.1f}) is not beside any lane")
             t = wp.transform
             h = math.radians(t.rotation.yaw)
             lat = -(x - t.location.x) * math.sin(h) + (y - t.location.y) * math.cos(h)
             if lat <= 0.0:
-                return self._lane_ok(x, y)          # to the left: that is a lane question
+                return self._lane_ok_why(x, y)      # to the left: that is a lane question
             beside = wp.get_right_lane()
             if beside is None or beside.lane_type not in (carla.LaneType.Shoulder,
                                                           carla.LaneType.Parking,
                                                           carla.LaneType.Driving):
-                return False
+                kind = "nothing" if beside is None else str(beside.lane_type)
+                return (False, "SHOULDER_INVALID",
+                        f"what lies right of the lane is {kind}, not ground the van may use")
             room = 0.5 * float(wp.lane_width) + float(beside.lane_width)
             half = self.footprint_blocking.footprint.half_width
-            return lat + half + SHOULDER_EDGE_KEEP_M <= room
-        except Exception:
-            return False
+            need = lat + half + SHOULDER_EDGE_KEEP_M
+            if need <= room:
+                return (True, "CLEAR", f"{room - need:.2f} m of room to spare on the shoulder")
+            return (False, "SHOULDER_TOO_NARROW",
+                    f"the van's right side would reach {need:.2f} m out, {room:.2f} m is usable")
+        except Exception as e:
+            return (False, "MAP_ERROR", f"the map could not be asked: {e}")
 
     #: A way round is only driven over ground the laser has SEEN empty: no solid squares at
     #: all, and at least this much of it actually seen (the rest unseen is not free).
     WAY_ROUND_SEEN_SHARE = 0.85
 
+    # Has the laser seen the ground a way round would drive over, and was it empty? Asked only
+    # when the thing in the way is solid squares with nothing tracked on them -- there is no body
+    # to slide past, so the ground itself is the evidence (2026-09-14). Three quite different
+    # noes were one silent False until 2026-09-15: no map built yet, the strip could not be
+    # measured, or the laser SAW something standing on it. The twin below tells them apart.
     def _way_round_is_seen_free(self, over_m: float, to_m: float) -> bool:
-        """Has the laser seen the ground a way round would drive over, and was it empty?
-
-        Asked only when the thing in the way is solid squares with nothing tracked on them --
-        there is no body to slide past, so the ground itself is the evidence (2026-09-14)."""
+        """Is the ground that way round seen, and empty?"""
         grid = getattr(self.perception, "grid", None)
         if grid is None or not getattr(grid, "updated", False):
             return False
@@ -2807,6 +2845,30 @@ class WarpAV:
         free, blocked, unseen = counts
         total = free + blocked + unseen
         return bool(total and blocked == 0 and free >= self.WAY_ROUND_SEEN_SHARE * total)
+
+    def _way_round_seen_why(self, over_m: float, to_m: float):
+        """The same question, with the answer's reason: (ok, code, text). See _lane_ok_why."""
+        grid = getattr(self.perception, "grid", None)
+        if grid is None or not getattr(grid, "updated", False):
+            return (False, "OCCUPANCY_UNKNOWN", "the laser has not built a map of the ground yet")
+        counts = grid.strip_ahead(
+            self.behavior.front_offset_m, max(to_m, self.behavior.front_offset_m + 6.0),
+            self.footprint_blocking.footprint.swept_half_width, offset_m=-float(over_m))
+        if counts is None:
+            return (False, "OCCUPANCY_UNKNOWN", "that strip of ground could not be measured")
+        free, blocked, unseen = counts
+        total = free + blocked + unseen
+        if not total:
+            return (False, "OCCUPANCY_UNKNOWN", "not one square of that ground has been looked at")
+        if blocked:
+            return (False, "OCCUPANCY_BLOCKED",
+                    f"the laser saw something standing on {blocked} of the {total} squares "
+                    f"{abs(over_m):.2f} m over to the {'left' if over_m > 0 else 'right'}")
+        if free < self.WAY_ROUND_SEEN_SHARE * total:
+            return (False, "OCCUPANCY_UNKNOWN",
+                    f"only {free} of the {total} squares that way round have been seen empty, "
+                    f"under the {self.WAY_ROUND_SEEN_SHARE:.0%} needed -- unseen is not free")
+        return (True, "CLEAR", f"{free} of {total} squares seen empty, nothing standing on them")
 
     def _lane_width(self, pose, fallback_m=3.5):
         """How wide the lane under the van is -- what says whether there is room to squeeze
@@ -2848,6 +2910,55 @@ class WarpAV:
     RECOVER_BACK_M = 0.3          # ...and it is not done until it is this close to it again
     RECOVER_SPEED_MPS = 2.5
 
+    #: A new set of verdicts is always written to the drive's log. This is how often an
+    #: UNCHANGED set is written again, so a long wait still leaves a timeline: the same 20 s
+    #: the van has always re-printed why it is waiting at. The record itself is on
+    #: /api/state every tick.
+    GO_AROUND_LOG_EVERY_S = 20.0
+
+    def _record_go_around(self, what, lead_d, attempts=None, gate=None):
+        """Keep what was decided about EVERY way round, not only the last one (2026-09-15).
+
+        Diagnostic only: nothing here is read by anything that drives. It lands in two places
+        the stack already has -- `/api/state.go_around` for looking at it live, and one
+        `go_around_attempts` event per change in the mission log, with the structured rows in
+        `data` so a drive can be counted up afterwards ("how often was LANE_RIGHT refused for
+        ROUTE_TOO_SHORT").
+        """
+        try:
+            # A gate means no option was weighed on this tick. Carry the last weighing's rows
+            # rather than blanking them -- during a pass (ACTIVE_PASS) or the 10 s retry wait
+            # (RETRY_TIMER) they are exactly what someone looking at the van wants to read --
+            # and flag plainly that they are not from this tick.
+            fresh = attempts is not None
+            last = getattr(self, "_go_around", None) or {}
+            rows = list(attempts) if fresh else list(last.get("options") or [])
+            record = {"blocker_kind": what,
+                      "blocker_distance_m": (None if lead_d is None else round(float(lead_d), 2)),
+                      "gate": gate, "options": rows, "options_weighed_now": fresh,
+                      "taken": next((r["option"] for r in rows if r["status"] == "ACCEPTED"), None)}
+            self._go_around = record
+            # the code, never the text: a gate whose text counts seconds down would otherwise
+            # look different on every tick and fill the log
+            sig = ((gate or {}).get("reason_code"), fresh,
+                   tuple((r["option"], r["status"], r["reason_code"]) for r in rows))
+            now = time.time()
+            if sig == getattr(self, "_go_around_sig", None) and \
+                    now - getattr(self, "_go_around_logged_at", 0.0) < self.GO_AROUND_LOG_EVERY_S:
+                return
+            self._go_around_sig = sig
+            self._go_around_logged_at = now
+            if gate is not None:
+                said = f"no way round even considered: {gate['reason_code']} — {gate['reason']}"
+            else:
+                said = " | ".join(f"{r['option']}={r['status']}:{r['reason_code']}" for r in rows) \
+                       or "no options offered"
+            self.logger.log_event("go_around_attempts", said, data=record)
+        except Exception as e:
+            if not getattr(self, "_go_around_moaned", False):
+                self._go_around_moaned = True
+                print(f"[Overtake] could not record the attempts (said once): {e}")
+
     def _maybe_overtake(self, pose, perception, behavior_output, junction_ahead):
         """Anything that stays dead in our lane for 10 s on an open straight gets passed:
         swing one lane left, by, and back. Conservative by design — any doubt (lights,
@@ -2857,6 +2968,9 @@ class WarpAV:
         box, a cone -- stopped the van until a person came. Measured that day: a 0.45 m barrel
         in the lane, stopped 8.7 m short, still there when the test ended."""
         if self._overtake_point is not None:
+            self._record_go_around(None, None, gate={
+                "reason_code": "ACTIVE_PASS",
+                "reason": "a way round was already accepted and is being driven"})
             return
         if behavior_output.behavior not in self.OVERTAKE_STATES:
             self._blocked_since = None
@@ -2866,6 +2980,11 @@ class WarpAV:
             self._blocked_since = now
             return
         if now - self._blocked_since < self.OVERTAKE_AFTER_S or now < self._overtake_retry_at:
+            if now < self._overtake_retry_at:        # which of the two waits it is (diagnostic)
+                self._record_go_around(None, None, gate={
+                    "reason_code": "RETRY_TIMER",
+                    "reason": f"{self._overtake_retry_at - now:.0f} s left of the 10 s wait "
+                              f"after the last refusal before the ways round are weighed again"})
             return
         def waiting(why):
             if now - getattr(self, "_overtake_why_at", 0.0) > 20.0:
@@ -2875,13 +2994,24 @@ class WarpAV:
             self._note_move(GO_AROUND_WAIT, why)
 
         if perception.traffic_light in ("red", "yellow"):
+            self._record_go_around(None, None, gate={
+                "reason_code": "SIGNAL_RESTRICTION",
+                "reason": f"a {perception.traffic_light} light is holding this queue"})
             return                       # that's a queue, not a dead car
         if junction_ahead is not None and junction_ahead < 25.0:
+            self._record_go_around(None, None, gate={
+                "reason_code": "JUNCTION_NEAR",
+                "reason": f"junction only {junction_ahead:.0f} m ahead"})
             waiting(f"junction only {junction_ahead:.0f} m ahead")
             return
         path = getattr(self, "_path", None) or PlannerDecision.from_perception(perception)
         lead_d = path.closest_distance_m
         if lead_d is None or lead_d > 14.0:
+            self._record_go_around(getattr(path.closest_kind, "value", None), lead_d, gate={
+                "reason_code": "BLOCKER_TOO_FAR",
+                "reason": ("nothing within 14 m to go round"
+                           if lead_d is None else f"the blocker is {lead_d:.1f} m away, "
+                                                  f"further than the 14 m a pass is planned from")})
             return
         # WHAT it is decides whether a pass may even be considered (planner.pass_refused);
         # whether the way round is clear is the geometry below.
@@ -2889,6 +3019,10 @@ class WarpAV:
         why_not = pass_refused(what, path.closest_speed_mps,
                                bool(getattr(perception, "degraded", False)))
         if why_not is not None:
+            self._record_go_around(what, lead_d, gate={
+                "reason_code": ("VRU" if "person" in why_not or "riding" in why_not else
+                                "CAMERA_DEGRADED" if "camera" in why_not else "MOVING_BLOCKER"),
+                "reason": why_not})
             waiting(why_not)
             return
         # Solid squares ahead with nothing tracked on them (P2). There is no measured body to
@@ -2905,39 +3039,91 @@ class WarpAV:
         cruise = max(2.0, float(getattr(self.behavior, "cruise_speed", 4.0)))
         pass_takes_s = back_in_m / cruise
         taken, refused = None, "geometry refused (bend/junction/no lane/route end)"
+        # Every way round keeps its own verdict (2026-09-15). `refused` is still the single
+        # last-one-wins string the waiting() line has always printed -- untouched, so the log
+        # stream and its de-duplication are exactly as before -- but it is no longer the only
+        # thing that survives the loop. Before this, four `refused =` assignments overwrote
+        # each other and the shoulder is tried last, so 38 of 72 refusals in one campaign said
+        # "onto the shoulder is refused by the geometry" and nothing about the other four.
+        attempts = []
+
+        def attempt(over_m, in_lane, on_shoulder, status, code, text, **extra):
+            try:
+                attempts.append(dict(
+                    option=("NUDGE_LEFT" if (in_lane and over_m > 0) else
+                            "NUDGE_RIGHT" if in_lane else
+                            "SHOULDER" if on_shoulder else
+                            "LANE_LEFT" if over_m > 0 else "LANE_RIGHT"),
+                    shift_m=round(float(over_m), 2),
+                    side=("left" if over_m > 0 else "right"),
+                    kind=("nudge" if in_lane else "shoulder" if on_shoulder else "lane"),
+                    status=status, reason_code=code, reason=text, **extra))
+            except Exception as e:                  # a note about a pass may never stop one
+                attempts.append(dict(option="?", shift_m=0.0, side="?", kind="?", status=status,
+                                     reason_code="RECORD_FAILED", reason=f"{code}: {e}"))
+
+        # The explaining twin of each lane check, bound once. Same map query and same verdict
+        # as the boolean the planner is handed; it just also says (code, text), so "no lane of
+        # ours to use" can be told apart from "not a driving lane at all".
+        why_nudge = lambda x, y: self._lane_ok_why(x, y)[1:]
+        why_lane = lambda x, y, _yaw=pose.yaw: self._same_way_lane_ok_why(x, y, _yaw)[1:]
+        why_shoulder = lambda x, y: self._shoulder_ok_why(x, y)[1:]
         for over_m, in_lane, on_shoulder in pass_options(
                 self._lane_width(pose), self.footprint_blocking.footprint.half_width,
                 self.planner.OVERTAKE_SHIFT_M):
             # Traffic moving where THIS way round would go (planner.overtake_blocker). Asked
             # per way round since 2026-09-14: a car coming up the lane on the left is a reason
             # not to pull out into it, and no reason at all not to go by on the right.
+            traffic = {}
             why = overtake_blocker(perception.objects, lead_d, back_in_m, pose.yaw,
                                    pass_takes_s=pass_takes_s, ego_speed_mps=pose.speed,
-                                   side=(1 if over_m < 0 else -1))
+                                   side=(1 if over_m < 0 else -1), why=traffic)
             if why is not None:
                 refused = why
+                # which rule said no, which vehicle, when it meets us and how long the pass
+                # needs -- kept apart rather than read back out of the sentence
+                attempt(over_m, in_lane, on_shoulder, "REJECTED",
+                        traffic.get("code", "MOVING_BLOCKER"), why,
+                        **{k: v for k, v in traffic.items() if k not in ("code", "text")})
                 continue
             if ground_unmeasured and not self._way_round_is_seen_free(over_m, back_in_m):
                 refused = (f"{abs(over_m):.2f} m over to the {'left' if over_m > 0 else 'right'}: "
                            f"the laser has not seen that ground empty, and the thing in the way "
                            f"is not measured either")
+                # `refused` above is the line that has always been printed; this only adds
+                # which of the three noes it was. If the twin disagrees (the grid can be
+                # rewritten by the perception thread between the two reads) keep the plain one.
+                try:
+                    seen = self._way_round_seen_why(over_m, back_in_m)
+                except Exception:
+                    seen = (True, "", "")       # fall back to the plain line, as before
+                attempt(over_m, in_lane, on_shoulder, "REJECTED",
+                        "OCCUPANCY_UNKNOWN" if seen[0] else seen[1],
+                        refused if seen[0] else seen[2])
                 continue
             if on_shoulder:
                 lane_ok = self._shoulder_ok
+                lane_why = why_shoulder
             elif not in_lane:
                 # a whole lane, either side: only one that runs OUR way. Never the oncoming
                 # one -- see _same_way_lane_ok (Rajat, 2026-09-14).
                 lane_ok = lambda x, y, _yaw=pose.yaw: self._same_way_lane_ok(x, y, _yaw)
+                lane_why = why_lane
             else:
                 lane_ok = self._lane_ok           # a nudge stays inside our own lane
+                lane_why = why_nudge
             trial = Route(waypoints=list(self._route.waypoints),
                           total_distance=self._route.total_distance)
+            geometry = {}
             rejoin = self.planner.plan_overtake(
-                trial, pose.x, pose.y, lead_d, shift_m=over_m, lane_ok=lane_ok)
+                trial, pose.x, pose.y, lead_d, shift_m=over_m, lane_ok=lane_ok,
+                why=geometry, lane_ok_why=lane_why)
             if rejoin is None:
                 refused = (f"{abs(over_m):.2f} m over to the {'left' if over_m > 0 else 'right'}"
                            f"{' onto the shoulder' if on_shoulder else ''} is refused by the "
                            f"geometry (bend/junction/no lane of ours to use/route end)")
+                attempt(over_m, in_lane, on_shoulder, "REJECTED",
+                        geometry.get("code", "GEOMETRY"), geometry.get("text", refused))
                 continue
             # ...and what stands on it: the van's body slid along that path, as before a pull-in
             in_way = self.planner.pull_in_blocker(perception, trial, pose.x, pose.y, pose.yaw,
@@ -2945,12 +3131,29 @@ class WarpAV:
                                                   horizon_m=back_in_m)
             if in_way is None:
                 taken = (over_m, in_lane, on_shoulder, trial, rejoin)
+                attempt(over_m, in_lane, on_shoulder, "ACCEPTED", "CLEAR",
+                        f"nothing stands on the {abs(over_m):.2f} m way round")
                 break
             obj, dist, hit, where, box = in_way
             stands = getattr(getattr(obj, "object_type", None), "value", "thing")
             refused = (f"{abs(over_m):.2f} m over is not enough: {stands} (id "
                        f"{getattr(obj, 'id', None)}) {dist:.0f} m away would be touched "
                        f"{hit.along_m:.0f} m on, {hit.lateral_m:+.1f} m off the path")
+            attempt(over_m, in_lane, on_shoulder, "REJECTED", "PULL_IN_BLOCKED", refused,
+                    blocker_id=(int(getattr(obj, "id", 0) or 0) or None), blocker_kind=stands,
+                    blocker_distance_m=round(float(dist), 2),
+                    touch_along_m=round(float(hit.along_m), 2),
+                    touch_lateral_m=round(float(hit.lateral_m), 2))
+        # Every option the loop never reached -- it stops at the first way round that works --
+        # is named too, so one record always accounts for all of them. pass_options is a pure
+        # function of the two widths, so this is the same list in the same order, and exactly
+        # one attempt is recorded per option the loop got to.
+        for over_m, in_lane, on_shoulder in list(pass_options(
+                self._lane_width(pose), self.footprint_blocking.footprint.half_width,
+                self.planner.OVERTAKE_SHIFT_M))[len(attempts):]:
+            attempt(over_m, in_lane, on_shoulder, "NOT_EVALUATED", "NOT_REACHED",
+                    "an earlier way round was taken")
+        self._record_go_around(what, lead_d, attempts)
         if taken is None:
             waiting(refused)
             return

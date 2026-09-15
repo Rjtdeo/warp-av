@@ -16,3 +16,22 @@ if "carla" not in sys.modules:
     carla.VehicleControl, carla.Location, carla.Rotation, carla.Transform = _VC, _Loc, _Rot, _Tr
     carla.Client = object
     sys.modules["carla"] = carla
+
+# main.py imports flask_socketio, which is not installed on the Mac. Import the real one where
+# there is one -- the CARLA laptop has it -- and only stand in for it where there is not, so a
+# test that needs main.py runs on both machines instead of silently skipping on one of them.
+# (Before 2026-09-15 four tests in test_path_verdict skipped here for exactly this reason.)
+if "flask_socketio" not in sys.modules:
+    try:
+        import flask_socketio  # noqa: F401
+    except Exception:
+        _sio = types.ModuleType("flask_socketio")
+
+        class _SocketIO:
+            def __init__(self, *a, **k): pass
+            def emit(self, *a, **k): pass
+            def run(self, *a, **k): pass
+            def on(self, *a, **k): return lambda f: f
+
+        _sio.SocketIO = _SocketIO
+        sys.modules["flask_socketio"] = _sio
