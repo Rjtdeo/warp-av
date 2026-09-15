@@ -186,3 +186,98 @@ def test_the_way_in_check_never_throws_on_a_broken_scene():
     s._last_perception = None
     s.rechoose()
     assert s._parking_spot["kind"] == "lane", "no perception is not a reason to refuse to park"
+
+
+# ---- the road is tried before the mission is given up ------------------------------------
+
+def giving_up(in_the_way=None, spot=None, backed_out_already=True, tried_last_resort=False):
+    """A van that has been sitting blocked in front of its spot long enough to give up."""
+    s = van(overtaking=False, choose=None, in_the_way=in_the_way,
+            spot=spot or {"kind": "bay", "x": 30.0, "y": 2.0, "approach_m": 20.0})
+    s.failed = []
+    # the give-up path calls the re-choice as a method on self, so bind the real one
+    s._rechoose_parking = lambda pose, why, last_resort=False: WarpAV._rechoose_parking(
+        s, pose, why, last_resort=last_resort)
+    s._give_up = SimpleNamespace(update=lambda *a: "obstacle")
+    s._path = SimpleNamespace(blocker_id=None)
+    s._backed_out_for = (30.0, 2.0) if backed_out_already else None
+    s._tried_the_last_resort = tried_last_resort
+    s._start_backing_out = lambda pose, why: False
+    s.mission_manager = SimpleNamespace(fail_mission=lambda why: s.failed.append(why))
+    s.logger.stop_mission_log = lambda: s.said.append(("log_closed", ""))
+    s.behavior = SimpleNamespace(_park_best_d=7.0, has_mission=True)
+    s.vehicle_adapter = SimpleNamespace(disengage_autonomy=lambda: s.said.append(("off", "")))
+    out = SimpleNamespace(behavior=None, reason="", should_stop=False, desired_speed_mps=1.0)
+    s.give_up = lambda d=2.0: WarpAV._maybe_give_up_on_the_spot(
+        s, s._last_perception, out, d, s.pose)
+    s.out = out
+    return s
+
+
+def test_the_last_resort_is_offered_before_the_mission_is_failed():
+    """E3 gave up at 32 degrees across the next lane with autonomy off. This branch was never
+    reached: backing out had been tried, so it failed on the spot."""
+    s = giving_up(in_the_way=[])                    # the road ahead is clear
+    s.give_up()
+    assert s.failed == [], "the mission was not failed"
+    assert s._parking_spot["kind"] == "lane", "it took a stop in the lane instead"
+    assert s._tried_the_last_resort is True
+
+
+def test_it_goes_straight_to_the_lane_and_does_not_hunt_for_another_bay():
+    other = (list(road(n=20).waypoints), {"kind": "bay", "from_pin_m": 4, "x": 20.0, "y": 2.0})
+    s = giving_up(in_the_way=[])
+    s._choose_spot = lambda ahead_of=None: other      # there IS another bay
+    s.give_up()
+    assert s._parking_spot["kind"] == "lane", "every bay has already been tried by now"
+
+
+def test_the_mission_is_still_failed_when_the_road_is_blocked_too():
+    """Not a way of never failing: if the van cannot stop on the road either, it says so."""
+    car = parked(6.0, 0.6)
+    car.id = 849
+    s = giving_up(in_the_way=[car])
+    s.give_up()
+    assert len(s.failed) == 1
+    assert "no room to stop in the lane either" in s.failed[0]
+    assert s.out.should_stop is True and s.out.desired_speed_mps == 0.0
+    assert ("off", "") in s.said, "autonomy is disengaged, as before"
+
+
+def test_the_last_resort_is_offered_once_per_mission_not_once_per_tick():
+    car = parked(6.0, 0.6)
+    car.id = 849
+    s = giving_up(in_the_way=[car], tried_last_resort=True)
+    s.give_up()
+    assert len(s.failed) == 1, "already tried: it fails without trying again"
+
+
+def test_a_van_not_yet_turning_in_still_just_chooses_again():
+    """No change to the path that was already right."""
+    other = (list(road(n=20).waypoints), {"kind": "bay", "from_pin_m": 4, "x": 20.0, "y": 2.0})
+    s = giving_up(in_the_way=[])
+    s._choose_spot = lambda ahead_of=None: other
+    s.give_up(d=999.0)                                # far from the spot: not turning in
+    assert s.failed == [] and s._parking_spot["x"] == 20.0
+    assert s._tried_the_last_resort is False, "the last resort was not spent"
+
+
+def test_backing_out_is_still_tried_first_when_it_has_not_been():
+    s = giving_up(in_the_way=[], backed_out_already=False)
+    started = []
+    s._start_backing_out = lambda pose, why: (started.append(why), True)[1]
+    s.give_up()
+    assert started and s.failed == []
+    assert s._after_reverse == "rechoose_parking"
+    assert s._tried_the_last_resort is False, "backing out comes first, as before"
+
+
+def test_rechoose_says_whether_it_found_one():
+    clear = van(overtaking=False, choose=None, in_the_way=[])
+    assert clear.rechoose() is True
+    car = parked(6.0, 0.6)
+    car.id = 849
+    blocked = van(overtaking=False, choose=None, in_the_way=[car])
+    assert blocked.rechoose() is False
+    mid_pass = van(overtaking=True, choose=None, in_the_way=[])
+    assert mid_pass.rechoose() is False

@@ -285,6 +285,8 @@ class WarpAV:
         self._reroute = None
         #: set when a pass is drawn on the road beyond the parking tail: a new spot is needed
         self._pass_past_the_spot = False
+        #: the stop-in-the-lane last resort is offered once per mission, not once per tick
+        self._tried_the_last_resort = False
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -379,6 +381,7 @@ class WarpAV:
             self._pin_index = pin_index
             self._parking_rejected = []
             self._parking_wait_since = None
+            self._tried_the_last_resort = False
             chosen = self._choose_spot()
             if chosen is not None:
                 self._route.waypoints, self._parking_spot = chosen
@@ -3424,8 +3427,19 @@ class WarpAV:
                 self._after_reverse = "rechoose_parking"
                 self._give_up = WaitingIsPointless()
                 return
-        why = (f"Could not get into the parking spot: a {what} blocks the way in, and backing "
-               f"out did not find another")
+        # Backing out has been tried for this spot. Before ending the mission where the van
+        # happens to be standing, try the last resort the re-choice already has: a stop
+        # straight in the lane, whose way in is checked like any other spot (5d1b6d2). Live in
+        # E3 on 2026-09-15 this branch was never reached -- the van gave up at 32 degrees
+        # across the next lane with autonomy disengaged, which is the worst place to leave it.
+        if not getattr(self, "_tried_the_last_resort", False):
+            self._tried_the_last_resort = True
+            if self._rechoose_parking(pose, f"a {what} blocks the way into the spot",
+                                      last_resort=True):
+                self._give_up = WaitingIsPointless()
+                return
+        why = (f"Could not get into the parking spot: a {what} blocks the way in, backing out "
+               f"did not find another, and there is no room to stop in the lane either")
         self.mission_manager.fail_mission(why)
         self.behavior.has_mission = False
         behavior_output.behavior = DrivingBehavior.STOPPED_BLOCKED
@@ -3784,11 +3798,18 @@ class WarpAV:
             print(f"[Parking] could not check the way in: {e}")
             return None
 
-    def _rechoose_parking(self, pose, why):
+    def _rechoose_parking(self, pose, why, last_resort=False):
         """The spot we were heading for will not do. Choose again, from the route as planned
         before any pull-in, skipping every spot already turned down, and only where the
         pull-in starts ahead of the van. Nothing left: stop at the pin, straight, in the lane
-        -- or just ahead, if the pin is already behind."""
+        -- or just ahead, if the pin is already behind.
+
+        `last_resort` skips the search for another strip spot and goes straight to the stop in
+        the lane: asked when every spot has been tried and the only question left is whether
+        the van can stop on the road rather than end the mission where it happens to stand.
+
+        Returns True when a new spot was taken, False when nothing was.
+        """
         if self._overtake_point is not None:
             # Not while a way round is being driven. Choosing again cuts the route back, and
             # a spot BEHIND the thing the van is passing turns it across that thing: live in
@@ -3796,15 +3817,15 @@ class WarpAV:
             # ahead while the van was still alongside the car it had just gone round, and
             # 1.4 s later it swung its tail into it. The pass finishes first; this is asked
             # again on the next tick, and every tick after, once it has.
-            return
+            return False
         sp = self._parking_spot or {}
         self._parking_rejected.append((sp.get("x", 0.0), sp.get("y", 0.0)))
         self._parking_wait_since = None
         self.behavior._park_best_d = None
         base = getattr(self, "_route_base", None)
         if not base:
-            return
-        chosen = self._choose_spot(ahead_of=(pose.x, pose.y))
+            return False
+        chosen = None if last_resort else self._choose_spot(ahead_of=(pose.x, pose.y))
         if chosen is not None:
             self._route.waypoints, new = chosen
             self._parking_spot = new
@@ -3843,7 +3864,7 @@ class WarpAV:
                     pass
                 self._note_move(SPOT_RECHOSEN, held)
                 print(f"[Parking] {held}")
-                return
+                return False
             self._route.waypoints = wps
             last = wps[-1]
             self._parking_spot = {"x": last.x, "y": last.y, "yaw": last.yaw, "kind": "lane",
@@ -3854,6 +3875,7 @@ class WarpAV:
         self.logger.log_event("parking_rechosen", msg)
         self._note_move(SPOT_RECHOSEN, msg)
         print(f"[Parking] {msg}")
+        return True
 
     def _recheck_parking_on_approach(self, pose):
         """Entering the parking phase: occupancy may be stale (cars parked
