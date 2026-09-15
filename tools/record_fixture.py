@@ -92,6 +92,11 @@ def main():
     ap.add_argument("--name", required=True)
     ap.add_argument("--seconds", type=float, default=1.2)
     ap.add_argument("--no-spawn", action="store_true")
+    ap.add_argument("--place", default=None,
+                    help="what to put out instead of the six-object default: "
+                         "blueprint@ahead_m@right_m, comma separated. `right` is metres to the "
+                         "right of the lane centre, so two vehicles half a metre apart across "
+                         "the road are one at 0 and one at (half + half + 0.5).")
     ap.add_argument("--at", default=None, help="teleport the parked van first: x,y[,yaw_deg[,z]]; without a yaw the van "
                     "faces along the lane there; z picks the level on stacked roads (stack must be idle)")
     ap.add_argument("--label-seconds", type=float, default=0.4,
@@ -136,8 +141,17 @@ def main():
     spawned = []
     sensors = []
     try:
+      place = PLACE
+      if a.place:
+          place = []
+          for spec in a.place.split(","):
+              spec = spec.strip()
+              if not spec:
+                  continue
+              bp_id, ahead, right = spec.split("@")
+              place.append((bp_id, float(ahead), float(right)))
       if not a.no_spawn:
-        for bp_id, ahead, right in PLACE:
+        for bp_id, ahead, right in place:
             nxt = wp.next(ahead)
             if not nxt:
                 continue
