@@ -283,6 +283,8 @@ class WarpAV:
         self._go_around = None
         #: ...and the same for going round the whole blocked road (diagnostic)
         self._reroute = None
+        #: set when a pass is drawn on the road beyond the parking tail: a new spot is needed
+        self._pass_past_the_spot = False
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -1343,6 +1345,11 @@ class WarpAV:
                     pass
                 self._note_move(GO_AROUND_DONE, "pass complete — back in lane")
                 print("[Overtake] pass complete — back in lane")
+                if getattr(self, "_pass_past_the_spot", False):
+                    # the way round was drawn on the road rather than on the parking tail, so
+                    # the spot it was cut to is behind the van now. Choose again, ahead.
+                    self._pass_past_the_spot = False
+                    self._rechoose_parking(pose, "the way round carried on past the spot")
             else:
                 # Belt and braces: any body within 1.6 m while passing —
                 # tracking lag, mis-judged widths, anything — pauses the
@@ -3144,6 +3151,22 @@ class WarpAV:
         back_in_m = lead_d + self.planner.OVERTAKE_REJOIN_M + 8.0
         cruise = max(2.0, float(getattr(self.behavior, "cruise_speed", 4.0)))
         pass_takes_s = back_in_m / cruise
+        # Which road the pass is drawn on. Normally the route the van is following -- but the
+        # end of that route has been bent to a parking spot and cut there, and the ROAD goes
+        # on: _route_base is the route as planned before any pull-in was drawn on it, carried
+        # PARK_FAR_PAST_PIN_M past the pin. Live in E3 on 2026-09-15 the van stood 280 s
+        # behind a car 7.7 m ahead, every way round refused for "only 19.0 m of route remains,
+        # 26.7 m required" -- 19 m because its own parking slot was 19 m away, not because the
+        # street ended. A pass that finishes past the spot is one the van can make; it parks
+        # further on afterwards, which is what a driver does.
+        road, past_the_spot = self._route, False
+        needs_m = lead_d + self.planner.OVERTAKE_REJOIN_M + 3.0
+        if self.planner.route_left_m(self._route, pose.x, pose.y) < needs_m:
+            base = getattr(self, "_route_base", None)
+            if base:
+                longer = Route(waypoints=list(base), total_distance=self._route.total_distance)
+                if self.planner.route_left_m(longer, pose.x, pose.y) >= needs_m:
+                    road, past_the_spot = longer, True
         taken, refused = None, "geometry refused (bend/junction/no lane/route end)"
         # Every way round keeps its own verdict (2026-09-15). `refused` is still the single
         # last-one-wins string the waiting() line has always printed -- untouched, so the log
@@ -3218,8 +3241,8 @@ class WarpAV:
             else:
                 lane_ok = self._lane_ok           # a nudge stays inside our own lane
                 lane_why = why_nudge
-            trial = Route(waypoints=list(self._route.waypoints),
-                          total_distance=self._route.total_distance)
+            trial = Route(waypoints=list(road.waypoints),
+                          total_distance=road.total_distance)
             geometry = {}
             rejoin = self.planner.plan_overtake(
                 trial, pose.x, pose.y, lead_d, shift_m=over_m, lane_ok=lane_ok,
@@ -3282,6 +3305,8 @@ class WarpAV:
                if on_shoulder else f"passing on the {'left' if over_m > 0 else 'right'}")
         self._route.waypoints = trial.waypoints          # one swap: the tick may be reading it
         self._overtake_point = rejoin
+        #: the pass runs past where the van was going to park; it needs a new spot afterwards
+        self._pass_past_the_spot = past_the_spot
         # While squeezing, the thing IS close: the abort line has to be the body's, not the
         # lane change's 1.6 m, or the van would freeze beside what it is passing.
         self._overtake_tight_m = SQUEEZE_ABORT_M if (in_lane or on_shoulder) else PASS_ABORT_M
