@@ -67,6 +67,21 @@ class VehicleController:
     STEER_RATE_SLOW = 0.60    # max steering change per tick at low speed
     CT_GAIN = 0.20            # centreline correction (per metre of offset)
     CT_MAX = 0.35             # cap of that correction
+    # ...and how hard to damp that correction by how much the offset is ALREADY closing,
+    # per tick -- the same way every other limit here is per tick, not per second. A first
+    # version divided by the wall clock and silently did nothing whenever ticks came faster
+    # than 10 ms, which is exactly the case in a test.
+    #
+    # Without damping the loop only ever asked "how far off am I", never "and am I already on
+    # my way back". Live on 2026-09-14 the van drifted 0.99 m right of its lane, corrected
+    # left, and swung 2.3 m the other way in 1.5 s -- 1.35 m left of centre, 36 degrees across
+    # the road, body over the centre line, where an oncoming ambulance met it. The correction
+    # is a spring with no shock absorber; this is the shock absorber. The combined correction
+    # is still capped by CT_MAX.
+    #: Measured on the step response (1 m off the line at 4 m/s): 0 swings 0.245 m past the
+    #: line, 1.5 swings 0.067 m and takes 0.4 s longer to settle. 2.5 removes the overshoot
+    #: and costs a whole second, which is a van that wanders for longer.
+    CT_DAMP = 1.5
 
     # --- Speed tuning (no more random brake taps) ---
     COAST_BAND_MPS = 0.8      # up to this much over target: coast, do not brake
@@ -94,6 +109,7 @@ class VehicleController:
         self.speed_pid = PIDController(kp=0.5, ki=0.05, kd=0.1)
         self._enabled = True
         self._last_steer = 0.0       # low-pass / rate-limit state
+        self._last_cross_m = None    # last tick's offset, for the damping term above
         self._desired_eff = 0.0      # slew-limited speed target
         self._fault_nan = False      # inject NaN steering (command-validation test)
         self._fault_stale_s = 0.0    # back-date command timestamps
@@ -142,6 +158,7 @@ class VehicleController:
             self.speed_pid.reset()
             self._last_steer = 0.0
             self._desired_eff = 0.0
+            self._last_cross_m = None
             return VehicleCommand(
                 steering=0.0,
                 throttle=0.0,
@@ -178,7 +195,14 @@ class VehicleController:
         # Centreline correction: pull back toward the lane centre. Pure pursuit
         # alone tolerates a steady offset in bends (kerb clipping); this term
         # cancels it. cross_track_m > 0 = left of path -> steer right (negative).
-        raw_steer += max(-self.CT_MAX, min(self.CT_MAX, -self.CT_GAIN * cross_track_m))
+        #
+        # Damped by how fast the offset is ALREADY closing (CT_DAMP), so a van on its way back
+        # to the line eases off instead of driving through it and out the other side.
+        moved = 0.0 if self._last_cross_m is None else (cross_track_m - self._last_cross_m)
+        moved = max(-0.5, min(0.5, moved))        # a jump this big is a new route, not a drift
+        self._last_cross_m = cross_track_m
+        correction = -self.CT_GAIN * cross_track_m - self.CT_DAMP * moved
+        raw_steer += max(-self.CT_MAX, min(self.CT_MAX, correction))
         raw_steer = max(-1.0, min(1.0, raw_steer))
 
         # Low-pass + rate limit: kills tick-to-tick steering chatter without

@@ -417,18 +417,21 @@ class OccupancyGrid:
             return None
         return abs(right - left)
 
-    def strip_ahead(self, from_m: float, to_m: float, half_width_m: float):
-        """(free, blocked, unseen) squares over a strip of ground straight ahead of the van --
-        from `from_m` to `to_m` in front of its middle, `half_width_m` either side.
+    def strip_ahead(self, from_m: float, to_m: float, half_width_m: float, offset_m: float = 0.0):
+        """(free, blocked, unseen) squares over a strip of ground ahead of the van -- from
+        `from_m` to `to_m` in front of its middle, `half_width_m` either side, and `offset_m`
+        to the RIGHT of straight ahead (negative is left; 0 is the ground the van's own body
+        is about to cover).
 
-        The ground the van's own body is about to cover, in other words. Nothing is inferred
-        here: FREE is where a beam went through, UNKNOWN is where none has been, and the two
-        are never added together."""
+        The offset is what lets the van ask about the ground a way ROUND something would take,
+        rather than only the ground in front of it (2026-09-14). Nothing is inferred here:
+        FREE is where a beam went through, UNKNOWN is where none has been, and the two are
+        never added together."""
         if not self.updated or to_m <= from_m or half_width_m <= 0:
             return None
         step = self.cell_m
         xs = np.arange(from_m, to_m + 1e-6, step)
-        ys = np.arange(-half_width_m, half_width_m + 1e-6, step)
+        ys = np.arange(offset_m - half_width_m, offset_m + half_width_m + 1e-6, step)
         gx, gy = np.meshgrid(xs, ys)
         r, c = self.to_cell(gx, gy)
         inside = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)

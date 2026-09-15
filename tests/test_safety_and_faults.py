@@ -128,3 +128,20 @@ def test_fault_injector_dispatch():
     assert fi.inject("tick_latency", "latency", latency_s=0.4, mode="spike")["success"]
     assert fi.extra_tick_delay() == 0.4 and fi.extra_tick_delay() == 0.0
     assert len(sysm.logger.events) >= 6
+
+
+# ---- a simulator hiccup must not wedge the stack (2026-09-14) -----------------------------
+
+def test_engaging_autonomy_survives_the_traffic_manager_timing_out():
+    """With ten cars driving, CARLA's traffic manager took longer than its own 2 s limit to
+    answer set_autopilot(False). The exception came out of api_start_mission, the mission never
+    started, and the stack sat in "planning" refusing every later mission until it was
+    restarted. The van does not need that call to succeed."""
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "adapters" / "carla_vehicle_adapter.py").read_text()
+    i = src.index("def engage_autonomy")
+    body = src[i:src.index("def disengage_autonomy", i)]
+    j = body.index("set_autopilot(False)")
+    assert "try:" in body[:j] and "except Exception" in body[j:], \
+        "the autopilot call must be allowed to fail"
+    assert "return True" in body[j:], "and autonomy still engages"

@@ -165,7 +165,12 @@ def test_where_the_ground_first_stops_us():
     assert OccupancyGrid().nearest_block_ahead(2.95, 7.95, 1.09) is None
 
 
-def test_the_van_stops_for_solid_ground_and_will_not_go_round_it():
+def test_the_van_stops_for_solid_ground_and_only_goes_round_it_over_ground_it_has_seen():
+    """Solid squares with nothing tracked on them still STOP the van. What changed on
+    2026-09-14 is what happens next: it used to refuse every way round ("not going round what
+    cannot be measured") and sat there -- 88 s of one seven-minute drive. There is no body to
+    slide past, true, but the GROUND a way round would drive over can be measured, and that is
+    the question that matters."""
     from pathlib import Path
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
     i = src.index("def _second_opinion_on_the_ground")
@@ -173,7 +178,25 @@ def test_the_van_stops_for_solid_ground_and_will_not_go_round_it():
     assert "path.level = PATH_BLOCKED" in body, "the ground block goes on the path record (task 2)"
     assert "BLOCKED_OCCUPANCY" in body
     assert "DrivingBehavior.PARKING" in body, "a pull-in goes close to the kerb on purpose"
-    assert 'waiting("solid ground squares ahead that nothing is tracked on' in src
+    # ...and the way round is only taken over ground the laser has SEEN empty
+    j = src.index("def _way_round_is_seen_free")
+    check = src[j:j + 1400]
+    assert "blocked == 0" in check and "WAY_ROUND_SEEN_SHARE" in check, \
+        "no solid squares on it, and most of it actually seen -- unseen is not free"
+    assert "offset_m=-float(over_m)" in check, "it must look at the ground that way round, not straight ahead"
+    assert "ground_unmeasured and not self._way_round_is_seen_free" in src
+
+
+def test_an_unseen_or_blocked_way_round_is_still_refused():
+    """The grid's own answer, with no van attached: the check is only as good as this."""
+    from warp_av.perception.occupancy import OccupancyGrid
+    import numpy as np
+    grid = swept_grid(extra=[[6.0, -3.5], [6.5, -3.5], [7.0, -3.4]])   # something 3.5 m to our LEFT
+    free, blocked, unseen = grid.strip_ahead(2.95, 12.0, 1.29, offset_m=-3.5)
+    assert blocked > 0, "solid squares on the ground a left-hand pass would take"
+    free2, blocked2, unseen2 = grid.strip_ahead(2.95, 12.0, 1.29, offset_m=+3.5)
+    assert blocked2 == 0, "...and none on the ground a right-hand pass would take"
+    assert free2 > 0
 
 
 def test_a_pass_does_not_outlive_its_mission():

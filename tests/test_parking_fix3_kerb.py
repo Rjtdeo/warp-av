@@ -231,3 +231,97 @@ def test_a_bent_piece_of_bay_behind_the_slot_is_no_approach():
     assert not RoutePlanner.slot_reachable(slots, k[5]), "still sweeps through k=3"
     assert RoutePlanner.slot_reachable(slots, k[6]), "k=4 and k=5 are straight, free bay"
     assert RoutePlanner.choose_free_slot(slots) == k[6]
+
+
+# ---- the kerbside spot is looked at too (2026-09-14) --------------------------------------
+
+def test_the_kerbside_spot_is_checked_before_the_van_drives_to_it():
+    """The laser check ran for a slot or a bay and returned at once for anything else, so the
+    kerbside fallback -- the one the van uses when no bay will do -- was never looked at. It
+    drove to a piece of kerb and found out what was there by arriving."""
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("def _confirm_parking_spot")
+    gate = src[i:i + 900]
+    assert 'sp.get("kind") == "kerb"' in gate and "_check_the_kerb_is_empty" in gate
+
+    j = src.index("def _check_the_kerb_is_empty")
+    body = src[j:src.index("def _pull_in_area", j)]
+    assert '_spot_view' in body, "it asks the laser, not the simulator"
+    assert 'view != "taken"' in body, "only a thing it can SEE moves it on"
+    assert "KERB_TAKEN_LOOKS" in body, "one bad frame is not a car"
+    assert "_rechoose_parking" in body
+    assert 'self.perception_mode != "camera_lidar"' in body
+
+
+def test_an_unseen_kerb_never_strands_the_van():
+    """Unseen is the ordinary answer for a kerb off to one side. Refusing to park on it would
+    leave the van standing in the driving lane, which is worse than what this guards against."""
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    j = src.index("def _check_the_kerb_is_empty")
+    body = src[j:src.index("def _pull_in_area", j)]
+    assert "_parking_wait_since" not in body, "it must never stop and wait on an unseen kerb"
+    assert body.count("_rechoose_parking") == 1
+
+
+# ---- looking over the shoulder before pulling in (2026-09-14) -----------------------------
+#
+# A VW parked beside the van went from a standstill to 3.9 m/s while the van was half-way into
+# its pull-in, and hit it. The two centres were 2.3 m apart and the two bodies need 1.99 m:
+# 0.31 m of air. The spot and the way in are checked against things STANDING there; a vehicle
+# alongside, moving or about to move, was invisible to that.
+
+from warp_av.planning.planner import pull_in_side_blocker  # noqa: E402
+
+SWEPT_HALF = 1.29
+
+
+def mover(x, y, speed=3.9, width=1.9):
+    o = DetectedObject(object_type=ObjectType.VEHICLE, x=x, y=y, distance=math.hypot(x, y),
+                       speed=speed, width_m=width, length_m=4.5, height_m=1.8, id=11)
+    o.stationary = False
+    o.vx_world, o.vy_world = speed, 0.0
+    return o
+
+
+def test_the_vw_that_pulled_away_into_us():
+    """Its place at the moment of contact: 1.1 m ahead, 2.3 m to our right, doing 3.9 m/s."""
+    why = pull_in_side_blocker([mover(1.1, 2.3)], +1, 0.0, SWEPT_HALF)
+    assert why is not None and "right" in why
+    assert "0.0" in why or "m between the two bodies" in why
+
+
+def test_it_catches_one_coming_up_from_behind_on_that_side():
+    why = pull_in_side_blocker([mover(-6.0, 2.6)], +1, 0.0, SWEPT_HALF)
+    assert why is not None and "coming up" in why
+
+
+def test_nothing_on_the_other_side_matters():
+    assert pull_in_side_blocker([mover(1.1, -2.3)], +1, 0.0, SWEPT_HALF) is None
+    assert pull_in_side_blocker([mover(1.1, 2.3)], -1, 0.0, SWEPT_HALF) is None
+
+
+def test_a_parked_car_is_left_to_the_swept_path():
+    """Standing things are pull_in_blocker's business -- it measures the body we would touch."""
+    still = mover(1.1, 2.3, speed=0.0)
+    still.stationary = True
+    assert pull_in_side_blocker([still], +1, 0.0, SWEPT_HALF) is None
+
+
+def test_traffic_a_lane_further_over_is_not_beside_us():
+    assert pull_in_side_blocker([mover(2.0, 6.0)], +1, 0.0, SWEPT_HALF) is None
+
+
+def test_something_well_past_us_is_not_beside_us():
+    assert pull_in_side_blocker([mover(30.0, 2.3)], +1, 0.0, SWEPT_HALF) is None
+
+
+def test_the_van_holds_rather_than_creeping_on():
+    from pathlib import Path
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    i = src.index("Pulling over is a move sideways")
+    body = src[i:i + 1600]
+    assert "pull_in_side_blocker" in body and "should_stop = True" in body
+    assert "DrivingBehavior.PARKING" in body, "only while it is actually pulling in"
+    assert "side_y > 0.2" in body, "the side is the one the spot lies on, not a guess"

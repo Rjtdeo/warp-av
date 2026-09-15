@@ -430,6 +430,110 @@ def lane_change_blocker(objects, side: int, ego_yaw: float) -> Optional[str]:
     return None
 
 
+#: Watching what is coming the other way (2026-09-14). Nothing did, before: the corridor
+#: check only ever looks in OUR lane, which is right while the van stays in it -- and nothing
+#: asked whether it was still in it. Live that day an ambulance closed head-on from 58 m to
+#: 5.7 m at 8 m/s while the planner said "clear, 999 m" and the van, correcting a drift,
+#: crossed the line into it and was hit.
+ONCOMING_KEEP_M = 0.4       # clear air we want between the two bodies as they pass
+ONCOMING_LOOK_S = 5.0       # only what would meet us within this long
+ONCOMING_MIN_CLOSING = 1.0  # m/s of closing before it counts as coming at us
+
+
+def oncoming_conflict(objects, swept_half_width_m: float, ego_yaw: float, ego_speed_mps: float,
+                      swept_half_length_m: float = 0.0, off_axis_rad: float = 0.0):
+    """Something coming the other way that our own body would meet, or None.
+
+    Judged on the two bodies, not on lanes: how much clear air is left between them as they
+    pass. A car in the next lane over is 1.3 m clear and says nothing; the same car with the
+    van 1.4 m off its line is not, and says so.
+
+    `off_axis_rad` is how far the van is pointing across the road it is on, and it matters more
+    than anything else here. A van 5.92 m long, angled 15 degrees, reaches 2.1 m to its side --
+    not the 1.29 m of its half width. A first version measured half widths alone, and live on
+    2026-09-14 it called 0.44 m of clearance where CARLA measured 0.19 m and stayed silent by
+    four centimetres while a car went past at 8 m/s.
+
+    Returns (reason, seconds until we meet, metres of clearance) or None.
+    """
+    from .prediction import could_use_a_road
+    c, s = math.cos(ego_yaw), math.sin(ego_yaw)
+    # how far the van reaches to its side, pointing the way it is pointing: its half width when
+    # it is square to the road, its half LENGTH as it turns across it
+    off = min(abs(float(off_axis_rad)), math.radians(45.0))
+    ours_across = (float(swept_half_width_m) * math.cos(off)
+                   + float(swept_half_length_m) * math.sin(off))
+    worst = None
+    for obj in objects or []:
+        if not could_use_a_road(obj):
+            continue
+        if float(getattr(obj, "speed", 0.0) or 0.0) <= PASS_STILL_MPS or getattr(obj, "stationary", False):
+            continue
+        x, y = body_centre(obj)
+        if x <= 0.0:
+            continue                                  # behind us: not coming at us
+        # how fast it is closing along OUR heading, plus our own speed
+        along = (float(getattr(obj, "vx_world", 0.0) or 0.0) * c
+                 + float(getattr(obj, "vy_world", 0.0) or 0.0) * s)
+        closing = -along + max(0.0, float(ego_speed_mps or 0.0))
+        if along >= -0.3 or closing < ONCOMING_MIN_CLOSING:
+            continue                                  # going our way, or not closing
+        meets_in = x / closing
+        if meets_in > ONCOMING_LOOK_S:
+            continue
+        half = 0.5 * float(getattr(obj, "width_m", 0.0) or 0.0) or obstacle_radius_m(obj)
+        clearance = abs(y) - (half + ours_across)
+        if clearance >= ONCOMING_KEEP_M:
+            continue
+        kind = getattr(getattr(obj, "object_type", None), "value", "thing")
+        why = (f"{kind} coming the other way {x:.0f} m ahead meets us in {meets_in:.1f} s with "
+               f"{clearance:.2f} m between the two bodies"
+               + (f" (we are {math.degrees(off):.0f} deg across the road)" if off > 0.09 else ""))
+        if worst is None or meets_in < worst[1]:
+            worst = (why, meets_in, clearance)
+    return worst
+
+
+#: Pulling over to park is a move sideways, and until 2026-09-14 nothing watched the side it
+#: moved into. The spot and the way in are checked against things STANDING there; a vehicle
+#: alongside, or one that has not moved yet, is invisible to that. Live that day a parked VW
+#: went from a standstill to 3.9 m/s beside a van that was half-way into its pull-in and hit
+#: it, with 0.31 m of air between the two bodies.
+PULL_IN_SIDE_BAND_M = (0.6, 4.5)     # from just outside our own body to a lane over
+PULL_IN_SIDE_AHEAD_M = 14.0
+PULL_IN_SIDE_BEHIND_M = 12.0
+
+
+def pull_in_side_blocker(objects, side: int, ego_yaw: float, swept_half_width_m: float):
+    """Something MOVING on the side the van is pulling over into, or None when there is not.
+
+    `side` is +1 for the van's right, -1 for its left -- the side the spot lies on. Only moving
+    road users: anything standing there is the swept path's business (RoutePlanner.
+    pull_in_blocker), which measures the body the van would touch. This is the other question,
+    the one a driver asks over their shoulder before pulling in.
+    """
+    from .prediction import could_use_a_road
+    lo, hi = PULL_IN_SIDE_BAND_M
+    for obj in objects or []:
+        if not could_use_a_road(obj):
+            continue
+        if float(getattr(obj, "speed", 0.0) or 0.0) <= PASS_STILL_MPS or getattr(obj, "stationary", False):
+            continue
+        x, y = body_centre(obj)
+        on_that_side = (y if side > 0 else -y)
+        if not (lo < on_that_side < hi):
+            continue
+        if not (-PULL_IN_SIDE_BEHIND_M < x < PULL_IN_SIDE_AHEAD_M):
+            continue
+        kind = getattr(getattr(obj, "object_type", None), "value", "thing")
+        half = 0.5 * float(getattr(obj, "width_m", 0.0) or 0.0) or obstacle_radius_m(obj)
+        gap = on_that_side - (half + float(swept_half_width_m))
+        where = "coming up" if x < -1.0 else ("alongside" if x < 2.0 else "ahead")
+        return (f"{kind} {where} on the {'right' if side > 0 else 'left'}, "
+                f"{abs(x):.0f} m away with {gap:.2f} m between the two bodies")
+    return None
+
+
 def pass_options(lane_width_m: float, van_half_width_m: float, full_shift_m: float):
     """The ways round something in the lane, safest first: (how far over, does it stay in our
     lane, may it use the hard shoulder). Positive is to the LEFT.

@@ -248,9 +248,20 @@ class CarlaVehicleAdapter(VehicleInterface):
 
         self._autonomy_state = AutonomyState.AUTONOMOUS
 
-        # Disable CARLA's built-in autopilot.
-        # Warp software will provide the commands.
-        self.vehicle.set_autopilot(False)
+        # Disable CARLA's built-in autopilot. Warp software will provide the commands.
+        #
+        # This talks to the simulator's traffic manager, which is busy whenever there is other
+        # traffic about, and it can time out: live on 2026-09-14, with ten cars driving, it
+        # raised "rpc::timeout ... unregister_vehicle" straight out of api_start_mission. The
+        # mission then never started, the stack was left half-way in "planning", and every
+        # later mission was refused as "busy" until it was restarted. The van does not need
+        # this call to succeed -- it is only telling the simulator to stop steering a vehicle
+        # it is not steering -- so a simulator hiccup here must not take the mission with it.
+        try:
+            self.vehicle.set_autopilot(False)
+        except Exception as e:
+            print(f"[CarlaVehicleAdapter] could not switch CARLA's autopilot off ({e}) — "
+                  f"carrying on: our commands are what drive the van")
 
         print(
             "[CarlaVehicleAdapter] "

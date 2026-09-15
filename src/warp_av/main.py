@@ -45,7 +45,7 @@ from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASON
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
                               nothing_is_standing_there, pass_refused, pass_options,
                               what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M,
-                              lane_change_blocker)
+                              lane_change_blocker, oncoming_conflict, pull_in_side_blocker)
 from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
                                    SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP,
                                    GROUND_SEEN_FREE, GROUND_BLOCKED, REROUTED, NO_WAY_ROUND,
@@ -275,6 +275,10 @@ class WarpAV:
         # would drive, aiming at the route the way it does, with the speed the behaviour asked
         # for. Built at the end of every tick; the off-route body sweep reads it on the next.
         self._trajectory = None
+        #: True while the van is getting back to its line: it eases off until it is there
+        self._recovering = False
+        #: since when the van has been standing with part of itself over the lane line
+        self._askew_since = None
         self._tick_count = 0
         self._loop_hz = None          # measured decisions per second (EMA), exported to /api/state
         self._tick_ms = 0.0           # measured work per tick (EMA)
@@ -567,6 +571,76 @@ class WarpAV:
         half = self.footprint_blocking.footprint.swept_half_width
         counts = grid.strip_ahead(-(rear + self.REVERSE_LOOK_M), -(rear + 0.2), half)
         return what_the_ground_says(counts) == CLEAR
+
+    def _off_the_lane_centre(self, pose):
+        """How far the van's middle sits from the centre of the lane under it, how wide that
+        lane is, and how far the van is POINTING ACROSS it -- (offset, width, off-axis radians),
+        or None when the map has nothing to say. Positive offset is to the van's RIGHT.
+
+        The angle matters as much as the offset: a van 5.92 m long, angled 15 degrees, reaches
+        2.1 m to its side, not the 1.29 m of its half width (see planner.oncoming_conflict)."""
+        try:
+            wp = self.vehicle_adapter.get_map().get_waypoint(
+                carla.Location(x=pose.x, y=pose.y, z=0.3), lane_type=carla.LaneType.Driving)
+            if wp is None:
+                return None
+            t = wp.transform
+            dx, dy = pose.x - t.location.x, pose.y - t.location.y
+            h = math.radians(t.rotation.yaw)
+            return (-dx * math.sin(h) + dy * math.cos(h), float(wp.lane_width or 3.5),
+                    abs((pose.yaw - h + math.pi) % (2 * math.pi) - math.pi))
+        except Exception:
+            return None
+
+    def _maybe_unstick(self, pose, behavior_output):
+        """Stopped a long time with part of the body over the lane line: back up a little and
+        straighten, so the van is not left sticking into the next lane.
+
+        After being hit on 2026-09-14 it stood 126 s at 1.35 m off centre and 36 degrees across
+        the road, saying "replan or operator action required", until the run ended -- a parked
+        obstruction in a live lane. Backing out is already how it leaves a spot it cannot
+        reach; this is the same move for the same reason, and it refuses on the same evidence
+        (the laser must have seen the ground behind it clear).
+        """
+        # Whenever the van is STANDING with part of itself over the line -- not only when it
+        # is blocked. Live on 2026-09-14 it sat 0.88 m off its line at a standstill, held by
+        # the lane-change "waiting for a gap" rule while it was still `following_route`, and a
+        # car came past 5 cm from its flank. The old gate looked at the behaviour state and
+        # never considered that one. What matters is that the van is not moving and is in the
+        # way, whatever it calls what it is doing.
+        #
+        # Never at a light, a junction, a safety stop or mid-pull-in: those are places it is
+        # meant to be standing, and backing up there is its own hazard.
+        standing_on_purpose = (DrivingBehavior.STOPPED_RED_LIGHT, DrivingBehavior.WAITING_AT_JUNCTION,
+                               DrivingBehavior.STOPPED_SAFETY, DrivingBehavior.STOPPED_ESTOP,
+                               DrivingBehavior.STOPPED_PEDESTRIAN, DrivingBehavior.PARKING,
+                               DrivingBehavior.MISSION_COMPLETE, DrivingBehavior.NO_MISSION)
+        if (self._overtake_point is not None or getattr(self, "_reversing", None) is not None
+                or behavior_output.behavior in standing_on_purpose
+                or float(getattr(pose, "speed", 0.0) or 0.0) > 0.3):
+            self._askew_since = None
+            return
+        where = self._off_the_lane_centre(pose)
+        if where is None:
+            self._askew_since = None
+            return
+        off, width, _across = where
+        over_edge = abs(off) + self.footprint_blocking.footprint.half_width - width / 2.0
+        if over_edge < self.UNSTICK_OVER_EDGE_M:
+            self._askew_since = None
+            return
+        now = time.time()
+        if getattr(self, "_askew_since", None) is None:
+            self._askew_since = now
+            return
+        if now - self._askew_since < self.UNSTICK_AFTER_S:
+            return
+        if now - getattr(self, "_unstick_at", 0.0) < 30.0:
+            return                      # one try, then leave it alone for a while
+        self._unstick_at = now
+        self._askew_since = None
+        self._start_backing_out(pose, f"stopped with {over_edge:.2f} m of the van over the lane "
+                                      f"line — backing up to straighten")
 
     def _start_backing_out(self, pose, why):
         """Begin a short straight reverse, if the ground behind allows it. True if begun."""
@@ -1084,6 +1158,10 @@ class WarpAV:
             self._maybe_give_up_on_the_spot(perception, behavior_output, dest_dist, pose)
         except Exception as e:
             print(f"[Parking] give-up check failed: {e}")
+        try:
+            self._maybe_unstick(pose, behavior_output)
+        except Exception as e:
+            print(f"[Reverse] unstick check failed: {e}")
 
         # Re-check slot occupancy once the destination is within 30 m, not
         # only when the parking behaviour begins: by then the van was already
@@ -1199,6 +1277,59 @@ class WarpAV:
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         _phase("behaviour")
 
+        # Pulling over is a move sideways: look over that shoulder first (2026-09-14).
+        self._pull_in_side = None
+        if (behavior_output.behavior == DrivingBehavior.PARKING
+                and not behavior_output.should_stop and getattr(self, "_parking_spot", None)):
+            try:
+                sp = self._parking_spot
+                dx, dy = float(sp["x"]) - pose.x, float(sp["y"]) - pose.y
+                side_y = -dx * math.sin(pose.yaw) + dy * math.cos(pose.yaw)
+                side = 1 if side_y > 0.2 else (-1 if side_y < -0.2 else 0)
+                beside = (pull_in_side_blocker(perception.objects, side, pose.yaw,
+                                               self.footprint_blocking.footprint.swept_half_width)
+                          if side else None)
+            except Exception:
+                beside = None
+            if beside is not None:
+                self._pull_in_side = beside
+                behavior_output.should_stop = True
+                behavior_output.desired_speed_mps = 0.0
+                behavior_output.reason = f"Waiting before pulling in — {beside}"
+                if time.time() - getattr(self, "_pull_in_side_at", 0.0) > 3.0:
+                    self._pull_in_side_at = time.time()
+                    self._note_move(SPOT_CHOSEN, f"holding before the pull-in: {beside}")
+                    self.logger.log_event("pull_in_waiting", beside)
+
+        # Something coming the other way that our own body would meet (planner.oncoming_conflict).
+        # The corridor check only ever looks in OUR lane, which is right while the van stays in
+        # it -- and nothing asked whether it still was. On 2026-09-14 an ambulance closed
+        # head-on from 58 m to 5.7 m at 8 m/s while the planner said "clear, 999 m".
+        self._oncoming = None
+        try:
+            lane_now = self._off_the_lane_centre(pose)
+            met = oncoming_conflict(perception.objects,
+                                    self.footprint_blocking.footprint.swept_half_width,
+                                    pose.yaw, pose.speed,
+                                    swept_half_length_m=self.footprint_blocking.footprint.swept_half_length,
+                                    off_axis_rad=(lane_now[2] if lane_now else 0.0))
+        except Exception:
+            met = None
+        if met is not None:
+            why, meets_in, clearance = met
+            # Recorded whether or not anything can be done about it: a van already standing
+            # still cannot slow down, and "it passed me by 5 cm" is exactly the thing that
+            # must show up in the record afterwards (2026-09-14).
+            self._oncoming = {"why": why, "meets_in_s": round(meets_in, 1),
+                              "clearance_m": round(clearance, 2)}
+            if not behavior_output.should_stop and behavior_output.desired_speed_mps > 0.0:
+                if behavior_output.desired_speed_mps > self.ONCOMING_CRAWL_MPS:
+                    behavior_output.desired_speed_mps = self.ONCOMING_CRAWL_MPS
+                    behavior_output.reason += f" | {why} — crawling until it is past"
+            if time.time() - getattr(self, "_oncoming_at", 0.0) > 3.0:
+                self._oncoming_at = time.time()
+                self.logger.log_event("oncoming", why)
+
         # Never overrides stops; only lowers a positive desired speed.
         curve_cap = None
         if self._route and not behavior_output.should_stop and behavior_output.desired_speed_mps > 0.5:
@@ -1212,16 +1343,39 @@ class WarpAV:
         # travel, clamped 5–13 m). A fixed 5 m aim point caused weaving at speed.
         target_x, target_y = pose.x + math.cos(pose.yaw) * 10, pose.y + math.sin(pose.yaw) * 10
         cross_track = self.planner.signed_cross_track(self._route, pose.x, pose.y) if self._route else 0.0
+        # Off the line: come back gently. Never overrides a stop, only lowers the speed, and it
+        # is the other half of the aim-point rule below (2026-09-14). Not while passing: a pass
+        # is off the line on purpose and its route has already been rewritten.
+        #
+        # It holds until the van is actually BACK (RECOVER_BACK_M), not until it is merely
+        # nearer. Lifting it at the half-way point let the van accelerate through the middle of
+        # its own correction, which is how 0.99 m to the right became 1.35 m to the left.
+        if self._overtake_point is not None or not self._route:
+            self._recovering = False
+        elif abs(cross_track) > self.RECOVER_OFF_LINE_M:
+            self._recovering = True
+        elif abs(cross_track) < self.RECOVER_BACK_M:
+            self._recovering = False
+        if (self._recovering and not behavior_output.should_stop
+                and behavior_output.desired_speed_mps > self.RECOVER_SPEED_MPS):
+            behavior_output.desired_speed_mps = self.RECOVER_SPEED_MPS
+            behavior_output.reason += (f" | {abs(cross_track):.1f} m off the line — easing to "
+                                       f"{self.RECOVER_SPEED_MPS:.1f} m/s to come back")
         if self._route:
             lookahead = max(5.0, min(13.0, 1.6 * pose.speed))
             # In/near a bend, aim closer so the van follows the arc instead of
             # cutting across it (kerb/divider clipping fix).
             if curve_cap is not None and curve_cap < self.behavior.cruise_speed - 0.5:
                 lookahead = min(lookahead, 5.5)
-            # Off the lane centre by more than a metre (post-corner drift, lane
-            # change): aim closer so it gets back into its lane NOW instead of
-            # sliding diagonally between lanes for tens of metres.
-            if abs(cross_track) > 1.0:
+            # Off the lane centre by more than a metre (post-corner drift, lane change): aim
+            # closer so it gets back into its lane instead of sliding diagonally between lanes
+            # for tens of metres -- but only at the speeds where that is stable.
+            #
+            # A closer aim point is a HARDER correction, and asking for a harder correction at
+            # cruise is what made the van swing 2.3 m across its lane in 1.5 s on 2026-09-14
+            # and meet an ambulance coming the other way. Above RECOVER_ABOVE_MPS the answer is
+            # to slow down and come back gently, not to yank the wheel: see the cap below.
+            if getattr(self, "_recovering", False) and pose.speed <= self.RECOVER_ABOVE_MPS:
                 lookahead = min(lookahead, 6.0)
             # Terminal parking precision: with the 5 m aim floor the van aims
             # past the spot for the whole straight-in and carries ~0.2 m of
@@ -1550,6 +1704,8 @@ class WarpAV:
             "parking_slots": getattr(self, "_parking_slots", None),
             "traffic": {"vehicles": len(self._traffic_vehicles), "walkers": len(self._traffic_walkers),
                         "parked_cars": len(getattr(self, "_parked_cars", []))},
+            "oncoming": getattr(self, "_oncoming", None),
+            "pull_in_side": getattr(self, "_pull_in_side", None),
             "signal_ahead": (self._signal_ahead.as_dict() if self._signal_ahead is not None else None),
             "road_sign": ({"kind": sign_kind, "to_line_m": round(sign_m, 1), "at": sign_at}
                           if sign_kind is not None and sign_m is not None else None),
@@ -2631,6 +2787,27 @@ class WarpAV:
         except Exception:
             return False
 
+    #: A way round is only driven over ground the laser has SEEN empty: no solid squares at
+    #: all, and at least this much of it actually seen (the rest unseen is not free).
+    WAY_ROUND_SEEN_SHARE = 0.85
+
+    def _way_round_is_seen_free(self, over_m: float, to_m: float) -> bool:
+        """Has the laser seen the ground a way round would drive over, and was it empty?
+
+        Asked only when the thing in the way is solid squares with nothing tracked on them --
+        there is no body to slide past, so the ground itself is the evidence (2026-09-14)."""
+        grid = getattr(self.perception, "grid", None)
+        if grid is None or not getattr(grid, "updated", False):
+            return False
+        half = self.footprint_blocking.footprint.swept_half_width
+        counts = grid.strip_ahead(self.behavior.front_offset_m, max(to_m, self.behavior.front_offset_m + 6.0),
+                                  half, offset_m=-float(over_m))   # + over_m is LEFT, the grid is +y right
+        if counts is None:
+            return False
+        free, blocked, unseen = counts
+        total = free + blocked + unseen
+        return bool(total and blocked == 0 and free >= self.WAY_ROUND_SEEN_SHARE * total)
+
     def _lane_width(self, pose, fallback_m=3.5):
         """How wide the lane under the van is -- what says whether there is room to squeeze
         past something inside it (planner.pass_options)."""
@@ -2651,6 +2828,25 @@ class WarpAV:
     OVERTAKE_STATES = (DrivingBehavior.STOPPED_VEHICLE, DrivingBehavior.STOPPED_OBSTACLE,
                        DrivingBehavior.STOPPED_BLOCKED)
     OVERTAKE_AFTER_S = 10.0
+
+    #: Getting back to the lane centre: above this speed the van eases off rather than
+    #: steering harder, and while it is this far off the line it may not go faster than
+    #: RECOVER_SPEED_MPS. A van correcting 1 m of drift at 4.8 m/s crossed the centre line.
+    #: Something coming the other way that our body would meet: crawl until it is past. Not a
+    #: stop -- a stop zeroes the steering, and what the van needs is to keep coming back to its
+    #: own side of the road while it slows (2026-09-14).
+    ONCOMING_CRAWL_MPS = 1.0
+
+    #: Stuck across the lane line: after this long, back up a little and straighten. The van
+    #: sat 126 s at 1.35 m off centre and 36 degrees across the road after being hit, saying
+    #: "replan or operator action required", until the run ended.
+    UNSTICK_AFTER_S = 20.0
+    UNSTICK_OVER_EDGE_M = 0.15
+
+    RECOVER_ABOVE_MPS = 2.5
+    RECOVER_OFF_LINE_M = 0.8      # this far off the line and the van is "coming back"
+    RECOVER_BACK_M = 0.3          # ...and it is not done until it is this close to it again
+    RECOVER_SPEED_MPS = 2.5
 
     def _maybe_overtake(self, pose, perception, behavior_output, junction_ahead):
         """Anything that stays dead in our lane for 10 s on an open straight gets passed:
@@ -2695,12 +2891,12 @@ class WarpAV:
         if why_not is not None:
             waiting(why_not)
             return
-        if getattr(self, "_ground_block", None):
-            # the laser's squares, with nothing tracked on them: there is no measured body to
-            # slide the van's own past, so there is no way to say a way round is clear (P2)
-            waiting("solid ground squares ahead that nothing is tracked on — not going round "
-                    "what cannot be measured")
-            return
+        # Solid squares ahead with nothing tracked on them (P2). There is no measured body to
+        # slide the van's own past -- but the ground a way round would take CAN be measured,
+        # and that is the question that matters. Until 2026-09-14 this refused outright, and
+        # the van sat behind such things for 88 s of one seven-minute drive, saying "not going
+        # round what cannot be measured" every ten seconds until the run ended.
+        ground_unmeasured = bool(getattr(self, "_ground_block", None))
         # ...then the way round itself: the SMALLEST one that works. A nudge inside our own
         # lane first, either way round, then a whole lane -- the one on the RIGHT first, where
         # it runs our way, before borrowing the one on the left (planner.pass_options).
@@ -2720,6 +2916,11 @@ class WarpAV:
                                    side=(1 if over_m < 0 else -1))
             if why is not None:
                 refused = why
+                continue
+            if ground_unmeasured and not self._way_round_is_seen_free(over_m, back_in_m):
+                refused = (f"{abs(over_m):.2f} m over to the {'left' if over_m > 0 else 'right'}: "
+                           f"the laser has not seen that ground empty, and the thing in the way "
+                           f"is not measured either")
                 continue
             if on_shoulder:
                 lane_ok = self._shoulder_ok
@@ -3042,8 +3243,12 @@ class WarpAV:
         waits there SPOT_WAIT_S, then chooses another -- not being able to confirm a spot is
         not permission to drive into it."""
         sp = getattr(self, "_parking_spot", None)
-        if (not sp or sp.get("kind") not in ("slot", "bay") or sp.get("confirmed")
-                or dest_dist is None or dest_dist > SPOT_CONFIRM_FROM_M):
+        if not sp or dest_dist is None or dest_dist > SPOT_CONFIRM_FROM_M:
+            return
+        if sp.get("kind") == "kerb":
+            self._check_the_kerb_is_empty(sp, pose)
+            return
+        if sp.get("kind") not in ("slot", "bay") or sp.get("confirmed"):
             return
         area = self._pull_in_area(sp)
         view = self._spot_view(area, pose)
@@ -3117,6 +3322,42 @@ class WarpAV:
         behavior_output.reason = "Parking — checking the spot is free before turning in"
         behavior_output.should_stop = True
         behavior_output.desired_speed_mps = 0.0
+
+    #: Two looks in a row before the van gives up a kerbside spot: one bad frame is not a car.
+    KERB_TAKEN_LOOKS = 2
+
+    def _check_the_kerb_is_empty(self, sp, pose):
+        """Is something already standing in the kerbside spot the van means to stop at?
+
+        The kerbside spot is the fallback when no bay will do, and until 2026-09-14 nothing
+        ever looked at it: the laser check ran for a slot or a bay and returned at once for
+        anything else, so the van drove to a piece of kerb and found out what was there by
+        arriving. Rajat watched it aim for an occupied one.
+
+        Only TAKEN moves it on. "Unseen" is left alone on purpose -- the van comes along the
+        lane with the kerb off to one side, so unseen is the ordinary answer there, and
+        refusing to park on it would strand the van in the driving lane, which is worse than
+        anything this is guarding against.
+        """
+        if self.perception_mode != "camera_lidar" or pose is None:
+            return
+        half_l = self.footprint_blocking.footprint.half_length + 0.5
+        half_w = self.footprint_blocking.footprint.half_width + 0.2
+        area = {"x": sp["x"], "y": sp["y"], "yaw": sp.get("yaw", 0.0),
+                "length": 2 * half_l, "width": 2 * half_w}
+        view = self._spot_view(area, pose)
+        sp["seen"] = view
+        if view != "taken":
+            sp["taken_looks"] = 0
+            return
+        sp["taken_looks"] = sp.get("taken_looks", 0) + 1
+        if sp["taken_looks"] < self.KERB_TAKEN_LOOKS:
+            return
+        self.logger.log_event("parking_kerb_taken",
+                              f"the laser sees something in the kerbside spot at "
+                              f"({sp['x']:.1f}, {sp['y']:.1f})")
+        print("[Parking] something is already in the kerbside spot — choosing another")
+        self._rechoose_parking(pose, "the laser sees something already in the kerbside spot")
 
     def _pull_in_area(self, sp):
         """The spot AND the stretch of strip the van sweeps while pulling in -- from where its
