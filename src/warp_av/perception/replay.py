@@ -55,7 +55,17 @@ GROUND_TAGS = {0, 1, 2, 10, 24, 25}   # unlabeled, road, sidewalk, terrain, road
 OBJECT_TAGS = (12, 13, 14, 15, 16, 18, 19, 20, 21)   # people, vehicles, props
 MIN_VISIBLE_POINTS = 3
 LIDAR_HEIGHT_M = 2.5
-VEHICLE_NAMES = {"model3", "tesla", "audi", "mercedes", "sprinter", "cybertruck", "mkz"}
+# What the scorer expects the camera to call a placed object. It used to be a hand-kept list
+# of model names, and the moment a fixture used a model nobody had added -- a Nissan Patrol, a
+# Carlacola truck (town10_two_parked, 2026-09-15) -- the scorer expected "obstacle" and marked
+# the camera wrong for correctly saying "vehicle". CARLA's blueprint already says which it is.
+def expected_type_for(blueprint: str) -> str:
+    """What a placed object should be called, from CARLA's own blueprint id."""
+    if blueprint.startswith("walker."):
+        return "pedestrian"
+    if blueprint.startswith("vehicle."):
+        return "vehicle"
+    return "obstacle"
 MATCH_SLACK_M = 1.0               # how far outside its real footprint a report still counts
 GRAB_RADIUS_M = 2.0               # labelled points this far from a placed object belong to it
 BANDS = ((0.0, 10.0), (10.0, 20.0), (20.0, 35.0))
@@ -136,7 +146,8 @@ class ScriptedCamera:
             return []
         out = []
         for t in self.targets:
-            kind = PERSON_CLASS if t.name.startswith("walker") else (2 if t.name in VEHICLE_NAMES else None)
+            kind = (PERSON_CLASS if t.expected_type == "pedestrian"
+                    else 2 if t.expected_type == "vehicle" else None)
             if kind is None or t.true_length_m <= 0.0:
                 continue
             box = self.box_for(t)
@@ -605,8 +616,7 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
         if any(t.name == label for t in targets):
             label = f"{label}_{sum(t.name.startswith(label) for t in targets) + 1}"
         tl, tw, th, tyaw = carla_footprint(o, van)
-        expected = ("pedestrian" if label.startswith("walker")
-                    else "vehicle" if label in VEHICLE_NAMES else "obstacle")
+        expected = expected_type_for(o["blueprint"])
         targets.append(ObjectScore(label, ox, oy, math.hypot(ox, oy), object_reach(o),
                                    size_m=max(0.5, math.hypot(ext[0], ext[1])),
                                    true_length_m=tl, true_width_m=tw, true_height_m=th, true_yaw_deg=tyaw,
