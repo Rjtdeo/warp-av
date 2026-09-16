@@ -38,14 +38,24 @@ from typing import Optional
 
 from .localization import Pose, PoseCovariance
 
-#: Drift growth per metre travelled and per second elapsed, as VARIANCE (m^2 and rad^2).
-#: These are MEASURED in L2, not guessed: a dead reckoner's error grows roughly with distance
-#: (heading error turns into sideways error the further you go) and with time (gyro bias
-#: integrates). Until the live runs have been scored these stay at zero, which publishes an
-#: honestly empty covariance rather than a made-up one.
-DRIFT_VAR_PER_M = 0.0        # m^2 per metre travelled
-DRIFT_VAR_PER_S = 0.0        # m^2 per second
-YAW_VAR_PER_S = 0.0          # rad^2 per second
+#: How fast this drifts, MEASURED on 2026-09-16 over three scored drives of ~216 m each on
+#: the L0 route (Town10HD, 30/140.3, 150 m along). The error grows in PROPORTION to distance
+#: travelled -- not to its square root -- so it is the standard deviation that is linear in
+#: distance, and the variance that goes as distance squared:
+#:
+#:      run 1   0.80 m over 217 m      0.37 m per 100 m
+#:      run 2   2.43 m over 216 m      1.13 m per 100 m
+#:      run 3   2.53 m over 216 m      1.17 m per 100 m
+#:
+#: The worst of the three is taken, because a covariance that flatters the estimator is worse
+#: than none at all. Heading drifted to 1.66 deg over 217 m at worst, which is where the
+#: yaw term comes from.
+#:
+#: These are three runs on ONE route in ONE town with no wheel slip, no tyre-radius error and
+#: no gyro bias, none of which CARLA simulates. On a real vehicle they will be worse. They are
+#: a starting point for a filter to improve on, not a specification.
+DRIFT_SIGMA_PER_M = 0.0117      # metres of position error per metre travelled (1.17 %)
+YAW_SIGMA_PER_M = 1.33e-4       # radians of heading error per metre (1.66 deg over 217 m)
 
 #: A step longer than this is a stall, a restart or a paused simulator, not motion.
 MAX_STEP_S = 0.5
@@ -146,14 +156,16 @@ class DeadReckoning:
                     cov=self.covariance())
 
     def covariance(self) -> PoseCovariance:
-        """How unsure this estimate is. Grows with distance and time and never shrinks,
-        because nothing here can correct it -- which is exactly what dead reckoning is.
+        """How unsure this estimate is. Grows with distance and NEVER shrinks, because nothing
+        here can correct it -- which is exactly what dead reckoning is.
 
-        Zero while the growth rates are unmeasured: an empty covariance that says so is more
-        use than an invented one that does not.
+        The standard deviation is proportional to distance travelled, so the variance goes as
+        distance squared. That is the shape the L2 runs actually showed; a square-root growth
+        would have flattered it badly over a long drive.
         """
-        var = DRIFT_VAR_PER_M * self.distance_m + DRIFT_VAR_PER_S * self.elapsed_s
-        return PoseCovariance(xx=var, yy=var, yaw=YAW_VAR_PER_S * self.elapsed_s)
+        sigma = DRIFT_SIGMA_PER_M * self.distance_m
+        yaw_sigma = YAW_SIGMA_PER_M * self.distance_m
+        return PoseCovariance(xx=sigma * sigma, yy=sigma * sigma, yaw=yaw_sigma * yaw_sigma)
 
     def error_against(self, truth: Pose) -> dict:
         """How wrong it is, right now, against a pose believed to be true. Scoring only."""

@@ -1600,6 +1600,10 @@ class WarpAV:
         if behavior_output.behavior == DrivingBehavior.MISSION_COMPLETE:
             self.vehicle_adapter.disengage_autonomy()
             self.mission_manager.complete_mission()
+            # The estimate belonged to THAT mission. Keeping it alive would publish a stale
+            # guess beside a van that has since been moved, which is exactly what made the
+            # first L2 scoring run look like a 176 m error when the arithmetic was fine.
+            self.dead_reckoning.forget()
             detail = "Arrived at destination"
             if getattr(self, "_parking_spot", None):
                 sp = self._parking_spot
@@ -2524,6 +2528,7 @@ class WarpAV:
 
     def api_stop_mission(self):
         self._forget_the_manoeuvre()
+        self.dead_reckoning.forget()
         self.behavior.cancel_mission()
         self.vehicle_adapter.disengage_autonomy()
         if self.mission_manager.current_mission:

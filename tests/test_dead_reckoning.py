@@ -229,14 +229,31 @@ def test_yaw_error_is_reported_in_degrees_and_wrapped():
 
 # ---- what it publishes -------------------------------------------------------------------------
 
-def test_the_covariance_is_empty_while_the_drift_rates_are_unmeasured():
-    """L2 measures the drift; until it has, an honestly empty covariance beats an invented
-    one. This test is what will fail, loudly and on purpose, when the rates are filled in."""
+def test_the_covariance_grows_with_distance_at_the_measured_rate():
+    """Set from the L2 runs: 1.17 % of distance travelled, which is the worst of three scored
+    drives. Standard deviation proportional to distance, so variance as distance squared."""
+    from warp_av.localization.dead_reckoning import DRIFT_SIGMA_PER_M
     d = dr()
-    drive(d, 5.0, seconds=1.0, turn_to=0.0)
+    drive(d, 10.0, seconds=10.0, turn_to=0.0)          # 100 m
+    assert d.distance_m == pytest.approx(100.0)
     c = d.pose().cov
-    assert (c.xx, c.yy, c.yaw) == (0.0, 0.0, 0.0)
-    assert c.is_truth is False, "an estimate is never ground truth, even at zero variance"
+    assert c.sigma_x == pytest.approx(DRIFT_SIGMA_PER_M * 100.0), "1.17 m of sigma at 100 m"
+    assert c.is_truth is False, "an estimate is never ground truth"
+
+
+def test_the_uncertainty_is_linear_in_distance_not_in_its_square_root():
+    """The shape matters more than the constant: a square-root growth would say the estimate
+    gets relatively BETTER the further it goes, which is the opposite of what happens."""
+    a, b = dr(), dr()
+    drive(a, 10.0, seconds=10.0, turn_to=0.0)          # 100 m
+    drive(b, 10.0, seconds=20.0, turn_to=0.0)          # 200 m
+    assert b.pose().cov.sigma_x == pytest.approx(2.0 * a.pose().cov.sigma_x, rel=1e-6)
+
+
+def test_an_estimate_that_has_not_moved_claims_no_error_yet():
+    d = dr()
+    assert d.pose().cov.sigma_x == 0.0
+    assert d.pose().cov.is_truth is False
 
 
 def test_the_published_state_says_how_far_and_how_long():
