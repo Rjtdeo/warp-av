@@ -14,9 +14,17 @@ This module glues the deliveries back into whole sweeps:
   * returns off the van's own body (inside the ego box, in the capture
     frame) are dropped first: they move WITH the sensor, so de-skewing
     them as if they were world-fixed would smear them behind a moving van;
-  * every delivery is moved into the WORLD frame using the sensor pose CARLA
-    stamps on it (so a van that moved between frames does not smear a
-    standing object);
+  * every delivery is placed relative to the NEWEST one, so a van that moved
+    between frames does not smear a standing object. Two ways to know that
+    motion (L5):
+      - `motion`: an EgoMotionHistory, which integrates the van's own gyro and
+        wheel speed between the two capture times. Truth-free, and the only
+        mode fit for scan matching -- see localization/ego_motion.py;
+      - `sensor_to_world`: the pose CARLA stamps on the delivery. Exact, and
+        therefore useless to register against: a cloud assembled this way
+        already contains perfect knowledge of the van's motion, so ICP on it
+        would be reading back the simulator's own answer. Kept for A/B scoring
+        against the old behaviour, and for the offline fixtures;
   * the sector the newest delivery re-scanned is removed from the older
     deliveries (azimuth de-duplication), so the sweep holds each direction
     exactly once, whatever the frame rate;
@@ -64,6 +72,8 @@ class LidarSweepAccumulator:
         self.span_s = 0.0
         self.points_in_sweep = 0
         self.dropped_self_returns = 0
+        #: points thrown away because the motion history could not cover their capture time
+        self.dropped_unplaceable = 0
 
     def reset(self) -> None:
         self._frames.clear()
@@ -116,18 +126,25 @@ class LidarSweepAccumulator:
         return (az >= s) | (az <= e)          # the arc wraps through +pi
 
     # ---- main entry -----------------------------------------------------
-    def add(self, points, sensor_to_world, sim_time: float) -> np.ndarray:
+    def add(self, points, sensor_to_world, sim_time: float, motion=None) -> np.ndarray:
         """Add one delivery. `points`: NxK, K >= 4 (x, y, z, intensity, ...) in the sensor
-        frame at capture. `sensor_to_world`: the 4x4 matrix CARLA gives for
-        the sensor's transform at capture (Transform.get_matrix()).
-        `sim_time`: the delivery's simulation timestamp in seconds.
+        frame at capture. `sim_time`: the delivery's simulation timestamp in seconds.
+
+        Give it EITHER `motion` (an EgoMotionHistory -- gyro and wheel speed, truth-free) or
+        `sensor_to_world` (the 4x4 CARLA stamps on the delivery). When `motion` is supplied it
+        wins and the matrix is ignored; deliveries whose motion the history cannot honestly
+        cover are dropped from the sweep rather than placed at a guess, and counted in
+        `dropped_unplaceable`.
+
         Returns the sweep in THIS delivery's sensor frame: the input columns
         followed by one more, t_rel (seconds before the newest delivery)."""
         pts = np.asarray(points, dtype=np.float32)
         pts = pts.reshape(-1, 4) if pts.ndim != 2 or pts.shape[1] < 4 else pts
-        M = np.asarray(sensor_to_world, dtype=np.float64).reshape(4, 4)
-        if not np.isfinite(M).all():
-            raise ValueError("non-finite sensor pose")
+        M = None
+        if motion is None:
+            M = np.asarray(sensor_to_world, dtype=np.float64).reshape(4, 4)
+            if not np.isfinite(M).all():
+                raise ValueError("non-finite sensor pose")
         t = float(sim_time)
         if self._last_time is not None and t < self._last_time - 1e-6:
             self.reset()                       # simulation time went backwards: a reload
@@ -167,14 +184,36 @@ class LidarSweepAccumulator:
                     kept.append(fr)
                 self._frames = kept
 
-        self._frames.append([t, self._apply(M, pts), az])
+        # TRUTH mode stores world-frame points, exactly as before. MOTION mode stores the
+        # points as captured and places them at output time, because the relative transform
+        # is only known once the newest delivery has arrived.
+        self._frames.append([t, (pts if motion is not None else self._apply(M, pts)), az])
 
-        world_all = (self._frames[0][1] if len(self._frames) == 1
-                     else np.concatenate([f[1] for f in self._frames], axis=0))
-        sweep = self._apply(np.linalg.inv(M), world_all)
-        # the age of every point relative to the newest delivery (<= 0 s), as
-        # the last column: a proper tracker and time matching read it later
-        t_rel = np.concatenate([np.full(f[1].shape[0], f[0] - t, dtype=np.float32) for f in self._frames])
+        if motion is not None:
+            kept, ages = [], []
+            for fr in self._frames:
+                if fr[0] >= t - 1e-9:
+                    placed = fr[1]                       # the newest delivery IS the frame
+                else:
+                    T = motion.relative(fr[0], t)
+                    if T is None:
+                        self.dropped_unplaceable += int(fr[1].shape[0])
+                        continue
+                    placed = self._apply(T, fr[1])
+                kept.append(placed)
+                ages.append(np.full(placed.shape[0], fr[0] - t, dtype=np.float32))
+            sweep = (kept[0] if len(kept) == 1
+                     else np.concatenate(kept, axis=0) if kept
+                     else np.empty((0, pts.shape[1]), dtype=np.float32))
+            t_rel = (np.concatenate(ages) if ages else np.zeros(0, dtype=np.float32))
+        else:
+            world_all = (self._frames[0][1] if len(self._frames) == 1
+                         else np.concatenate([f[1] for f in self._frames], axis=0))
+            sweep = self._apply(np.linalg.inv(M), world_all)
+            # the age of every point relative to the newest delivery (<= 0 s), as
+            # the last column: a proper tracker and time matching read it later
+            t_rel = np.concatenate([np.full(f[1].shape[0], f[0] - t, dtype=np.float32)
+                                    for f in self._frames])
         sweep = np.c_[sweep, t_rel]
 
         self.frames_in_sweep = len(self._frames)

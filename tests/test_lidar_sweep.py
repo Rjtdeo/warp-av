@@ -198,6 +198,11 @@ class _FakeDelivery:
 
 def test_adapter_accumulates_in_sweep_mode_and_passes_wedges_through_when_off():
     on = CarlaSensorAdapter(world=None, vehicle=None, full_sweep=True)
+    # L5: the sweep places older wedges from the van's OWN gyro and wheel speed, so a working
+    # IMU is part of the setup now. Standing still, which is what this fixture depicts.
+    for i in range(12):
+        on.motion.add_gyro(9.98 + 0.01 * i, 0.0)
+        on.motion.add_speed(9.98 + 0.01 * i, 0.0)
     got = []
     on.on_lidar(got.append)
     on._on_lidar(_FakeDelivery(ring(-180, 0, 50), pose(), 10.00))
@@ -220,6 +225,7 @@ def test_adapter_accumulates_in_sweep_mode_and_passes_wedges_through_when_off():
 
 def test_adapter_survives_a_bad_delivery_in_sweep_mode():
     on = CarlaSensorAdapter(world=None, vehicle=None, full_sweep=True)
+    on.deskew_mode = "truth"          # this is the TRUTH path's error handling, explicitly
     bad = _FakeDelivery(ring(0, 90, 10), pose(), 1.0)
     bad.transform = object()                                  # no get_matrix
     on._on_lidar(bad)
@@ -291,3 +297,52 @@ def test_setup_sensors_picks_the_sensor_tick_for_the_mode(mode, tick):
     assert lidars[0].attrs["sensor_tick"] == tick
     assert lidars[0].attrs["rotation_frequency"] == "10"
     assert lidars[0].attrs["channels"] == "32" and lidars[0].attrs["points_per_second"] == "150000"
+
+
+# ---- L5: the sweep is assembled from the van's own motion, not the simulator's ------------
+
+def test_motion_mode_never_touches_the_stamped_pose():
+    """The whole point of the phase. Hand it a pose that is WRONG by fifty metres; if the
+    cloud moves at all, the sweep is still reading it."""
+    from warp_av.localization.ego_motion import EgoMotionHistory
+    acc_ok, acc_lying = LidarSweepAccumulator(), LidarSweepAccumulator()
+    h = EgoMotionHistory()
+    for i in range(30):
+        h.add_gyro(9.98 + 0.005 * i, 0.0)
+        h.add_speed(9.98 + 0.005 * i, 6.0)
+    liar = pose(x=50.0, y=-50.0, yaw_deg=90.0)
+    for t, a, b in ((10.00, -180, 0), (10.04, 0, 180)):
+        good = acc_ok.add(ring(a, b, 50), pose(), t, motion=h)
+        bad = acc_lying.add(ring(a, b, 50), liar, t, motion=h)
+    assert good.shape == bad.shape
+    assert np.allclose(good[:, :3], bad[:, :3]), "a wrong pose must change nothing"
+
+
+def test_a_wedge_it_cannot_place_is_dropped_not_guessed():
+    """With no IMU there is no honest way to know how the van turned between deliveries, and
+    placing the old wedge anyway would smear every standing object. Degrade to one wedge."""
+    from warp_av.localization.ego_motion import EgoMotionHistory
+    acc = LidarSweepAccumulator()
+    h = EgoMotionHistory()                                   # nothing fed in
+    acc.add(ring(-180, 0, 50), pose(), 10.00, motion=h)
+    out = acc.add(ring(0, 180, 50), pose(), 10.04, motion=h)
+    assert out.shape[0] == 50, "only the newest delivery survives"
+    assert acc.dropped_unplaceable == 50
+
+
+def test_the_turn_is_taken_out_of_the_older_wedge():
+    """A standing post must land in the same place whichever delivery saw it. Turning 30 deg/s
+    for 0.04 s is 1.2 degrees; at 10 m that is 21 cm, far more than the clustering tolerance."""
+    from warp_av.localization.ego_motion import EgoMotionHistory
+    h = EgoMotionHistory()
+    for i in range(40):
+        h.add_gyro(9.98 + 0.005 * i, math.radians(30.0))
+        h.add_speed(9.98 + 0.005 * i, 0.0)
+    acc = LidarSweepAccumulator()
+    first = acc.add(ring(0, 1, 30, r=10.0), pose(), 10.00, motion=h)   # a post dead ahead
+    as_captured = float(np.mean(np.degrees(np.arctan2(first[:, 1], first[:, 0]))))
+    out = acc.add(ring(-90, -89, 30, r=10.0), pose(), 10.04, motion=h)
+    old = out[out[:, -1] < -1e-6]
+    assert len(old) == 30
+    moved = float(np.mean(np.degrees(np.arctan2(old[:, 1], old[:, 0])))) - as_captured
+    assert abs(moved + 1.2) < 0.05, "the old wedge must swing back by exactly the turn taken"

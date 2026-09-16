@@ -28,8 +28,23 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Callable
 
 from .lidar_sweep import LidarSweepAccumulator
+from ..localization.ego_motion import EgoMotionHistory
 
 LIDAR_ROTATION_HZ = 10.0
+
+
+def lidar_deskew_mode(env=None) -> str:
+    """How the sweep learns what the van did between deliveries (L5).
+
+    "motion" (the default) integrates the van's OWN gyro and wheel speed. "truth" restores the
+    old behaviour of using the pose CARLA stamps on each delivery, which is exact -- and which
+    is precisely why it cannot be used under scan matching: a cloud assembled from truth poses
+    already contains perfect knowledge of the van's motion, so registering against it would
+    hand back the simulator's own answer. Kept for A/B scoring only.
+    """
+    env = os.environ if env is None else env
+    v = str(env.get("WARP_LIDAR_DESKEW", "motion")).strip().lower()
+    return "truth" if v in ("truth", "carla", "gt") else "motion"
 
 
 def lidar_full_sweep_enabled(env=None) -> bool:
@@ -271,6 +286,10 @@ class CarlaSensorAdapter:
         self.lidar_full_sweep = lidar_full_sweep_enabled() if full_sweep is None else bool(full_sweep)
         self._sweep = LidarSweepAccumulator(rotation_hz=LIDAR_ROTATION_HZ) if self.lidar_full_sweep else None
         self.lidar_sweep_errors = 0
+        # L5: the van's own account of how it moved between deliveries. Fed by the gyro below
+        # and by wheel speed from the main loop; never by a pose, a fix or the simulator.
+        self.deskew_mode = lidar_deskew_mode()
+        self.motion = EgoMotionHistory()
         self._lidar_enabled = True
 
         # Latest data (thread-safe via GIL for simple reads)
@@ -497,17 +516,21 @@ class CarlaSensorAdapter:
         matrix = None
         try:
             sim_time = float(scan.timestamp)
-            # The sensor's pose AT CAPTURE, asked of the one pose source. `scan.transform` is
-            # handed over as what the delivery carried: the truth source reads it, and a later
-            # estimator ignores it and looks sim_time up in its own history instead.
+            # Under "truth" de-skew this is the pose CARLA stamped on the delivery. Under
+            # "motion" -- the default since L5 -- the sweep does not use it at all, and it is
+            # read only so the scan can still carry it for scoring and for the offline
+            # fixtures. Nothing that shapes the point cloud reads it.
             matrix = self.pose_source.sensor_to_world(sim_time, scan.transform)
         except Exception:
             pass
         if self._sweep is not None:
             try:
-                if matrix is None or sim_time is None:
-                    raise ValueError("delivery without a usable transform or timestamp")
-                points = self._sweep.add(points, matrix, sim_time)     # Nx6: ..., t_rel appended
+                if sim_time is None:
+                    raise ValueError("delivery without a timestamp")
+                if self.deskew_mode == "truth" and matrix is None:
+                    raise ValueError("delivery without a usable transform")
+                mot = self.motion if self.deskew_mode == "motion" else None
+                points = self._sweep.add(points, matrix, sim_time, motion=mot)   # Nx6: + t_rel
                 frames, span = self._sweep.frames_in_sweep, self._sweep.span_s
             except Exception as e:          # never lose the raw delivery over a bookkeeping error
                 self.lidar_sweep_errors += 1
@@ -555,6 +578,8 @@ class CarlaSensorAdapter:
         try:
             t = float(imu.timestamp)
             self.fusion_q.append(("gyro", t, float(imu.gyroscope.z), 0.0))
+            # the same reading, kept for LiDAR de-skew. GYRO_Z_SIGN was measured in L2-GAP.
+            self.motion.add_gyro(t, GYRO_Z_SIGN * float(imu.gyroscope.z))
             # ...and the heading the compass reports, with OUR noise on it (see the constants
             # above: CARLA does not model compass error, so a raw compass is ground truth).
             sd = self.noise_profile.get("compass_stddev_rad", 0.0) if self.noise_profile else 0.0

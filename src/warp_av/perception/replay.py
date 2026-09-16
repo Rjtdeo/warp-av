@@ -61,6 +61,45 @@ LIDAR_HEIGHT_M = 2.5
 # the camera wrong for correctly saying "vehicle". CARLA's blueprint already says which it is.
 
 
+
+
+def motion_from_fixture(fx, times=None, matrices=None):
+    """An EgoMotionHistory for replaying a fixture through the TRUTH-FREE de-skew (L5).
+
+    The fixtures were recorded before the IMU was part of this path, so they hold poses and no
+    gyro trace. Rather than feed the poses back in -- which would defeat the whole exercise --
+    the yaw RATE and the SCALAR speed are differentiated out of them: exactly the two readings
+    a gyro and a wheel encoder would have produced on that drive. The integrator under test is
+    the real one, and what it receives is rates, never a pose.
+
+    Returns None unless WARP_LIDAR_DESKEW asks for motion mode, so the default replay path is
+    byte-for-byte the one that produced the stored baselines.
+    """
+    from ..adapters.carla_sensor_adapter import lidar_deskew_mode
+    if lidar_deskew_mode() != "motion":
+        return None
+    from ..localization.ego_motion import EgoMotionHistory
+    ts = fx.times if times is None else times
+    ms = fx.matrices if matrices is None else matrices
+    h = EgoMotionHistory(max_age_s=1e9)          # offline: keep the whole drive
+    prev = None
+    for i in range(len(ts)):
+        t = float(ts[i])
+        M = np.asarray(ms[i], dtype=np.float64).reshape(4, 4)
+        yaw = math.atan2(M[1, 0], M[0, 0])
+        if prev is not None:
+            dt = t - prev[0]
+            if dt > 1e-6:
+                dyaw = math.atan2(math.sin(yaw - prev[1]), math.cos(yaw - prev[1]))
+                dist = math.hypot(M[0, 3] - prev[2], M[1, 3] - prev[3])
+                h.add_gyro(prev[0], dyaw / dt)
+                h.add_speed(prev[0], dist / dt)
+        prev = (t, yaw, M[0, 3], M[1, 3])
+    if prev is not None:                          # hold the last rate to the end of the drive
+        h.add_gyro(prev[0], 0.0)
+        h.add_speed(prev[0], 0.0)
+    return h
+
 def expected_type_for(blueprint: str) -> str:
     """What a placed object should be called, from CARLA's own blueprint id."""
     if blueprint.startswith("walker."):
@@ -492,7 +531,8 @@ def lab_sweep(fx: Fixture) -> Optional[np.ndarray]:
     acc = LidarSweepAccumulator()
     sweep = None
     for i in range(len(fx.label_times)):
-        sweep = acc.add(fx.labels[fx.label_index == i], fx.label_matrices[i], float(fx.label_times[i]))
+        sweep = acc.add(fx.labels[fx.label_index == i], fx.label_matrices[i], float(fx.label_times[i]),
+                        motion=motion_from_fixture(fx, fx.label_times, fx.label_matrices))
         if acc.span_s >= 0.09:
             break
     return sweep
@@ -635,12 +675,13 @@ def replay(fx: Fixture, ground_mode: str = "patches", thin: int = 1, detector=No
         walk_xy = lab[tags == 2][:, :2]
 
     acc = LidarSweepAccumulator()
+    _mot = motion_from_fixture(fx)
     result = ReplayResult(fx.name, 0, targets, settings={"ground": ground_mode, "thin": thin})
     last_pub = None
     n_updates = 0
     for i in range(len(fx.times)):
         t = float(fx.times[i])
-        sweep = acc.add(fx.points[fx.index == i], fx.matrices[i], t)
+        sweep = acc.add(fx.points[fx.index == i], fx.matrices[i], t, motion=_mot)
         # the van hands the pipeline whatever the accumulator holds after every delivery and lets
         # the pipeline's own 0.08 s rule decide when to look again: do exactly that
         if sweep is None or len(sweep) == 0:
@@ -746,10 +787,11 @@ def score_grid(fx: Fixture, grid_kwargs: Optional[dict] = None) -> Dict[str, flo
     lab = lab_sweep(fx)
     if lab is None:
         return {}
+    _mot2 = motion_from_fixture(fx)
     acc = LidarSweepAccumulator()
     sweep = None
     for i in range(len(fx.times)):
-        sweep = acc.add(fx.points[fx.index == i], fx.matrices[i], float(fx.times[i]))
+        sweep = acc.add(fx.points[fx.index == i], fx.matrices[i], float(fx.times[i]), motion=_mot2)
         if acc.span_s >= 0.09:
             break
     if sweep is None or not len(sweep):

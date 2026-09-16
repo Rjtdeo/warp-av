@@ -62,6 +62,9 @@ def test_sweep_appends_the_age_of_every_point():
 
 def test_adapter_publishes_six_columns_and_the_sensor_pose():
     on = CarlaSensorAdapter(world=None, vehicle=None, full_sweep=True)
+    for i in range(12):                       # L5: a working IMU, standing still
+        on.motion.add_gyro(19.98 + 0.01 * i, 0.0)
+        on.motion.add_speed(19.98 + 0.01 * i, 0.0)
     m = np.eye(4); m[0, 3] = 12.5; m[1, 3] = -3.0
     on._on_lidar(FakeScan([4, 4, 4], matrix=m, t=20.00))
     on._on_lidar(FakeScan([4, 4, 4], matrix=m, t=20.04))

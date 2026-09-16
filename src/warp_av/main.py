@@ -43,6 +43,7 @@ from .localization.localization import LocalizationSystem
 from .localization.pose_source import CarlaTruthPoseSource
 from .localization.dead_reckoning import DeadReckoning
 from .localization.ekf import LocalizationEKF
+from .localization.lidar_odometry import LidarOdometry
 from .localization.geo import bearing_to_yaw
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
@@ -134,6 +135,11 @@ class WarpAV:
         # The two run together on purpose, so the fusion can be scored against the thing it
         # is supposed to improve on rather than against nothing.
         self.ekf = LocalizationEKF()
+        # L5, scoring only: how the van moved measured against the standing world. It is NOT
+        # fused -- the point of this phase is to find out how good the measurement is on its
+        # own, before any filter interaction can flatter or hide it.
+        self.lidar_odometry = LidarOdometry()
+        self._lidar_odo_t = None
         self._last_yaw_rate = 0.0
 
         print("[Init] Setting up sensors...")
@@ -1045,6 +1051,7 @@ class WarpAV:
         _phase("where am i")
 
         # 2. Perceive
+        self._run_lidar_odometry()          # L5 shadow measurement, before anything reads pose
         perception = self.perception.update()
         _phase("perception")
         # Raw surroundings for the learned parker's feelers (van frame), taken
@@ -1940,6 +1947,8 @@ class WarpAV:
             "dead_reckoning": self._dead_reckoning_state(pose),
             # L3, scoring only: the fused estimate and how far it has wandered.
             "ekf": self._ekf_state(pose),
+            # L5, scoring only: scan-to-scan motion against the standing world. Drives nothing.
+            "lidar_odometry": self._lidar_odometry_state(),
             "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
                             if self.mission_manager.current_mission else None),
         }
@@ -1955,6 +1964,11 @@ class WarpAV:
         if not self.ekf.seeded:
             return
         self.ekf.set_speed(pose.speed, bool(getattr(self, "_reversing", False)), pose.sim_time)
+        # The same scalar, also handed to the LiDAR de-skew (L5). A MAGNITUDE and a gear, not
+        # a velocity vector: the direction of travel is one of the things we are measuring.
+        mot = getattr(self.sensor_adapter, "motion", None)
+        if mot is not None and pose.sim_time is not None:
+            mot.add_speed(pose.sim_time, pose.speed, bool(getattr(self, "_reversing", False)))
         q = getattr(self.sensor_adapter, "fusion_q", None)
         if q is None:
             return
@@ -2007,6 +2021,34 @@ class WarpAV:
             return st
         except Exception:
             return {"seeded": False, "error": "unavailable"}
+
+    def _run_lidar_odometry(self) -> None:
+        """Register the newest sweep against the one before it. Shadow mode.
+
+        Called once per tick from the main loop and guarded on the scan's own SIMULATOR
+        timestamp, so a tick that sees the same sweep twice does not register it against
+        itself and report a spurious zero.
+        """
+        try:
+            scan = getattr(self.sensor_adapter, "latest_lidar", None)
+            if scan is None:
+                return
+            t = getattr(scan, "sim_time", None)
+            pts = getattr(scan, "points", None)
+            if t is None or pts is None or len(pts) == 0:
+                return
+            if self._lidar_odo_t is not None and t <= self._lidar_odo_t:
+                return
+            self._lidar_odo_t = float(t)
+            self.lidar_odometry.update(pts, float(t))
+        except Exception:
+            pass                      # a shadow measurement may never take the van down
+
+    def _lidar_odometry_state(self) -> dict:
+        try:
+            return self.lidar_odometry.state()
+        except Exception:
+            return {"attempts": 0, "error": "unavailable"}
 
     def _lidar_sweep_telemetry(self) -> dict:
         """Perception fix 1: is the LiDAR handing over whole sweeps? One read
