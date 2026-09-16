@@ -234,3 +234,94 @@ def test_the_published_state_counts_what_it_refused():
     assert st["predicts"] == 1 and st["rejected_old"] == 1
     assert st["corrections"] == 0
     assert "sigma_x_m" in st and "sigma_yaw_deg" in st
+
+
+# ---- L4: heading as a measurement, and the low-speed yaw gate ------------------------------
+
+def test_the_compass_makes_the_heading_observable():
+    """Without it, the only evidence about heading is the direction the van appears to have
+    travelled -- which is no evidence at all when it is barely moving."""
+    f = ekf(yaw=0.0, speed=0.0)
+    f.x[2] = math.radians(10.0)                   # pretend the heading has drifted 10 deg
+    before = abs(math.degrees(f.pose().yaw))
+    assert f.correct_heading(0.0, 100.1) is True  # the compass says straight ahead
+    after = abs(math.degrees(f.pose().yaw))
+    assert after < before, "being told the heading must move the estimate towards it"
+    assert f.heading_corrections == 1
+
+
+def test_repeated_headings_converge_and_make_it_surer():
+    f = ekf(yaw=0.0, speed=0.0)
+    f.x[2] = math.radians(10.0)
+    grown = f.pose().cov.sigma_yaw
+    for i in range(60):
+        f.correct_heading(0.0, 100.0 + 0.05 * (i + 1))
+    assert abs(math.degrees(f.pose().yaw)) < 0.5
+    assert f.pose().cov.sigma_yaw < grown
+
+
+def test_the_heading_innovation_is_wrapped():
+    """+179 measured against -179 held is two degrees apart, not three hundred and fifty
+    eight. Unwrapped, this sends the estimate the long way round."""
+    f = ekf(yaw=math.radians(-179.0), speed=0.0)
+    f.correct_heading(math.radians(179.0), 100.1)
+    got = math.degrees(f.pose().yaw)
+    assert got < -178.0 or got > 178.0, f"went the long way round: {got}"
+
+
+def test_a_nonsense_heading_is_refused():
+    f = ekf()
+    assert f.correct_heading(float("nan"), 100.1) is False
+    assert f.heading_corrections == 0
+
+
+def test_below_two_metres_a_second_gnss_moves_x_and_y_but_not_the_heading():
+    """L3's 11.3 degree startup error, prevented. The fix is still used -- it is a good fix --
+    only its indirect pull on the heading is suppressed."""
+    f = ekf(speed=1.0)                            # crawling
+    f.x[0] = 5.0
+    f.x[2] = math.radians(3.0)
+    yaw_before = f.pose().yaw
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    assert f.correct_gnss(lat, lon, 100.1) is True
+    assert f.pose().x < 5.0, "position must still be corrected"
+    assert f.pose().yaw == pytest.approx(yaw_before), "heading must not be rotated"
+    assert f.gnss_yaw_suppressed == 1
+
+
+def test_above_two_metres_a_second_the_normal_coupling_resumes():
+    f = ekf(speed=8.0)
+    f.x[0] = 5.0
+    f.P[0, 2] = f.P[2, 0] = 0.05                  # a real position-heading correlation
+    yaw_before = f.pose().yaw
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    f.correct_gnss(lat, lon, 100.1)
+    assert f.pose().yaw != pytest.approx(yaw_before), "above the gate, GNSS may inform heading"
+    assert f.gnss_yaw_suppressed == 0
+
+
+def test_the_gate_does_not_throw_the_fix_away():
+    """The danger of a clumsy fix would be disabling GNSS at low speed altogether."""
+    f = ekf(speed=0.5)
+    f.x[0] = 5.0
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    for i in range(30):
+        f.correct_gnss(lat, lon, 100.0 + 0.1 * (i + 1))
+    assert f.pose().x == pytest.approx(0.0, abs=0.1), "position still converges while crawling"
+    assert f.corrections == 30
+
+
+def test_the_covariance_stays_sound_with_a_suppressed_gain():
+    """Zeroing a row of K makes the gain sub-optimal, which is fine -- but only because the
+    Joseph form is valid for ANY gain. This checks it really does stay symmetric and positive."""
+    f = ekf(speed=1.0)
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    for i in range(200):
+        t = 100.0 + 0.05 * (i + 1)
+        f.predict_to(t, math.radians(3.0))
+        f.correct_gnss(lat, lon, t)
+    P = f.P
+    for i in range(3):
+        for j in range(3):
+            assert P[i][j] == pytest.approx(P[j][i], rel=1e-9, abs=1e-12)
+        assert P[i][i] > 0.0

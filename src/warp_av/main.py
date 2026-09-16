@@ -43,6 +43,7 @@ from .localization.localization import LocalizationSystem
 from .localization.pose_source import CarlaTruthPoseSource
 from .localization.dead_reckoning import DeadReckoning
 from .localization.ekf import LocalizationEKF
+from .localization.geo import bearing_to_yaw
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
@@ -1964,6 +1965,11 @@ class WarpAV:
             if kind == "gyro":
                 self._last_yaw_rate = a
                 self.ekf.predict_to(t, a)
+            elif kind == "compass":
+                # Which way the van is FACING, which nothing here had ever used. The compass
+                # is north-referenced; geo.bearing_to_yaw applies the measured 90 degrees.
+                self.ekf.predict_to(t, self._last_yaw_rate)
+                self.ekf.correct_heading(bearing_to_yaw(a), t)
             elif kind == "gnss":
                 self.ekf.predict_to(t, self._last_yaw_rate)
                 self.ekf.correct_gnss(a, b, t)

@@ -17,8 +17,10 @@ try:
     import carla
 except ImportError:  # offline replay/tests on a machine without the simulator
     carla = None
+import math
 import numpy as np
 import os
+import random
 import time
 import threading
 from collections import deque
@@ -192,6 +194,23 @@ GNSS_BIAS_M = 0.01
 GYRO_NOISE_RAD_S = 0.002
 GYRO_BIAS_RAD_S = 5e-5
 
+#: HEADING. CARLA's IMU has NO compass noise attribute -- checked, the blueprint exposes only
+#: accel and gyro terms -- so its compass is exact, and feeding it raw would be feeding ground
+#: truth through a third door. The noise below is therefore applied by US, in software, on the
+#: way into the fusion queue. That is the honest way to do it and it is worth being explicit
+#: that it is not CARLA's model.
+#:
+#: The figures describe a BARE MAGNETOMETER in a vehicle, which is the class of sensor CARLA's
+#: compass actually is: a degree of white noise, and a few tenths of a degree of residual
+#: offset left after calibration -- hard and soft iron from the vehicle's own body is what
+#: makes vehicle magnetometers poor. A SIMULATION-DEVELOPMENT ASSUMPTION, not a datasheet.
+#:
+#: The bias matters more than the noise, and deliberately so: white noise averages away over a
+#: few seconds at 20 Hz, a bias does not. Whatever bias is set here becomes the floor under the
+#: heading accuracy, which is the point -- it is what a real magnetometer would do.
+COMPASS_NOISE_DEG = 1.0
+COMPASS_BIAS_DEG = 0.3
+
 #: Metres to degrees, for CARLA's GNSS blueprint, which wants noise in degrees while every
 #: requirement we have is in metres. Measured in L2-GAP (localization/geo.py).
 _DEG_PER_M = 8.983e-06
@@ -205,12 +224,15 @@ def sensor_noise_profile(env=None) -> dict:
         want = "ideal"
     if want == "ideal":
         return {"name": "ideal", "gnss_stddev_deg": 0.0, "gnss_bias_deg": 0.0,
-                "gyro_stddev": 0.0, "gyro_bias": 0.0}
+                "gyro_stddev": 0.0, "gyro_bias": 0.0,
+                "compass_stddev_rad": 0.0, "compass_bias_rad": 0.0}
     return {"name": "noisy_sim",
             "gnss_stddev_deg": GNSS_NOISE_M * _DEG_PER_M,
             "gnss_bias_deg": GNSS_BIAS_M * _DEG_PER_M,
             "gyro_stddev": GYRO_NOISE_RAD_S,
-            "gyro_bias": GYRO_BIAS_RAD_S}
+            "gyro_bias": GYRO_BIAS_RAD_S,
+            "compass_stddev_rad": math.radians(COMPASS_NOISE_DEG),
+            "compass_bias_rad": math.radians(COMPASS_BIAS_DEG)}
 
 
 #: Longer than this between two IMU samples and the gap is a stall, a restart or a dropped
@@ -272,6 +294,11 @@ class CarlaSensorAdapter:
         # Bounded, so a filter that stops draining it cannot grow memory without limit.
         self.fusion_q = deque(maxlen=2000)
         self.fusion_dropped = 0
+        # Established here as well as in setup_sensors, so a callback can never arrive before
+        # the attribute it reads exists.
+        self.noise_profile = sensor_noise_profile()
+        self._compass_bias = 0.0
+        self._compass_rng = random.Random(0x5EED)
 
         # L2: how far the van has turned, summed over every IMU sample (see _integrate_turn).
         self.imu_turn_rad = 0.0
@@ -382,6 +409,11 @@ class CarlaSensorAdapter:
         # --- GNSS (GPS) ---
         prof = sensor_noise_profile()
         self.noise_profile = prof
+        # Drawn once and held for the life of the run: a bias that changed every sample would
+        # be noise, and would average away exactly like the thing it is meant not to be.
+        self._compass_bias = (random.Random(0xC0FFEE).gauss(0.0, prof["compass_bias_rad"])
+                              if prof["compass_bias_rad"] > 0 else 0.0)
+        self._compass_rng = random.Random(0x5EED)
         gnss_bp = bp_lib.find('sensor.other.gnss')
         gnss_bp.set_attribute('sensor_tick', '0.1')
         # L3: a satellite fix the estimator can actually be fitted against (see above).
@@ -521,7 +553,15 @@ class CarlaSensorAdapter:
         self._last_imu_time = time.time()
         self._integrate_turn(imu)
         try:
-            self.fusion_q.append(("gyro", float(imu.timestamp), float(imu.gyroscope.z), 0.0))
+            t = float(imu.timestamp)
+            self.fusion_q.append(("gyro", t, float(imu.gyroscope.z), 0.0))
+            # ...and the heading the compass reports, with OUR noise on it (see the constants
+            # above: CARLA does not model compass error, so a raw compass is ground truth).
+            sd = self.noise_profile.get("compass_stddev_rad", 0.0) if self.noise_profile else 0.0
+            c = float(imu.compass) + self._compass_bias
+            if sd > 0.0:
+                c += self._compass_rng.gauss(0.0, sd)
+            self.fusion_q.append(("compass", t, c, 0.0))
         except Exception:
             self.fusion_dropped += 1
 
