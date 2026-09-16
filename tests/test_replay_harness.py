@@ -37,7 +37,7 @@ def _expected(p: Path) -> dict:
     f = p / "expected.json"
     if not f.exists():
         pytest.skip(f"{p.name}: no expected.json (run tools/replay_score.py --set-baseline)")
-    return json.load(open(f))
+    return json.load(open(f, encoding="utf-8"))
 
 
 @needs_fixtures

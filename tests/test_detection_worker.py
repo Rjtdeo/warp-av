@@ -107,13 +107,13 @@ def test_stale_result_is_withheld_and_errors_are_counted():
 
 
 def test_perception_and_loop_wiring():
-    src = open(PERC).read()
+    src = open(PERC, encoding="utf-8").read()
     assert "if self.yolox_inline:" in src
     assert "self._worker = DetectionWorker(self.detector.detect," in src
     assert "self._worker.latest(self.detection_max_age_s)" in src
     assert "if self._worker.consecutive_errors >= self.detector_fail_after:" in src
     assert "return dataclasses.replace(self._last_output, timestamp=now)" in src
-    main = open(MAIN).read()
+    main = open(MAIN, encoding="utf-8").read()
     assert "sleep_remainder(started, dt)" in main
     assert '"loop_hz": round(self._loop_hz, 1) if self._loop_hz else None' in main
     assert main.count("self.camera_lidar_perception.close()") >= 2    # ground-truth switch and shutdown

@@ -44,7 +44,8 @@ def drive(b, perception, **kw):
 
 def test_every_decision_in_the_code_hands_over_a_reason():
     """No branch may answer without one: the list is only closed if nothing escapes it."""
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "behavior" / "behavior.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "behavior" / "behavior.py").read_text(
+        encoding="utf-8")
     calls = [m for m in re.finditer(r"self\._decide\(", src)]
     assert len(calls) >= 20
     for m in calls:
@@ -148,7 +149,7 @@ def test_the_log_counts_and_reads_back():
 
 def test_the_van_publishes_the_changes():
     """main.py must hand them to the operator page and the mission log, or nobody sees them."""
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert '"behavior_why": behavior_output.why' in src
     assert '"behavior_changes": self.behavior.transitions.as_dict()' in src
     assert 'self.logger.log_event("behaviour", str(change))' in src
@@ -246,7 +247,7 @@ def test_moves_and_states_keep_their_order():
 
 def test_the_van_puts_every_manoeuvre_it_makes_into_the_story():
     """A drive read afterwards must not have holes where the big decisions were."""
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     for move in (T.GO_AROUND_START, T.GO_AROUND_WAIT, T.GO_AROUND_DONE, T.SPOT_CHOSEN,
                  T.SPOT_CONFIRMED, T.SPOT_RECHOSEN, T.SPOT_GIVEN_UP, T.GROUND_SEEN_FREE,
                  T.GROUND_BLOCKED):

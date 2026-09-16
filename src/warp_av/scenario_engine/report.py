@@ -15,7 +15,7 @@ def load_results(results_dir: Path = RESULTS_DIR) -> List[dict]:
     out = []
     for p in sorted(Path(results_dir).glob("WAV-*.json")):
         try:
-            out.append(json.loads(p.read_text()))
+            out.append(json.loads(p.read_text(encoding="utf-8")))
         except Exception:
             pass
     return out

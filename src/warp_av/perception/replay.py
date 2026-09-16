@@ -97,8 +97,8 @@ def load_fixture(path) -> Fixture:
     if not path.is_dir():
         path = FIXTURE_ROOT / str(path)
     d = np.load(path / "deliveries.npz")
-    meta = json.loads((path / "meta.json").read_text())
-    objects = json.loads((path / "objects.json").read_text())
+    meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
+    objects = json.loads((path / "objects.json").read_text(encoding="utf-8"))
     labels = label_index = label_times = label_matrices = None
     if (path / "labels.npz").exists():
         lab = np.load(path / "labels.npz")
@@ -106,7 +106,7 @@ def load_fixture(path) -> Fixture:
         label_times, label_matrices = lab["delivery_time"], lab["delivery_matrix"]
     frames = []
     if (path / "frames.json").exists():
-        for fr in json.loads((path / "frames.json").read_text()):
+        for fr in json.loads((path / "frames.json").read_text(encoding="utf-8")):
             frames.append((float(fr["sim_time"]), path / fr["file"]))
     return Fixture(path.name, path, d["points"], d["delivery_index"], d["delivery_time"], d["delivery_matrix"],
                    labels, label_index, label_times, label_matrices, objects, meta, frames)

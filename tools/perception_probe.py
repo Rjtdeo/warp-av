@@ -400,14 +400,14 @@ def main():
     out_dir = ROOT / "logs"
     out_dir.mkdir(exist_ok=True)
     csv_path = out_dir / f"perception_probe_{stamp}.csv"
-    with open(csv_path, "w", newline="") as f:
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
         wr = csv.DictWriter(f, fieldnames=list(results[0].keys()) if results else ["object"])
         wr.writeheader()
         wr.writerows(results)
     (out_dir / f"perception_probe_{stamp}.json").write_text(json.dumps(
         {"map": cmap.name, "van": [tf0.location.x, tf0.location.y, tf0.rotation.yaw],
          "lateral_m": a.lateral, "sweep": a.sweep, "sensor_tick": a.sensor_tick, "ground": a.ground,
-         "thin": a.thin, "results": results}, indent=1))
+         "thin": a.thin, "results": results}, indent=1), encoding="utf-8")
     print(f"\nwrote {csv_path}")
 
 

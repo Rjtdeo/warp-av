@@ -149,7 +149,7 @@ def test_planner_verdict_is_identical_with_visualisation_on_and_off():
 
 
 def test_main_guards_the_drawing_and_exposes_the_switch():
-    src = open(MAIN).read()
+    src = open(MAIN, encoding="utf-8").read()
     assert "self.footprint_debug = FootprintDebugConfig()" in src
     assert "if self.footprint_debug.enabled" in src
     # the draw block sits after the corridor filter and is wrapped

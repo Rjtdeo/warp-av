@@ -8,13 +8,13 @@ def test_ground_truth_perception_buffer():
     p = PerceptionSystem.__new__(PerceptionSystem)  # skip CARLA constructor
     p.detection_range = 50.0
     # class defaults are set in __init__; read them from source contract instead:
-    src = open("src/warp_av/perception/perception.py").read()
+    src = open("src/warp_av/perception/perception.py", encoding="utf-8").read()
     assert "self.danger_distance = 8.0" in src
     assert "self.path_width = 3.5" in src   # lateral box unchanged on purpose
 
 
 def test_camera_lidar_perception_buffer():
-    src = open("src/warp_av/perception/camera_lidar_perception.py").read()
+    src = open("src/warp_av/perception/camera_lidar_perception.py", encoding="utf-8").read()
     assert "self.danger_distance = 8.0" in src, "camera+lidar perception must match the 8 m stop buffer"
 
 

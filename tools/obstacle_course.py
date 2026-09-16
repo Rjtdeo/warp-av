@@ -256,7 +256,7 @@ def main():
               + f"; closest body gap {d['closest_gap']:.2f} m; stopped for it {d['stopped_s']:.0f} s{swung}")
     print(f"  collisions during the run: {hits}")
     try:
-        with open(log_path, errors="ignore") as fh:
+        with open(log_path, errors="ignore", encoding="utf-8") as fh:
             fh.seek(log_from)
             why_lines = [ln.strip() for ln in fh if "Overtake" in ln or "overtake" in ln]
         if why_lines:
@@ -266,7 +266,7 @@ def main():
     except Exception:
         pass
     if a.out:
-        with open(a.out, "w") as fh:
+        with open(a.out, "w", encoding="utf-8") as fh:
             json.dump({"rows": rows, "things": [{k: v for k, v in d.items() if k != "actor"} for d in dropped]}, fh)
 
 

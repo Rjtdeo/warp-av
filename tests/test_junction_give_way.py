@@ -76,7 +76,8 @@ def test_without_a_heading_the_old_radius_answer_stands():
 
 def test_the_behaviour_hands_the_heading_over():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "behavior" / "behavior.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "behavior" / "behavior.py").read_text(
+        encoding="utf-8")
     assert "ego_yaw_rad=getattr(now.pose" in src
 
 

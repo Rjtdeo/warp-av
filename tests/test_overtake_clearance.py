@@ -210,7 +210,7 @@ def test_an_unnamed_thing_is_only_passed_while_the_camera_works():
 
 def test_the_van_asks_this_before_it_goes_round_anything():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert "why_not = pass_refused(" in src
     i = src.index("OVERTAKE_STATES = ")
     assert "STOPPED_OBSTACLE" in src[i:i + 200] and "STOPPED_BLOCKED" in src[i:i + 200]
@@ -297,7 +297,7 @@ def test_but_something_in_the_middle_of_the_lane_still_needs_a_lane_to_borrow():
 
 def test_the_van_tries_them_in_that_order_and_creeps_while_it_squeezes():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert "for over_m, in_lane, on_shoulder in pass_options(" in src
     assert "SQUEEZE_ABORT_M if (in_lane or on_shoulder) else PASS_ABORT_M" in src
     assert "SQUEEZE_SPEED_MPS if (in_lane or on_shoulder)" in src
@@ -358,7 +358,7 @@ def test_a_lane_going_the_other_way_is_not_ours_to_pass_in():
     gates BOTH whole-lane ways round: a lane whose heading is not roughly ours is not ground the
     van may pass in, whichever side of it that lane lies."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _same_way_lane_ok")
     body = src[i:src.index("def _shoulder_ok", i)]
     assert "lane_type=carla.LaneType.Driving" in body and "project_to_road=False" in body
@@ -371,7 +371,7 @@ def test_neither_whole_lane_may_be_the_oncoming_one():
     car. Now both whole-lane ways round ask _same_way_lane_ok, and only the nudge -- which
     never leaves our own lane -- still asks _lane_ok."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("for over_m, in_lane, on_shoulder in pass_options(")
     loop = src[i:src.index("if taken is None:", i)]
     assert "elif not in_lane:" in loop and "_same_way_lane_ok" in loop

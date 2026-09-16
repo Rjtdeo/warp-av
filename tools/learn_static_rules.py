@@ -211,7 +211,7 @@ def main():
     for kind, p in rules.items():
         print(f"  {kind:10s} " + ", ".join(f"{k}={v:.2f}" for k, v in p.items()))
     if a.out:
-        with open(a.out, "w") as fh:
+        with open(a.out, "w", encoding="utf-8") as fh:
             json.dump(rules, fh, indent=2)
         print(f"-> {a.out}")
     if a.check:

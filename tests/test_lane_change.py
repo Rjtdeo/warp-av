@@ -79,7 +79,8 @@ def test_a_straight_route_is_left_alone():
 
 def test_every_route_the_van_plans_gets_this():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "planning" / "planner.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "planning" / "planner.py").read_text(
+        encoding="utf-8")
     i = src.index("def plan_route(")
     assert "self.smooth_lane_changes(planned)" in src[i:i + 3000]
 
@@ -155,7 +156,7 @@ def test_where_the_next_lane_change_is_and_which_way():
 
 def test_the_van_holds_its_lane_and_says_so():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _wait_for_a_gap")
     body = src[i:i + 3400]
     assert "lane_change_blocker(perception.objects, side, pose.yaw)" in body

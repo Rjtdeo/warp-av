@@ -181,7 +181,7 @@ def main():
         world.apply_settings(original)
 
     if rows:
-        with open(out, "w", newline="") as f:
+        with open(out, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
             w.writeheader(); w.writerows(rows)
         found = [r for r in rows if r["bays_found"] > 0]

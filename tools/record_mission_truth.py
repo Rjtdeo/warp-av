@@ -61,7 +61,7 @@ def paint_lines(cmap, lights):
     town = cmap.name.split("/")[-1].lower()
     table = {}
     try:
-        with open(os.path.join(here, "data", f"{town}_stop_bars.json")) as fh:
+        with open(os.path.join(here, "data", f"{town}_stop_bars.json"), encoding="utf-8") as fh:
             for r in json.load(fh)["lanes"]:
                 table[(r["light"], r["road"], r["lane"])] = r
     except FileNotFoundError:
@@ -249,7 +249,7 @@ def main():
            "parking_spot": spot,
            "to_spot_m": (round(math.hypot(vt.location.x - spot["x"], vt.location.y - spot["y"]), 1)
                          if spot.get("x") is not None else None)}
-    with open(a.out, "w") as fh:
+    with open(a.out, "w", encoding="utf-8") as fh:
         json.dump({"rows": rows, "crossings": crossings, "closest_on_red": closest_on_red,
                    "end": end, "route": route, "dest": [a.dest_x, a.dest_y]}, fh)
 

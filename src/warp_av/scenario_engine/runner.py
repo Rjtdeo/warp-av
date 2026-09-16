@@ -239,8 +239,10 @@ class ScenarioRunner:
             "collisions": meta["collisions"], "started_at": t_start, "elapsed_s": round(meta["elapsed_s"], 2),
             "trace_len": len(trace), "behaviors_timeline": self._timeline(trace, t_start),
         }
-        (self.results_dir / f"{sid}.json").write_text(json.dumps(result, indent=1, default=str))
-        (self.results_dir / f"{sid}.trace.jsonl").write_text("\n".join(json.dumps(s, default=str) for s in trace))
+        (self.results_dir / f"{sid}.json").write_text(
+            json.dumps(result, indent=1, default=str), encoding="utf-8")
+        trace_text = "\n".join(json.dumps(s, default=str) for s in trace)
+        (self.results_dir / f"{sid}.trace.jsonl").write_text(trace_text, encoding="utf-8")
         self.log(f"  => {result['verdict']}: {result['reason']}")
         return result
 

@@ -665,7 +665,7 @@ def main():
         print(f"    {v:4d}  {k}")
     if a.out:
         Path(a.out).write_text(json.dumps({"samples": samples, "mistakes": list(mistakes.values()),
-                                           "beside": list(beside.values())}, indent=1))
+                                           "beside": list(beside.values())}, indent=1), encoding="utf-8")
 
 
 if __name__ == "__main__":

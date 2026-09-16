@@ -17,7 +17,7 @@ import sys
 def load_log(filename):
     records = []
 
-    with open(filename, "r") as file:
+    with open(filename, "r", encoding="utf-8") as file:
         for line_number, line in enumerate(file, start=1):
 
             line = line.strip()

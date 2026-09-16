@@ -231,7 +231,8 @@ def test_the_switch_turns_it_off():
 
 
 def test_perception_hands_the_answer_on():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "perception" / "camera_lidar_perception.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "perception"
+           / "camera_lidar_perception.py").read_text(encoding="utf-8")
     assert "motion_class=tr.motion.state" in src
     assert '"static_shapes": shapes' in src and '"road_gap_fn": gap_fn' in src
 

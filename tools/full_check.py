@@ -379,7 +379,7 @@ def check_drive(scene, report):
     if not result.exists():
         report.add("driving", "it stops for a barrel in its lane", False, "the drive produced no result")
         return
-    data = json.loads(result.read_text())
+    data = json.loads(result.read_text(encoding="utf-8"))
     checks = {c["metric"]: c for c in data.get("checks", [])}
     hit = data["metrics"].get("collision_count", -1)
     gap = checks.get("min_distance_to_actor_m", {}).get("actual")

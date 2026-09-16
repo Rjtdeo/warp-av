@@ -20,8 +20,8 @@ pytestmark = pytest.mark.skipif(not os.path.isdir(FIX), reason="fixture not pres
 
 def load():
     d = np.load(os.path.join(FIX, "deliveries.npz"))
-    meta = json.load(open(os.path.join(FIX, "meta.json")))
-    objects = json.load(open(os.path.join(FIX, "objects.json")))
+    meta = json.load(open(os.path.join(FIX, "meta.json"), encoding="utf-8"))
+    objects = json.load(open(os.path.join(FIX, "objects.json"), encoding="utf-8"))
     return d, meta, objects
 
 

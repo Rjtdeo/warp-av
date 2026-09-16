@@ -18,7 +18,7 @@ def load(dirpath):
     runs = []
     for f in sorted(glob.glob(os.path.join(dirpath, "run_*.json"))):
         try:
-            runs.append(json.load(open(f)))
+            runs.append(json.load(open(f, encoding="utf-8")))
         except Exception:
             pass
     return runs

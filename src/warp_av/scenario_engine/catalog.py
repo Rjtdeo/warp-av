@@ -18,7 +18,7 @@ class Catalog:
         idx_path = self.root / "index.json"
         if not idx_path.exists():
             raise FileNotFoundError(f"{idx_path} missing — run scenarios/generate_catalog.py")
-        self.index = json.loads(idx_path.read_text())
+        self.index = json.loads(idx_path.read_text(encoding="utf-8"))
         self._by_id = {s["id"]: s for s in self.index["scenarios"]}
 
     def __len__(self):
@@ -33,11 +33,11 @@ class Catalog:
             # allow loading by path too
             p = Path(sid)
             if p.exists():
-                s = yaml.safe_load(p.read_text())
+                s = yaml.safe_load(p.read_text(encoding="utf-8"))
                 validate_scenario(s)
                 return s
             raise KeyError(f"unknown scenario {sid}")
-        s = yaml.safe_load((self.root / entry["path"]).read_text())
+        s = yaml.safe_load((self.root / entry["path"]).read_text(encoding="utf-8"))
         validate_scenario(s)
         return s
 

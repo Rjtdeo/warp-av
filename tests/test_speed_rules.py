@@ -71,16 +71,17 @@ def test_easing_off_is_only_for_comfort_slowing():
 
 def test_the_van_eases_off_where_the_command_is_formed_not_in_the_decision():
     """The decision itself is never shaped: what it wanted is what the story records."""
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert "behavior_output.why in EASE_OFF_REASONS" in src
     assert "self._eased_speed - EASE_OFF_MPS" in src
     assert "0.0 if behavior_output.should_stop" in src
-    behaviour = (Path(__file__).parents[1] / "src" / "warp_av" / "behavior" / "behavior.py").read_text()
+    behaviour = (Path(__file__).parents[1] / "src" / "warp_av" / "behavior" / "behavior.py").read_text(
+        encoding="utf-8")
     assert "_eased_speed" not in behaviour.split("EASE_OFF_MPS = ")[1]
 
 
 def test_the_limit_and_the_seen_road_come_from_the_map_and_the_laser():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert 'get_landmarks_of_type(150.0, "274")' in src, "a speed limit is a sign on the map"
     assert "grid.free_distance(0.0" in src
     assert "speed_limit_mps=self._speed_limit_mps(pose)" in src
@@ -180,7 +181,7 @@ def test_a_stop_still_beats_it():
 
 
 def test_the_van_asks_the_laser_kerb_lines_not_the_map():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _road_edge_ahead")
     body = src[i:i + 1200]
     assert 'edges = getattr(self.perception, "road_edges", None)' in body

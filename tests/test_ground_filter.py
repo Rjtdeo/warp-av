@@ -338,7 +338,7 @@ def test_mode_from_env_and_perception_wiring():
     assert ground_filter_mode_from_env({}) == "patches"
     assert ground_filter_mode_from_env({"WARP_GROUND_FILTER": "flat"}) == "flat"
     assert ground_filter_mode_from_env({"WARP_GROUND_FILTER": "nonsense"}) == "patches"
-    src = open(PERC).read()
+    src = open(PERC, encoding="utf-8").read()
     assert 'if self.ground_filter_mode == "patches":' in src
     assert "ground = self.ground_filter.apply(pts)" in src
     assert "flat_cut(pts" in src

@@ -19,7 +19,8 @@ def test_the_map_is_asked_by_making_the_blocked_road_expensive():
     """The road graph CARLA's route search walks is the map's own; a blocked street is one
     edge of it. Made expensive, any other way round wins; still finite, so a street with no
     other way out still plans and the caller can see the answer goes through it anyway."""
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "planning" / "planner.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "planning" / "planner.py").read_text(
+        encoding="utf-8")
     i = src.index("def plan_route_avoiding")
     body = src[i:i + 3000]
     assert "_road_id_to_edge[wp.road_id][wp.section_id][wp.lane_id]" in body
@@ -30,7 +31,7 @@ def test_the_map_is_asked_by_making_the_blocked_road_expensive():
 
 
 def test_the_van_only_asks_when_there_is_somewhere_to_turn_off():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _maybe_reroute")
     body = src[i:i + 9000]
     assert "span = self.planner.junction_span" in body
@@ -50,7 +51,7 @@ def test_the_van_only_asks_when_there_is_somewhere_to_turn_off():
 
 
 def test_a_new_route_is_dressed_for_parking_the_same_way_a_new_mission_is():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert src.count("self._dress_route_for_parking()") >= 2
     i = src.index("def _dress_route_for_parking")
     body = src[i:i + 2500]

@@ -120,7 +120,7 @@ def test_tracker_forgets_before_it_associates():
 
 
 def test_perception_wiring_for_fix3():
-    src = open(PERC).read()
+    src = open(PERC, encoding="utf-8").read()
     # day 5 split this into a loose rule outside the camera's view and a strict one inside
     assert "base_points = 12 if self.thin_step <= 1 else 6" in src
     assert "vehicle_shaped(c, min_points=base_points)" in src

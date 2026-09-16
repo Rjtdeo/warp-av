@@ -240,7 +240,7 @@ def test_the_kerbside_spot_is_checked_before_the_van_drives_to_it():
     kerbside fallback -- the one the van uses when no bay will do -- was never looked at. It
     drove to a piece of kerb and found out what was there by arriving."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _confirm_parking_spot")
     gate = src[i:i + 900]
     assert 'sp.get("kind") == "kerb"' in gate and "_check_the_kerb_is_empty" in gate
@@ -258,7 +258,7 @@ def test_an_unseen_kerb_never_strands_the_van():
     """Unseen is the ordinary answer for a kerb off to one side. Refusing to park on it would
     leave the van standing in the driving lane, which is worse than what this guards against."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     j = src.index("def _check_the_kerb_is_empty")
     body = src[j:src.index("def _pull_in_area", j)]
     assert "_parking_wait_since" not in body, "it must never stop and wait on an unseen kerb"
@@ -319,7 +319,7 @@ def test_something_well_past_us_is_not_beside_us():
 
 def test_the_van_holds_rather_than_creeping_on():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("Pulling over is a move sideways")
     body = src[i:i + 1600]
     assert "pull_in_side_blocker" in body and "should_stop = True" in body

@@ -50,7 +50,7 @@ def test_going_forwards_is_untouched():
 
 
 def test_the_van_only_backs_over_ground_it_has_seen_empty():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _rear_is_clear")
     body = src[i:i + 1200]
     assert "grid.strip_ahead(-(rear + self.REVERSE_LOOK_M)" in body
@@ -58,7 +58,7 @@ def test_the_van_only_backs_over_ground_it_has_seen_empty():
 
 
 def test_it_stops_the_moment_anything_is_wrong():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _keep_backing_out")
     body = src[i:i + 2200]
     assert "gone >= self.REVERSE_MAX_M" in body
@@ -67,7 +67,7 @@ def test_it_stops_the_moment_anything_is_wrong():
 
 
 def test_a_spot_it_cannot_reach_is_backed_out_of_before_the_mission_is_failed():
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _maybe_give_up_on_the_spot")
     body = src[i:i + 4000]
     assert "self._start_backing_out(pose" in body

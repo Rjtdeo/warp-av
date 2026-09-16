@@ -124,7 +124,7 @@ def test_no_map_at_all_changes_nothing():
 def test_the_van_asks_before_it_gives_up_a_parking_spot():
     """main.py must ask this of every corridor block, not only while parking."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("filter_to_route_corridor(")
     assert "_second_opinion_on_the_ground" in src[i:i + 900]
 
@@ -172,7 +172,7 @@ def test_the_van_stops_for_solid_ground_and_only_goes_round_it_over_ground_it_ha
     slide past, true, but the GROUND a way round would drive over can be measured, and that is
     the question that matters."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _second_opinion_on_the_ground")
     body = src[i:i + 3500]
     assert "path.level = PATH_BLOCKED" in body, "the ground block goes on the path record (task 2)"
@@ -204,7 +204,7 @@ def test_a_pass_does_not_outlive_its_mission():
     that asks "am I mid-pass?" kept saying yes -- including the switch that turns off the
     laser's second opinion on the ground. It was off for the rest of the stack's life."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _forget_the_manoeuvre")
     body = src[i:i + 900]
     for field in ("_overtake_point = None", "_overtake_retry_at = 0.0", "_blocked_since = None",

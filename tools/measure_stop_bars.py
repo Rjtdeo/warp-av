@@ -188,7 +188,7 @@ def main():
                     cv2.imwrite(os.path.join(a.pictures, f"stop_bar_{tl.id}_{stop.lane_id}.png"), bgr)
     out = a.out or os.path.join(HERE, "data", f"{town.lower()}_stop_bars.json")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w") as fh:
+    with open(out, "w", encoding="utf-8") as fh:
         json.dump({"town": town, "units": "metres along the lane from CARLA's stop waypoint",
                    "lanes": rows}, fh, indent=1)
     found = sum(1 for r in rows if r["paint_m"] is not None)

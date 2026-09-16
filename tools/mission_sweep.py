@@ -513,7 +513,7 @@ def execute_run(spec, rng, points, out_dir, log):
     t_start = time.time()
     last_reason = None
     fail = None
-    trace = open(trace_path, "w")
+    trace = open(trace_path, "w", encoding="utf-8")
 
     try:
         while True:
@@ -906,7 +906,7 @@ def write_scoreboard(out_dir, results, plan_total, incidents):
         lines.append(f"| {r['run']} | {r['kind']} | {r['weather']} | "
                      f"{'Y' if r['dense'] else ''} | {r['verdict']} | "
                      f"{str(r.get('why', ''))[:110]} |")
-    with open(os.path.join(out_dir, "SCOREBOARD.md"), "w") as f:
+    with open(os.path.join(out_dir, "SCOREBOARD.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
 
@@ -960,7 +960,7 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(os.path.join(out_dir, "frames"), exist_ok=True)
 
-    logf = open(os.path.join(out_dir, "sweep.log"), "a")
+    logf = open(os.path.join(out_dir, "sweep.log"), "a", encoding="utf-8")
 
     def log(msg):
         line = f"[{time.strftime('%H:%M:%S')}] {msg}"
@@ -974,7 +974,7 @@ def main():
     if not a.no_resume:
         for r in sorted(os.listdir(out_dir)):
             if r.startswith("run_") and r.endswith(".json"):
-                with open(os.path.join(out_dir, r)) as f:
+                with open(os.path.join(out_dir, r), encoding="utf-8") as f:
                     old = json.load(f)
                 results.append(old)
                 done.add(old["run"])
@@ -1019,7 +1019,7 @@ def main():
             log(f"  HARNESS ERROR: {e}")
             ensure_stack_up(log)
         results.append(res)
-        with open(os.path.join(out_dir, f"run_{spec['run']:03d}.json"), "w") as f:
+        with open(os.path.join(out_dir, f"run_{spec['run']:03d}.json"), "w", encoding="utf-8") as f:
             json.dump(res, f, indent=1)
         write_scoreboard(out_dir, results, len(plan), incidents)
         log(f"  -> {res['verdict']}: {str(res.get('why'))[:140]}")

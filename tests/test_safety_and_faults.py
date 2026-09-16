@@ -138,7 +138,8 @@ def test_engaging_autonomy_survives_the_traffic_manager_timing_out():
     started, and the stack sat in "planning" refusing every later mission until it was
     restarted. The van does not need that call to succeed."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "adapters" / "carla_vehicle_adapter.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "adapters" / "carla_vehicle_adapter.py").read_text(
+        encoding="utf-8")
     i = src.index("def engage_autonomy")
     body = src[i:src.index("def disengage_autonomy", i)]
     j = body.index("set_autopilot(False)")

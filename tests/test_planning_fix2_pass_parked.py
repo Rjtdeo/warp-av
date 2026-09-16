@@ -169,7 +169,8 @@ def test_the_planner_judges_the_fitted_rectangle_when_there_is_one():
 
 def test_perception_hands_both_on():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "perception" / "camera_lidar_perception.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "perception"
+           / "camera_lidar_perception.py").read_text(encoding="utf-8")
     assert '"yaw_world_deg": float(c.get("yaw_deg", 0.0) or 0.0) + tf.rotation.yaw' in src
     assert "yaw_now = (tr.yaw_world_deg - tf.rotation.yaw + 180.0) % 360.0 - 180.0" in src
     assert "box_dx=ox * cy + oy * sy, box_dy=-ox * sy + oy * cy" in src

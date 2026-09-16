@@ -100,7 +100,7 @@ def test_a_crawl_and_not_a_stop_is_what_it_asks_for():
     """A stop zeroes the steering (VehicleController), and what the van needs while something
     comes the other way is to keep coming back to its own side while it slows."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("met = oncoming_conflict(")
     body = src[i:src.index("curve_cap = None", i)]
     assert "ONCOMING_CRAWL_MPS" in body and "should_stop = True" not in body
@@ -111,7 +111,7 @@ def test_a_crawl_and_not_a_stop_is_what_it_asks_for():
 
 def test_the_unstick_asks_the_same_questions_the_reverse_always_did():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _maybe_unstick")
     body = src[i:src.index("def _start_backing_out", i)]
     assert "self._overtake_point is not None" in body, "never mid-pass"
@@ -143,7 +143,7 @@ def test_something_passing_close_is_recorded_even_when_the_van_cannot_slow_down(
     """A van already standing still cannot slow down -- and "it passed me by 5 cm" is exactly
     the thing that has to show up in the record afterwards (2026-09-14)."""
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("self._oncoming = None")
     body = src[i:src.index("curve_cap = None", i)]
     set_at = body.index("self._oncoming = {")

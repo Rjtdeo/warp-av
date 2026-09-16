@@ -130,7 +130,7 @@ def test_the_damping_actually_cuts_the_overshoot():
 
 def test_the_van_eases_off_instead_of_steering_harder_when_off_the_line():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert "RECOVER_ABOVE_MPS" in src and "RECOVER_SPEED_MPS" in src
     i = src.index("cross_track = self.planner.signed_cross_track")
     j = src.index("lookahead = max(5.0", i)

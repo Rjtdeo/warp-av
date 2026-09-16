@@ -279,7 +279,7 @@ def main():
             car.destroy()
 
     if a.out:
-        with open(a.out, "w") as fh:
+        with open(a.out, "w", encoding="utf-8") as fh:
             json.dump({"rows": rows, "route": route}, fh)
     print("\nRESULT")
     for k in range(len(cars)):

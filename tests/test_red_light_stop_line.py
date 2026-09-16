@@ -233,5 +233,5 @@ def test_the_van_never_asks_the_simulator_for_a_lights_colour():
     """CARLA is for the map: where lights and lines are. What colour one shows comes from the
     camera. The fallback for a light missing from the route asked the simulator."""
     import pathlib
-    main = (pathlib.Path(__file__).parent.parent / "src/warp_av/main.py").read_text()
+    main = (pathlib.Path(__file__).parent.parent / "src/warp_av/main.py").read_text(encoding="utf-8")
     assert "current_light_state" not in main

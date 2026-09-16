@@ -243,8 +243,9 @@ def main():
       lab = save_stream("labels.npz", labels) if labels else None
       for k, (ts, jpg) in enumerate(frames):
           (out_dir / f"camera_{k:03d}.jpg").write_bytes(jpg)
-      (out_dir / "frames.json").write_text(json.dumps([{"file": f"camera_{k:03d}.jpg", "sim_time": ts}
-                                                       for k, (ts, _) in enumerate(frames)], indent=1))
+      frames_json = json.dumps([{"file": f"camera_{k:03d}.jpg", "sim_time": ts}
+                                for k, (ts, _) in enumerate(frames)], indent=1)
+      (out_dir / "frames.json").write_text(frames_json, encoding="utf-8")
       ok, detail = check_ring_order(pts)
       print(f"ring order check: {'OK' if ok else 'FAILED'} ({detail})")
 
@@ -258,7 +259,7 @@ def main():
                               "box_offset": [bb.location.x, bb.location.y, bb.location.z]})
           except Exception as e:
               print(f"  {bp_id}: pose unreadable ({e}), left out of objects.json")
-      (out_dir / "objects.json").write_text(json.dumps(objects, indent=1))
+      (out_dir / "objects.json").write_text(json.dumps(objects, indent=1), encoding="utf-8")
       per_rotation = pts.shape[0] / max(1e-9, (deliveries[-1][0] - deliveries[0][0]) * 10.0)
       (out_dir / "meta.json").write_text(json.dumps({
           "map": cmap.name, "recorded": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": a.seconds,
@@ -272,7 +273,7 @@ def main():
                      "points": int(lab.shape[0]) if lab is not None else 0},
           "camera": {"width": 800, "height": 600, "fov": 90, "mount": {"x": 2.0, "z": 1.8, "pitch_deg": -10.0}},
           "ring_order_ok": ok, "deliveries": len(deliveries), "points": int(pts.shape[0]),
-          "camera_frames": len(frames)}, indent=1))
+          "camera_frames": len(frames)}, indent=1), encoding="utf-8")
       size_mb = sum(f.stat().st_size for f in out_dir.iterdir()) / 1e6
       print(f"wrote {out_dir}: {len(deliveries)} plain deliveries ({pts.shape[0]} pts, ~{per_rotation:.0f} per rotation), "
             f"{len(labels)} labelled deliveries, {len(frames)} frames, {size_mb:.1f} MB")

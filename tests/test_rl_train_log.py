@@ -10,7 +10,7 @@ ROUND3_ROWS = [["12", "1024", "1", "-30.0", "timeout"],
 
 
 def _write(path, header, rows):
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(header)
         w.writerows(rows)
@@ -43,7 +43,7 @@ def test_an_old_narrow_log_is_set_aside_not_corrupted(tmp_path):
     assert backup and os.path.exists(backup), "the old log must be kept"
     assert not os.path.exists(log), "the live path is cleared for the new log"
 
-    with open(backup, newline="") as f:
+    with open(backup, newline="", encoding="utf-8") as f:
         kept = list(csv.reader(f))
     assert kept == [ROUND3_HEADER] + ROUND3_ROWS, "rounds 1-3 stay loadable"
 
@@ -52,16 +52,16 @@ def test_every_row_still_matches_the_header_after_rotation(tmp_path):
     log = str(tmp_path / "train_log.csv")
     _write(log, ROUND3_HEADER, ROUND3_ROWS)
     needs_header, _ = prepare_log(log)
-    with open(log, "a", newline="") as f:
+    with open(log, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         if needs_header:
             w.writerow(COLUMNS)
         w.writerow(["9", "10", "1", "201.3", "parked", "0.0", "16.3", "1", "1", "12", "behind2"])
 
-    with open(log, newline="") as f:
+    with open(log, newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))
     assert all(len(r) == len(COLUMNS) for r in rows), "no ragged rows"
-    with open(log, newline="") as f:
+    with open(log, newline="", encoding="utf-8") as f:
         parsed = list(csv.DictReader(f))
     assert parsed[0]["p"] == "0.0" and parsed[0]["start_dist_m"] == "16.3"
     assert None not in parsed[0], "nothing spilled into an unnamed column"
@@ -90,7 +90,7 @@ def test_a_fresh_run_never_appends_to_the_previous_runs_log(tmp_path):
     needs_header, backup = prepare_log(log, fresh=True)
     assert needs_header and backup and os.path.exists(backup)
     assert not os.path.exists(log)
-    with open(backup, newline="") as f:
+    with open(backup, newline="", encoding="utf-8") as f:
         assert len(list(csv.reader(f))) == 2, "the old run is kept intact"
 
 

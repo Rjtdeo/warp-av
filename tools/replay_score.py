@@ -58,7 +58,7 @@ def main():
                                              "phantoms": r.phantoms, "phantoms_near": r.phantoms_near, "phantoms_in_lane": r.phantoms_in_lane,
                                              "merged": r.merged, "footprints": r.footprint_rows(),
                                              "ground": r.ground, "update_ms": float(sum(r.update_ms) / max(1, len(r.update_ms)))}
-                                            for r in results], indent=1))
+                                            for r in results], indent=1), encoding="utf-8")
     if a.set_baseline:
         for p, r in zip(paths, results):
             expected = {
@@ -74,7 +74,7 @@ def main():
                 "min_road_deleted": round(max(0.0, r.ground.get("road_deleted", 0.99) - GROUND_MARGIN), 3),
                 "min_object_kept": round(max(0.0, r.ground.get("object_kept", 0.8) - GROUND_MARGIN * 2), 3),
             }
-            (p / "expected.json").write_text(json.dumps(expected, indent=1))
+            (p / "expected.json").write_text(json.dumps(expected, indent=1), encoding="utf-8")
             print(f"wrote {p / 'expected.json'}")
 
 

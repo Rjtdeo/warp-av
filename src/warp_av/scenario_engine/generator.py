@@ -113,7 +113,7 @@ def write_catalog(scenarios: List[dict], root: Path) -> Dict[str, int]:
         cat_dir = root / s["category"]
         cat_dir.mkdir(exist_ok=True)
         path = cat_dir / f"{s['id']}.yaml"
-        with path.open("w") as f:
+        with path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(_ordered(s), f, sort_keys=False, width=110, allow_unicode=True)
         per_cat[s["category"]] += 1
         index.append({
@@ -124,8 +124,8 @@ def write_catalog(scenarios: List[dict], root: Path) -> Dict[str, int]:
         })
     (root / "index.json").write_text(json.dumps({
         "catalog_version": CATALOG_VERSION, "seed": SEED, "count": len(scenarios),
-        "per_category": dict(per_cat), "scenarios": index}, indent=1))
-    (root / "CATALOG.md").write_text(_catalog_md(scenarios, per_cat))
+        "per_category": dict(per_cat), "scenarios": index}, indent=1), encoding="utf-8")
+    (root / "CATALOG.md").write_text(_catalog_md(scenarios, per_cat), encoding="utf-8")
     return dict(per_cat)
 
 

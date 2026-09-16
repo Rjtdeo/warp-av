@@ -221,7 +221,7 @@ def test_a_too_short_path_falls_back_to_the_straight_line():
 
 def test_main_builds_it_every_tick_and_hands_it_to_the_sweep():
     from pathlib import Path
-    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
+    src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     assert "self._trajectory = plan_trajectory(" in src
     assert "intended_path=(self._trajectory.xy()" in src
     assert '"trajectory": (self._trajectory.as_dict()' in src

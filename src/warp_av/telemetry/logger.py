@@ -41,7 +41,7 @@ class TelemetryLogger:
             stamp = time.strftime("%H%M%S")
             filename = os.path.join(self.log_dir, f"{mission_id}_{stamp}.jsonl")
             self._mission_id = f"{mission_id}_{stamp}"
-        self._file = open(filename, "w")
+        self._file = open(filename, "w", encoding="utf-8")
         print(f"[Logger] Logging to {filename}")
 
     def log_tick(

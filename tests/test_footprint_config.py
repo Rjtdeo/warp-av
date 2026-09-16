@@ -90,7 +90,7 @@ def test_state_reports_the_values_in_use():
 
 
 def test_main_wires_the_footprint_flag_and_telemetry():
-    src = open(MAIN).read()
+    src = open(MAIN, encoding="utf-8").read()
     # the live filter call hands over active_footprint() (None while OFF)
     assert "footprint=self.footprint_blocking.active_footprint()" in src
     # exactly one live call site, so the flag cannot be bypassed by a second path
