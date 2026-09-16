@@ -59,6 +59,8 @@ LIDAR_HEIGHT_M = 2.5
 # of model names, and the moment a fixture used a model nobody had added -- a Nissan Patrol, a
 # Carlacola truck (town10_two_parked, 2026-09-15) -- the scorer expected "obstacle" and marked
 # the camera wrong for correctly saying "vehicle". CARLA's blueprint already says which it is.
+
+
 def expected_type_for(blueprint: str) -> str:
     """What a placed object should be called, from CARLA's own blueprint id."""
     if blueprint.startswith("walker."):
