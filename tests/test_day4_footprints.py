@@ -87,3 +87,34 @@ def test_two_things_a_metre_apart_are_two_things_whatever_the_grid():
     pts = list(rect(10.0, 0.0, 0.4, 0.4)) + list(rect(10.0, 2.0, 0.4, 0.4))
     assert len(cluster_points(pts, cell=0.8)) == 2, "the van's grid keeps them apart, as before"
     assert len(cluster_points(pts, cell=1.2)) == 2, "and a coarse one no longer glues them"
+
+
+# ---- scraps: the pieces too small to be a body of their own -------------------------------
+
+def test_a_scrap_beside_one_body_is_measured_as_part_of_it():
+    """The split returns groups of points, and a group below BODY_MIN_POINTS is not a body.
+    Those used to be thrown away, which shortened whatever they came off: on the two-parked
+    fixture the 4x4 lost twelve of its own points and measured 1.53 m wide against a true
+    2.15. A scrap with one body near it now goes back to that body."""
+    body = rect(10.0, 0.0, 2.0, 1.6)
+    scrap = [(11.7, 0.0), (11.7, 0.2)]          # 0.7 m off the nose: past BODY_GAP_M, inside reach
+    apart = cluster_points(body, cell=0.8)
+    whole = cluster_points(body + scrap, cell=0.8)
+    assert len(whole) == 1, "the scrap does not become a body of its own"
+    assert whole[0]["length_m"] > apart[0]["length_m"] + 0.5, \
+        f"the scrap was dropped: {whole[0]['length_m']:.2f} m against {apart[0]['length_m']:.2f}"
+
+
+def test_a_scrap_between_two_bodies_joins_neither():
+    """Which is what keeps this from gluing the pair back together. A scrap in the space
+    between two vehicles is near both of them, so it belongs to neither with any confidence
+    and stays out -- it must not drag one body across the gap into the other."""
+    left = rect(10.0, 0.0, 2.0, 1.6)
+    right = rect(10.0, 3.0, 2.0, 1.6)           # 1.4 m of air between the two bodies
+    # in the middle: 0.7 m from each, so past the gap rule for both and inside reach of both
+    scrap = [(10.0, 1.5), (10.2, 1.5)]
+    got = cluster_points(left + right + scrap, cell=0.8)
+    assert len(got) == 2, f"{len(got)} bodies: the scrap in the gap joined them up"
+    for c in got:
+        assert c["width_m"] < 2.2, \
+            f"a body measures {c['width_m']:.2f} m across: it reached over the gap"

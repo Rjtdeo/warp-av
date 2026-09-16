@@ -131,3 +131,20 @@ def test_each_parked_vehicle_gets_its_own_blob():
         for c in got:
             assert c["length_m"] < 6.5, \
                 f"{o['blueprint']}'s blob is {c['length_m']:.2f} m long: it has swallowed its neighbour"
+
+
+def test_the_4x4_is_still_measured_at_its_real_size():
+    """The split's first version kept only the groups big enough to be bodies and threw the
+    rest away -- 59 points a frame on this fixture, twelve of them the 4x4's own. Its blob came
+    out 3.30 x 1.53 m against a true 5.57 x 2.15: most of a vehicle's width lost to a cluster
+    rule, and the van leaves room by what it measures. Scraps now go back to the body they came
+    off when one body is near enough and only one is (BODY_SCRAP_REACH_M)."""
+    cl, meta, objects = blobs()
+    patrol = [o for o in objects if "patrol" in o["blueprint"]][0]
+    got = near(cl, patrol, meta)
+    assert got, "the 4x4 has no blob"
+    big = max(got, key=lambda c: c["n"])
+    assert big["width_m"] > 1.9, \
+        f"the 4x4 measures {big['width_m']:.2f} m across, against a true {2 * patrol['extent'][1]:.2f}"
+    assert big["length_m"] > 3.6, \
+        f"the 4x4 measures {big['length_m']:.2f} m long, against a true {2 * patrol['extent'][0]:.2f}"

@@ -290,7 +290,26 @@ def _separate_bodies(pts):
     for i in range(len(pts)):
         bodies.setdefault(root(i), []).append(pts[i])
     big = [v for v in bodies.values() if len(v) >= BODY_MIN_POINTS]
-    return big if len(big) >= 2 else [pts]
+    if len(big) < 2:
+        return [pts]
+    # Every group too small to be a body of its own is a scrap: a wheel arch, a wing mirror, a
+    # few returns off a bumper that the gap rule left on their own. Dropping them shrinks the
+    # body they came off -- on town10_two_parked the 4x4 lost twelve of its own points and
+    # measured 1.53 m wide against a true 2.15 m. So a scrap is handed back to the body it
+    # belongs to: the nearest one within BODY_SCRAP_REACH_M of it, and only when no OTHER body
+    # is that close too. A scrap lying in the space between two vehicles is near both, so it
+    # goes to neither and stays out -- which is what stops this from gluing the pair back into
+    # one blob. Scraps with no body near enough are dropped, as before.
+    for scrap in bodies.values():
+        if len(scrap) >= BODY_MIN_POINTS:
+            continue
+        reach = sorted((min((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
+                            for a in scrap for b in body), k)
+                       for k, body in enumerate(big))
+        near2 = BODY_SCRAP_REACH_M * BODY_SCRAP_REACH_M
+        if reach[0][0] <= near2 and (len(reach) == 1 or reach[1][0] > near2):
+            big[reach[0][1]].extend(scrap)
+    return big
 
 
 def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
@@ -502,6 +521,12 @@ CLASS_SIZE_LIMITS = {
 # merges, same shattering -- for 7 % more blobs and 2.5 ms of tick at worst.
 BODY_GAP_M = 0.50            # metres of EMPTY SPACE that make one body two
 BODY_MIN_POINTS = 6          # a piece smaller than this is not a body of its own
+# ...and such a piece is given back to the body it came off, if one is this close and only one
+# is. Measured on town10_two_parked, where the two vehicles stand 0.65 m apart: anything up to
+# 0.9 m keeps them separate and 1.0 m is the first value that glues them together again, so
+# this leaves 0.2 m of room. It also recovers the 4x4's width, from 1.53 m to 2.30 m against a
+# true 2.15 m, and the truck's from 0.24 m to 0.98 m.
+BODY_SCRAP_REACH_M = 0.80
 # ...and a blob longer than the longest vehicle the size table admits (CLASS_SIZE_LIMITS) is a
 # wall or a facade. Splitting those costs time and gains nothing, so they are left alone.
 BODY_SPLIT_MAX_M = 14.0
