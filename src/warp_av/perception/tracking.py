@@ -502,9 +502,9 @@ CLASS_SIZE_LIMITS = {
 # merges, same shattering -- for 7 % more blobs and 2.5 ms of tick at worst.
 BODY_GAP_M = 0.50            # metres of EMPTY SPACE that make one body two
 BODY_MIN_POINTS = 6          # a piece smaller than this is not a body of its own
-BODY_SPLIT_MAX_M = 14.0      # ...and a blob longer than the longest vehicle (CLASS_SIZE_LIMITS)
-                             # is a wall or a facade: splitting those costs time and gains
-                             # nothing, so they are left exactly as they were
+# ...and a blob longer than the longest vehicle the size table admits (CLASS_SIZE_LIMITS) is a
+# wall or a facade. Splitting those costs time and gains nothing, so they are left alone.
+BODY_SPLIT_MAX_M = 14.0
 FOOTPRINT_MAX_HEIGHT_M = 2.8      # the van's roof, plus a little for pitch and range error
 FOOTPRINT_MIN_POINTS = 2          # ...below it, or there is nothing to measure and all are used
 SIZE_SPREAD_BASE_M = 0.15
