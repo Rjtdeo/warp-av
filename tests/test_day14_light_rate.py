@@ -9,6 +9,7 @@ import types
 
 import pytest
 
+from warp_av.localization.localization import Pose
 from warp_av.perception.perception import (PerceptionSystem, LIGHT_NEAR_REFRESH_S,
                                            LIGHT_FAR_REFRESH_S)
 
@@ -39,9 +40,19 @@ class FakeVehicle:
         return types.SimpleNamespace(x=0.0, y=0.0)
 
 
+class FakePoseSource:
+    """Where the van is, the way the real PerceptionSystem now asks for it (L1). The van
+    sits at the origin and the light's stop waypoint is 10 m away, which is the distance
+    these tests check comes back."""
+
+    def pose(self):
+        return Pose(x=0.0, y=0.0, yaw=0.0)
+
+
 def system(light=None):
     p = object.__new__(PerceptionSystem)
     p.vehicle = FakeVehicle(light)
+    p.pose_source = FakePoseSource()
     p._tl_stop_cache = {}
     p._tl_asked_at = None
     p._tl_last = ("none", None)

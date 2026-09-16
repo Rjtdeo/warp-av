@@ -807,6 +807,7 @@ class CameraLidarPerception:
         self.last_road_edges_dropped = 0
         self.last_kerb_crumbs_dropped = 0
         self._last_pose = None            # day 12: where the van was at the previous sweep
+        self._stub_pose_source = None     # only used by offline stand-ins (see _ego_pose)
         # Day 13: the van has five cameras and only the front one ever named anything. The
         # laser already finds things all round; what was missing was the name. Set
         # WARP_ALL_CAMERAS=0 to go back to the front camera alone.
@@ -904,9 +905,13 @@ class CameraLidarPerception:
 
             # Where the van is, taken once and used twice: to carry the free-space map
             # forward with it (day 12), and to place the blobs on the map further down.
-            tf = self.sensor_adapter.vehicle.get_transform()
-            moved = self._moved_since(tf)
-            self._last_pose = (tf.location.x, tf.location.y, tf.rotation.yaw)
+            # Asked of the ONE pose source rather than the simulator directly (2026-09-16):
+            # perception used to hold its own private line to CARLA's truth, so replacing
+            # localization would have left the free-space map still riding on it.
+            ego = self._ego_pose()
+            ex, ey, eyaw_deg = ego.x, ego.y, math.degrees(ego.yaw)
+            moved = self._moved_since(ex, ey, eyaw_deg)
+            self._last_pose = (ex, ey, eyaw_deg)
 
             # ---- LiDAR -> 2D clusters (sensor frame: x fwd, y right) ----
             pts = lidar.points
@@ -1037,10 +1042,10 @@ class CameraLidarPerception:
                     c["cls_from"] = "shape"
                     c["conf"] = 0.45 if not seen_by_camera else 0.40
 
-            # ---- ego -> world, then track ---- (tf was taken at the top of this update)
-            yaw = math.radians(tf.rotation.yaw)
+            # ---- ego -> world, then track ---- (the pose was taken at the top of this update)
+            yaw = ego.yaw
             cy, sy = math.cos(yaw), math.sin(yaw)
-            ex0, ey0 = tf.location.x, tf.location.y
+            ex0, ey0 = ex, ey
             road_gap = self._road_gap_reader() if self.static_dynamic else None
             candidates = 0
             names_dropped = 0
@@ -1061,7 +1066,7 @@ class CameraLidarPerception:
                             for px, py in sample_for_gap(sel[idx, :2])]
                     if vehicle_name_implausible(c.get("height"),
                                                 max(c.get("length_m", 0.0), c.get("width_m", 0.0)),
-                                                road_gap.gap_m(wpts, tf.location.z)):
+                                                road_gap.gap_m(wpts, ego.z)):
                         c["cls"], c["cls_from"] = None, None
                         names_dropped += 1
                 if road_gap is not None and members:
@@ -1073,7 +1078,7 @@ class CameraLidarPerception:
                         candidates += 1
                         pts = sample_for_gap(sel[idx, :2])
                         wpts = [(ex0 + px * cy - py * sy, ey0 + px * sy + py * cy) for px, py in pts]
-                        gap_fn = (lambda w=wpts, z=tf.location.z: road_gap.gap_m(w, z))
+                        gap_fn = (lambda w=wpts, z=ego.z: road_gap.gap_m(w, z))
                 observations.append({
                     "static_shapes": shapes,
                     "road_gap_fn": gap_fn,
@@ -1090,11 +1095,11 @@ class CameraLidarPerception:
                     "yaw_deg": c.get("yaw_deg", 0.0),
                     # the same heading on the map, so it stays right after the van turns, and
                     # where the rectangle itself is centred (fix 2)
-                    "yaw_world_deg": float(c.get("yaw_deg", 0.0) or 0.0) + tf.rotation.yaw,
+                    "yaw_world_deg": float(c.get("yaw_deg", 0.0) or 0.0) + eyaw_deg,
                     "box_wx": ex0 + c.get("box_x", c["x"]) * cy - c.get("box_y", c["y"]) * sy,
                     "box_wy": ey0 + c.get("box_x", c["x"]) * sy + c.get("box_y", c["y"]) * cy,
                     "box_len": c.get("box_len", 0.0), "box_wid": c.get("box_wid", 0.0),
-                    "box_yaw_world_deg": float(c.get("box_yaw_deg", c.get("yaw_deg", 0.0)) or 0.0) + tf.rotation.yaw,
+                    "box_yaw_world_deg": float(c.get("box_yaw_deg", c.get("yaw_deg", 0.0)) or 0.0) + eyaw_deg,
                 })
             tracks = self.tracker.update(observations, now)
             self.last_static_candidates = candidates
@@ -1126,7 +1131,7 @@ class CameraLidarPerception:
                 # it came from may be from before the van turned
                 yaw_now = getattr(tr, "yaw_deg", 0.0)
                 if getattr(tr, "yaw_world_deg", None) is not None:
-                    yaw_now = (tr.yaw_world_deg - tf.rotation.yaw + 180.0) % 360.0 - 180.0
+                    yaw_now = (tr.yaw_world_deg - eyaw_deg + 180.0) % 360.0 - 180.0
                 ox, oy = getattr(tr, "box_off", (0.0, 0.0))
                 box_len, box_wid = getattr(tr, "box_len", 0.0), getattr(tr, "box_wid", 0.0)
                 box_yaw_world = getattr(tr, "box_yaw_world_deg", None)
@@ -1136,7 +1141,7 @@ class CameraLidarPerception:
                     box_len, box_wid, box_yaw_world = best[3], best[4], best[5]
                 box_yaw_now = 0.0
                 if box_yaw_world is not None:
-                    box_yaw_now = (box_yaw_world - tf.rotation.yaw + 180.0) % 360.0 - 180.0
+                    box_yaw_now = (box_yaw_world - eyaw_deg + 180.0) % 360.0 - 180.0
                 objects.append(DetectedObject(
                     object_type=otype, x=ex, y=ey, distance=dist,
                     speed=self.tracker.reported_speed(tr),
@@ -1507,7 +1512,23 @@ class CameraLidarPerception:
                 matched += 1
         return matched
 
-    def _moved_since(self, tf):
+    def _ego_pose(self):
+        """The van's pose, from the one source.
+
+        The live sensor adapter always carries a `pose_source`. The stand-ins that the
+        replay harness and the unit tests put in its place do not -- they offer a bare
+        `vehicle` with a transform on it -- so those are wrapped once, here. That second
+        branch is never taken by the running van.
+        """
+        src = getattr(self.sensor_adapter, "pose_source", None)
+        if src is None:
+            src = self._stub_pose_source
+            if src is None:
+                from ..localization.pose_source import CarlaTruthPoseSource
+                src = self._stub_pose_source = CarlaTruthPoseSource(self.sensor_adapter.vehicle)
+        return src.pose()
+
+    def _moved_since(self, x, y, yaw_deg):
         """(forward, right, turned) since the last sweep, in the van's frame back then.
 
         None on the very first sweep, or after any gap long enough that carrying the old map
@@ -1517,14 +1538,14 @@ class CameraLidarPerception:
         if last is None:
             return None
         lx, ly, lyaw = last
-        dx, dy = tf.location.x - lx, tf.location.y - ly
+        dx, dy = x - lx, y - ly
         if not (abs(dx) < MAX_CARRY_M and abs(dy) < MAX_CARRY_M):
             return None                      # teleported, or a long stall: start again
         a = math.radians(lyaw)
         ca, sa = math.cos(a), math.sin(a)
         forward = dx * ca + dy * sa
         right = -dx * sa + dy * ca
-        turned = (tf.rotation.yaw - lyaw + 180.0) % 360.0 - 180.0
+        turned = (yaw_deg - lyaw + 180.0) % 360.0 - 180.0
         return (forward, right, turned)
 
     def _road_gap_reader(self):

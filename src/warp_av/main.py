@@ -40,6 +40,7 @@ from .perception.perception import (PerceptionSystem, DetectedObject, ObjectType
 from .perception.camera_lidar_perception import CameraLidarPerception
 from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
+from .localization.pose_source import CarlaTruthPoseSource
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
@@ -115,9 +116,17 @@ class WarpAV:
         print("[Init] Connecting to CARLA...")
         self.vehicle_adapter = CarlaVehicleAdapter(carla_host, carla_port)
 
+        # Where the van is. ONE source, asked by localization, by the LiDAR sweep and by
+        # perception, instead of the three private lines to CARLA's truth they each had
+        # until 2026-09-16. Still the simulator's own answer today: what changed is that
+        # there is now a single place to replace when the estimator arrives.
+        print("[Init] Pose source: CARLA truth (one source for localization, LiDAR, perception)")
+        self.pose_source = CarlaTruthPoseSource(self.vehicle_adapter.vehicle)
+
         print("[Init] Setting up sensors...")
         self.sensor_adapter = CarlaSensorAdapter(
-            self.vehicle_adapter.world, self.vehicle_adapter.vehicle
+            self.vehicle_adapter.world, self.vehicle_adapter.vehicle,
+            pose_source=self.pose_source
         )
         self.sensor_adapter.setup_sensors()
 
@@ -152,7 +161,8 @@ class WarpAV:
         # Stable original perception.
         self.ground_truth_perception = PerceptionSystem(
             self.vehicle_adapter.world,
-            self.vehicle_adapter.vehicle
+            self.vehicle_adapter.vehicle,
+            pose_source=self.pose_source
         )
 
         # Camera + LiDAR is loaded only when selected.
@@ -172,7 +182,7 @@ class WarpAV:
         print("[Perception] Default mode: GROUND TRUTH")
 
         print("[Init] Starting localization...")
-        self.localization = LocalizationSystem(self.vehicle_adapter.vehicle)
+        self.localization = LocalizationSystem(self.pose_source)
 
         print("[Init] Starting behavior...")
         self.behavior = BehaviorSystem()

@@ -17,6 +17,7 @@ THIS VERSION:
 
 import time
 import math
+import types
 from dataclasses import dataclass, field
 from typing import List, Optional
 from enum import Enum
@@ -117,9 +118,17 @@ class PerceptionSystem:
     The output format stays the same either way — that's the point.
     """
 
-    def __init__(self, world, vehicle):
+    def __init__(self, world, vehicle, pose_source=None):
         self.world = world
         self.vehicle = vehicle
+        # Where the van is, from the one source (2026-09-16). Everything else this module
+        # reports IS simulator truth by design -- it is the ground-truth fallback -- but the
+        # ego pose still comes through the same door as everywhere else, so there is exactly
+        # one place left that asks CARLA where the van is.
+        if pose_source is None:
+            from ..localization.pose_source import CarlaTruthPoseSource
+            pose_source = CarlaTruthPoseSource(vehicle)
+        self.pose_source = pose_source
         self._enabled = True
         self._tl_stop_cache = {}   # traffic light id -> stop-line points
         self._tl_asked_at = None   # when the simulator was last asked (day 14 follow-up)
@@ -151,9 +160,9 @@ class PerceptionSystem:
             return self._last_output          # plausible but old data, timestamp not advancing
 
         try:
-            vehicle_transform = self.vehicle.get_transform()
-            vehicle_location = vehicle_transform.location
-            vehicle_yaw = math.radians(vehicle_transform.rotation.yaw)
+            ego = self.pose_source.pose()
+            vehicle_location = types.SimpleNamespace(x=ego.x, y=ego.y, z=ego.z)
+            vehicle_yaw = ego.yaw
 
             objects = []
 
@@ -257,8 +266,8 @@ class PerceptionSystem:
                            for w in tl.get_stop_waypoints()]
                     self._tl_stop_cache[tl.id] = pts
                 if pts:
-                    vloc = self.vehicle.get_location()
-                    tl_dist = min(math.hypot(px - vloc.x, py - vloc.y) for px, py in pts)
+                    ego = self.pose_source.pose()
+                    tl_dist = min(math.hypot(px - ego.x, py - ego.y) for px, py in pts)
         except Exception:
             pass
         self._tl_last = (tl_state, tl_dist)

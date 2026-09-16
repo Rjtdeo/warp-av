@@ -167,9 +167,17 @@ class CarlaSensorAdapter:
     and packages the data for the rest of the system.
     """
 
-    def __init__(self, world, vehicle, full_sweep: Optional[bool] = None):
+    def __init__(self, world, vehicle, full_sweep: Optional[bool] = None, pose_source=None):
         self.world = world
         self.vehicle = vehicle
+        # Where the van is, asked in ONE place (localization/pose_source.py). The sweep needs
+        # the sensor's pose AT CAPTURE, not the newest one, so it asks through
+        # `sensor_to_world` rather than reading the scan's transform itself. Under CARLA
+        # truth the answer is the same matrix the simulator stamped, so nothing moves today.
+        if pose_source is None:
+            from ..localization.pose_source import CarlaTruthPoseSource
+            pose_source = CarlaTruthPoseSource(vehicle)
+        self.pose_source = pose_source
         self.sensors = []
 
         # Perception fix 1: whole LiDAR sweeps instead of per-frame wedges.
@@ -366,7 +374,10 @@ class CarlaSensorAdapter:
         matrix = None
         try:
             sim_time = float(scan.timestamp)
-            matrix = np.asarray(scan.transform.get_matrix(), dtype=np.float64).reshape(4, 4)
+            # The sensor's pose AT CAPTURE, asked of the one pose source. `scan.transform` is
+            # handed over as what the delivery carried: the truth source reads it, and a later
+            # estimator ignores it and looks sim_time up in its own history instead.
+            matrix = self.pose_source.sensor_to_world(sim_time, scan.transform)
         except Exception:
             pass
         if self._sweep is not None:

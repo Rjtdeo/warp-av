@@ -10,7 +10,8 @@ Supported (component → actions):
     lidar               disable enable drop(duration_s) kill_beams(beams) clear
     perception          disable enable freeze stale(age_s) latency(latency_s) crash
     localization        disable enable freeze stale(age_s) low_confidence(value, ramp_s)
-                        noise(offset_m, mode=jump|drift, confidence) crash
+                        noise(offset_m, mode=jump|drift, confidence)
+                        yaw(deg, mode=jump|drift) crash
     camera|lidar|gnss|imu   disable enable drop(duration_s)   (sensor adapter flags)
     controller          disable enable nan_command stale(age_s)
     planner             disable enable

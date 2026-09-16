@@ -171,10 +171,16 @@ def test_perception_hands_both_on():
     from pathlib import Path
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "perception"
            / "camera_lidar_perception.py").read_text(encoding="utf-8")
-    assert '"yaw_world_deg": float(c.get("yaw_deg", 0.0) or 0.0) + tf.rotation.yaw' in src
-    assert "yaw_now = (tr.yaw_world_deg - tf.rotation.yaw + 180.0) % 360.0 - 180.0" in src
+    # The ego yaw these lines add and subtract is called eyaw_deg since L1 (2026-09-16),
+    # when perception started asking the one pose source instead of the simulator direct.
+    # Same rule, same degrees, same round trip -- only the name of the variable moved.
+    assert '"yaw_world_deg": float(c.get("yaw_deg", 0.0) or 0.0) + eyaw_deg' in src
+    assert "yaw_now = (tr.yaw_world_deg - eyaw_deg + 180.0) % 360.0 - 180.0" in src
     assert "box_dx=ox * cy + oy * sy, box_dy=-ox * sy + oy * cy" in src
-    assert '"box_yaw_world_deg": float(c.get("box_yaw_deg", c.get("yaw_deg", 0.0)) or 0.0) + tf.rotation.yaw' in src
+    assert '"box_yaw_world_deg": float(c.get("box_yaw_deg", c.get("yaw_deg", 0.0)) or 0.0) + eyaw_deg' in src
+    # ...and it really is the ego pose, taken once at the top of the update.
+    assert "ego = self._ego_pose()" in src
+    assert "ex, ey, eyaw_deg = ego.x, ego.y, math.degrees(ego.yaw)" in src
 
 
 def test_a_still_thing_keeps_its_best_look():

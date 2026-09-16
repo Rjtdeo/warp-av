@@ -6,10 +6,14 @@ YOUR ROVER equivalent:
     decision_node doesn't really use it yet.
 
 THIS VERSION:
-    Reads vehicle position from CARLA (simulation ground truth).
-    Reports position, heading, speed, and CONFIDENCE.
+    Takes the van's pose from ONE source (localization/pose_source.py) and reports
+    position, heading, speed, CONFIDENCE and an UNCERTAINTY.
     The safety supervisor watches confidence — if localization is bad,
     the vehicle must stop.
+
+    The source is still CARLA's own answer today. What changed on 2026-09-16 is that
+    it is asked in one place instead of three, and that a Pose now carries room for
+    an uncertainty an estimator can fill in. Nothing here estimates anything yet.
 
     Future: fuse GNSS + IMU + odometry for real-world localization.
 """
@@ -19,11 +23,76 @@ import math
 from dataclasses import dataclass, field
 from enum import Enum
 
+#: A drifting fault reaches its full value over this long (see inject_fault).
+FAULT_RAMP_S = 10.0
+
 
 class LocalizationQuality(Enum):
     GOOD = "good"
     DEGRADED = "degraded"
     LOST = "lost"
+
+
+@dataclass(frozen=True)
+class PoseCovariance:
+    """How unsure the pose is, as the lower half of a 3x3 over (x, y, yaw).
+
+    UNITS, because mixing these silently is the classic way to lose a week:
+
+        xx, yy, xy          square metres          (m^2)
+        yaw                 square radians         (rad^2)
+        x_yaw, y_yaw        metre-radians          (m*rad)
+
+    These are VARIANCES, not standard deviations. `sigma_x`, `sigma_y` and `sigma_yaw`
+    below are the square roots, in metres and radians, for anyone who wants to read a
+    number in the units they measure in.
+
+    Nothing in planning, behaviour or control reads this yet, and that is deliberate:
+    L1 puts the structure in place so a later estimator has somewhere honest to put its
+    uncertainty, without inventing a fake one in the meantime.
+    """
+    xx: float = 0.0
+    yy: float = 0.0
+    yaw: float = 0.0
+    xy: float = 0.0
+    x_yaw: float = 0.0
+    y_yaw: float = 0.0
+
+    #: True when the pose came from the simulator rather than from an estimate. Zero
+    #: variance is the honest description of ground truth, but a filter handed a zero
+    #: covariance divides by it, so the flag says "these zeros mean truth, not certainty".
+    is_truth: bool = False
+
+    @classmethod
+    def exact(cls) -> "PoseCovariance":
+        """Ground truth: no error at all. Only CarlaTruthPoseSource may answer this."""
+        return cls(is_truth=True)
+
+    @classmethod
+    def unknown(cls) -> "PoseCovariance":
+        """No pose at all. Not zero error — unbounded error."""
+        return cls(xx=float("inf"), yy=float("inf"), yaw=float("inf"))
+
+    def as_matrix(self):
+        """Row-major 3x3 over (x, y, yaw). Symmetric by construction."""
+        return [[self.xx, self.xy, self.x_yaw],
+                [self.xy, self.yy, self.y_yaw],
+                [self.x_yaw, self.y_yaw, self.yaw]]
+
+    @property
+    def sigma_x(self) -> float:
+        """Standard deviation in METRES."""
+        return math.sqrt(self.xx) if self.xx >= 0 else float("nan")
+
+    @property
+    def sigma_y(self) -> float:
+        """Standard deviation in METRES."""
+        return math.sqrt(self.yy) if self.yy >= 0 else float("nan")
+
+    @property
+    def sigma_yaw(self) -> float:
+        """Standard deviation in RADIANS."""
+        return math.sqrt(self.yaw) if self.yaw >= 0 else float("nan")
 
 
 @dataclass
@@ -39,6 +108,8 @@ class Pose:
     timestamp: float = field(default_factory=time.time)
     healthy: bool = True
     reason: str = "OK"
+    #: How unsure the above is. Zero-and-is_truth while the source is the simulator.
+    cov: PoseCovariance = field(default_factory=PoseCovariance)
 
 
 class LocalizationSystem:
@@ -49,13 +120,27 @@ class LocalizationSystem:
     Future: GNSS + IMU + wheel odometry fusion.
     """
 
-    def __init__(self, vehicle):
-        self.vehicle = vehicle
+    def __init__(self, source):
+        """`source` is an EgoPoseSource (localization/pose_source.py).
+
+        A raw CARLA actor is still accepted and wrapped, because the standalone demos in
+        sim/ hand one straight over and there is no reason to break them for this.
+        """
+        if not hasattr(source, "pose"):
+            from .pose_source import CarlaTruthPoseSource
+            source = CarlaTruthPoseSource(source)
+        self.source = source
+        #: kept for anything that still reaches for the actor; the pose comes from `source`
+        self.vehicle = getattr(source, "_actor", None)
         self._enabled = True
         self._last_pose: Pose = Pose()
         # Fault-injection hooks (see testing/fault_injector.py)
         self._fault = {"freeze": False, "stale_age_s": 0.0, "confidence": None, "ramp": None,
-                       "offset_m": 0.0, "offset_mode": "jump", "offset_t0": 0.0, "crash": False}
+                       "offset_m": 0.0, "offset_mode": "jump", "offset_t0": 0.0, "crash": False,
+                       # heading fault (2026-09-16). L0 could bend the van's idea of WHERE it
+                       # was but not of WHICH WAY IT FACED, so heading tolerance was the one
+                       # thing that phase could not measure.
+                       "yaw_rad": 0.0, "yaw_mode": "jump", "yaw_t0": 0.0}
 
     def update(self) -> Pose:
         """
@@ -76,17 +161,32 @@ class LocalizationSystem:
             return self._last_pose
 
         try:
-            transform = self.vehicle.get_transform()
-            velocity = self.vehicle.get_velocity()
-            speed = math.sqrt(velocity.x**2 + velocity.y**2 + velocity.z**2)
-            yaw = math.radians(transform.rotation.yaw)
+            base = self.source.pose()
+            if not base.healthy:
+                return base
+            speed = base.speed
+            yaw = base.yaw
 
             # --- injected lateral offset (drift / jump) ---
+            # Taken along the TRUE heading, before any heading fault below, so that a
+            # yaw-only fault never moves x or y and the two can be read apart.
             off = self._fault["offset_m"]
             if off and self._fault["offset_mode"] == "drift":
                 off = min(off, off * (time.time() - self._fault["offset_t0"]) / 10.0)  # reach full offset in 10 s
             ox = -math.sin(yaw) * off
             oy = math.cos(yaw) * off
+
+            # --- injected heading error (drift / jump) ---
+            yaw_err = self._fault["yaw_rad"]
+            if yaw_err and self._fault["yaw_mode"] == "drift":
+                # Ramp on the MAGNITUDE, so a negative angle ramps like a positive one.
+                # (The offset ramp above is left exactly as it was: changing it would
+                # change behaviour, and L1 is structural. Its min() does not ramp a
+                # negative offset -- written down in the L1 report, not fixed here.)
+                grown = min(1.0, max(0.0, (time.time() - self._fault["yaw_t0"]) / FAULT_RAMP_S))
+                yaw_err = yaw_err * grown
+            if yaw_err:
+                yaw = math.atan2(math.sin(yaw + yaw_err), math.cos(yaw + yaw_err))
 
             # --- injected confidence (step or ramp) ---
             conf = 1.0
@@ -102,16 +202,21 @@ class LocalizationSystem:
                        LocalizationQuality.DEGRADED if conf >= 0.3 else LocalizationQuality.LOST)
 
             pose = Pose(
-                x=transform.location.x + ox,
-                y=transform.location.y + oy,
-                z=transform.location.z,
+                x=base.x + ox,
+                y=base.y + oy,
+                z=base.z,
                 yaw=yaw,
                 speed=speed,
                 confidence=conf,
                 quality=quality,
                 timestamp=time.time() - self._fault["stale_age_s"],
                 healthy=True,
-                reason="OK" if conf >= 0.3 else "LOW_CONFIDENCE"
+                reason="OK" if conf >= 0.3 else "LOW_CONFIDENCE",
+                # Whatever the source claimed. Under CARLA truth that is exact-and-flagged;
+                # an injected fault does NOT widen it, and that is the point of L0's finding:
+                # the van is wrong and still says it is certain. A later estimator is what
+                # makes this number mean something.
+                cov=base.cov,
             )
             self._last_pose = pose
             return pose
@@ -135,11 +240,19 @@ class LocalizationSystem:
     def enable(self):
         self._enabled = True
         self._fault = {"freeze": False, "stale_age_s": 0.0, "confidence": None, "ramp": None,
-                       "offset_m": 0.0, "offset_mode": "jump", "offset_t0": 0.0, "crash": False}
+                       "offset_m": 0.0, "offset_mode": "jump", "offset_t0": 0.0, "crash": False,
+                       "yaw_rad": 0.0, "yaw_mode": "jump", "yaw_t0": 0.0}
         print("[Localization] Re-enabled")
 
     def inject_fault(self, action: str, **params):
-        """freeze | stale(age_s) | low_confidence(value, ramp_s) | noise(offset_m, mode, confidence) | crash."""
+        """freeze | stale(age_s) | low_confidence(value, ramp_s) | noise(offset_m, mode, confidence)
+        | yaw(deg, mode) | crash.
+
+        `yaw` bends the van's idea of which way it is FACING, leaving x and y alone
+        (2026-09-16). Degrees in, because every other angle on this API is in degrees and a
+        test asking for "two degrees of heading error" should say 2. Stored in radians.
+        `mode` is jump (at once, and stays) or drift (grows to full over FAULT_RAMP_S).
+        """
         if action == "freeze":
             self._fault["freeze"] = True
         elif action == "stale":
@@ -155,6 +268,14 @@ class LocalizationSystem:
             if "confidence" in params:
                 self._fault["confidence"] = float(params["confidence"])
                 self._fault["ramp"] = None
+        elif action == "yaw":
+            deg = float(params.get("deg", params.get("yaw_deg", 1.0)))
+            mode = params.get("mode", "jump")
+            if mode not in ("jump", "drift"):
+                return False
+            self._fault["yaw_rad"] = math.radians(deg)
+            self._fault["yaw_mode"] = mode
+            self._fault["yaw_t0"] = time.time()
         elif action == "crash":
             self._fault["crash"] = True
         else:
