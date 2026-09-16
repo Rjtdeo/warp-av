@@ -134,8 +134,8 @@ def test_the_covariance_stays_symmetric_over_a_long_run():
         if i % 2 == 0:
             f.correct_gnss(lat, lon, t)
     P = f.P
-    for i in range(3):
-        for j in range(3):
+    for i in range(4):
+        for j in range(4):
             assert P[i][j] == pytest.approx(P[j][i], rel=1e-9, abs=1e-12)
         assert P[i][i] > 0.0, "a variance may never go negative"
 
@@ -251,13 +251,33 @@ def test_the_compass_makes_the_heading_observable():
 
 
 def test_repeated_headings_converge_and_make_it_surer():
+    """PARKED, the compass closes the gap but cannot say whose fault it was.
+
+    L4 (three states) drove yaw straight to the measurement, which was right by luck and wrong
+    by reasoning: it assumed the compass had no offset. Standing still there is no second
+    opinion on heading, so a 10 degree disagreement is 10 degrees of heading error, or 10
+    degrees of compass offset, or any split of the two -- and the filter must close the gap
+    without pretending to know which. It does still get surer of the SUM, which is the part it
+    was actually told about.
+    """
     f = ekf(yaw=0.0, speed=0.0)
     f.x[2] = math.radians(10.0)
     grown = f.pose().cov.sigma_yaw
     for i in range(60):
         f.correct_heading(0.0, 100.0 + 0.05 * (i + 1))
-    assert abs(math.degrees(f.pose().yaw)) < 0.5
+    assert abs(math.degrees(f.x[2] + f.x[3])) < 0.5, "the gap must close"
     assert f.pose().cov.sigma_yaw < grown
+    assert abs(math.degrees(f.x[2])) > 1.0, "but it may not claim to have resolved the heading"
+
+
+def test_driving_resolves_what_parking_could_not():
+    """The other half of the pair above: give it motion and a second opinion, and the split it
+    refused to guess at standing still becomes knowable."""
+    f = ekf(yaw=0.0, speed=8.0)
+    f.x[2] = math.radians(10.0)                   # a real heading error, no compass offset
+    drive(f, seconds=30.0, compass_bias_deg=0.0)
+    assert abs(math.degrees(f.x[2])) < 0.5, "GNSS and the motion model pin the heading"
+    assert abs(math.degrees(f.x[3])) < 0.5, "and correctly find no compass offset"
 
 
 def test_the_heading_innovation_is_wrapped():
@@ -321,7 +341,143 @@ def test_the_covariance_stays_sound_with_a_suppressed_gain():
         f.predict_to(t, math.radians(3.0))
         f.correct_gnss(lat, lon, t)
     P = f.P
-    for i in range(3):
-        for j in range(3):
+    for i in range(4):
+        for j in range(4):
             assert P[i][j] == pytest.approx(P[j][i], rel=1e-9, abs=1e-12)
         assert P[i][i] > 0.0
+
+
+# ---- the compass offset the filter works out for itself (L4.1) ----------------------------
+#
+# L4 left the heading error sitting on a floor: mean 0.32-0.37 degrees, near constant across
+# every run, because a fixed compass offset is exactly what averaging cannot remove. These pin
+# the fourth state that estimates it -- and, just as importantly, pin the fact that it is
+# never told the answer and cannot learn one while parked.
+
+BIAS_DEG = 0.30            # what noisy_sim injects. Used ONLY to score, never as an input.
+
+
+def drive(f, seconds, speed=8.0, yaw_rate=0.0, compass_bias_deg=BIAS_DEG,
+          gnss=True, t0=100.0, jitter=None):
+    """Run the filter down a straight track with a compass that reads `compass_bias_deg` high.
+
+    GNSS is fed from the TRUE path, so the only thing the filter can blame a persistent
+    compass residual on is the offset. That is the whole observability argument, in a loop.
+    """
+    t, x, yaw = t0, 0.0, 0.0
+    bias = math.radians(compass_bias_deg)
+    for i in range(int(seconds / 0.05)):
+        t += 0.05
+        yaw += yaw_rate * 0.05
+        x += speed * 0.05
+        f.set_speed(speed, False, t)
+        f.predict_to(t, yaw_rate)
+        noise = 0.0 if jitter is None else jitter(i)
+        f.correct_heading(yaw + bias + noise, t)
+        if gnss and i % 5 == 0:
+            lat, lon = geo.to_latlon(x * math.cos(yaw), x * math.sin(yaw))
+            f.correct_gnss(lat, lon, t)
+    return f
+
+
+def test_the_offset_starts_at_zero_and_unknown():
+    """Not seeded from truth, not pre-loaded with the injected value: zero, and unsure."""
+    f = ekf()
+    assert f.heading_bias_rad == 0.0
+    assert math.degrees(f.bias_sigma_rad) == pytest.approx(2.0, abs=1e-9)
+
+
+def test_nothing_in_the_filter_knows_the_injected_offset():
+    """The guard against the easiest way to fake this result. If 0.30 appears anywhere in the
+    estimator as a constant, the experiment is measuring its own answer."""
+    import inspect
+    from warp_av.localization import ekf as mod
+    src = inspect.getsource(mod)
+    assert "0.30" not in src and "0.3)" not in src, "the filter must not carry the answer"
+
+
+def test_driving_teaches_it_the_offset():
+    """The point of the whole state. Compass reads 0.30 high, GNSS says where the van really
+    went, and the difference between the two is the offset."""
+    f = drive(ekf(speed=8.0), seconds=30.0)
+    assert math.degrees(f.heading_bias_rad) == pytest.approx(BIAS_DEG, abs=0.05)
+
+
+def test_learning_the_offset_is_what_removes_the_heading_error():
+    """Converging on the offset is only interesting if the HEADING gets better for it."""
+    f = drive(ekf(speed=8.0), seconds=30.0)
+    assert abs(math.degrees(f.x[2])) < 0.02, "heading should land on the true zero"
+
+
+def test_it_grows_more_sure_of_the_offset_by_driving():
+    before = ekf().bias_sigma_rad
+    after = drive(ekf(speed=8.0), seconds=30.0).bias_sigma_rad
+    assert after < before / 4.0, "30 s of driving should sharpen the offset a lot"
+
+
+def test_parked_it_learns_nothing_and_says_so():
+    """Observability, stated as a test. Standing still there is no second opinion on heading,
+    so offset and heading cannot be told apart -- and the filter must NOT pretend otherwise."""
+    f = drive(ekf(speed=0.0), seconds=30.0, speed=0.0, gnss=True)
+    assert math.degrees(f.bias_sigma_rad) > 1.0, "it may not claim to have learned an offset"
+
+
+def test_the_compass_alone_only_constrains_the_SUM():
+    """One equation, two unknowns. Whatever it does to heading and offset individually, their
+    sum must move to meet the measurement -- and neither may be pinned by it alone."""
+    f = ekf(speed=0.0)
+    for i in range(50):
+        f.correct_heading(math.radians(1.0), 100.0 + 0.05 * (i + 1))
+    total = math.degrees(f.x[2] + f.x[3])
+    assert total == pytest.approx(1.0, abs=0.05), "the sum must meet the measurement"
+    assert math.degrees(f.bias_sigma_rad) > 1.0, "but the offset itself stays unknown"
+
+
+def test_the_offset_cannot_jump_in_one_frame():
+    """It is a slow-moving physical quantity, not a per-frame free parameter. A single wild
+    reading must barely move it."""
+    f = drive(ekf(speed=8.0), seconds=30.0)
+    settled = f.heading_bias_rad
+    f.correct_heading(math.radians(45.0), f.t + 0.05)       # one absurd reading
+    assert abs(math.degrees(f.heading_bias_rad - settled)) < 0.5
+
+
+def test_a_crawl_lets_gnss_move_x_and_y_but_neither_heading_state():
+    """The L4 gate, extended. Zeroing only the yaw row would leave the same bad inference a
+    door into the offset, where it would persist long after the van sped up."""
+    f = ekf(speed=1.0)
+    f.x[0] = 5.0
+    f.x[2] = math.radians(3.0)
+    f.x[3] = math.radians(0.2)
+    yaw_before, bias_before = f.x[2], f.x[3]
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    f.P[0, 2] = f.P[2, 0] = 0.05                  # real correlations for GNSS to pull on
+    f.P[0, 3] = f.P[3, 0] = 0.05
+    assert f.correct_gnss(lat, lon, 100.1) is True
+    assert f.pose().x < 5.0, "position must still be corrected"
+    assert f.x[2] == pytest.approx(yaw_before), "heading must not be rotated"
+    assert f.x[3] == pytest.approx(bias_before), "nor may the offset be moved"
+
+
+def test_above_the_gate_gnss_may_inform_the_offset_again():
+    f = ekf(speed=8.0)
+    f.x[0] = 5.0
+    f.P[0, 3] = f.P[3, 0] = 0.05
+    bias_before = f.x[3]
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    f.correct_gnss(lat, lon, 100.1)
+    assert f.x[3] != pytest.approx(bias_before), "at speed the coupling is legitimate"
+
+
+def test_it_survives_a_noisy_compass_rather_than_chasing_it():
+    """With jitter ten times the offset, it must still find the offset and not follow the noise."""
+    rng = __import__("random").Random(12345)
+    f = drive(ekf(speed=8.0), seconds=60.0,
+              jitter=lambda i: rng.gauss(0.0, math.radians(3.0)))
+    assert math.degrees(f.heading_bias_rad) == pytest.approx(BIAS_DEG, abs=0.15)
+
+
+def test_the_offset_is_reported_so_a_run_can_be_scored():
+    st = drive(ekf(speed=8.0), seconds=10.0).state()
+    assert "heading_bias_deg" in st and "sigma_bias_deg" in st
+    assert st["sigma_bias_deg"] < 2.0

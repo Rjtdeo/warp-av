@@ -3,7 +3,7 @@
 Phase L3. Three inputs, three states, one correction. Deliberately the smallest filter that
 can be honest, because a filter nobody can debug is worse than dead reckoning.
 
-    STATE      x, y, yaw           metres, metres, radians
+    STATE      x, y, yaw, bias     metres, metres, radians, radians
     PREDICT    wheel speed + gyro yaw rate, over the ACTUAL time between measurements
     CORRECT    GNSS position, converted to local metres (localization/geo.py)
 
@@ -11,13 +11,23 @@ IT DRIVES NOTHING. Like the dead reckoner beside it, this runs in shadow: it pub
 telemetry so a drive can be scored against CARLA's truth afterwards, and no planner, behaviour
 rule, controller, perception path or traffic-light lookup reads a single number it produces.
 
-WHY ONLY THREE STATES. Speed is measured directly and its error is small and roughly
-multiplicative -- L2-GAP put sampled-speed integration within 0.14 % of the true path. Putting
-it in the state would buy a scale estimate that GNSS can barely observe over a short route,
-at the cost of a fourth row everywhere and a filter that is harder to reason about. Gyro bias
-is the state most worth adding NEXT, because it is unobservable from dead reckoning and GNSS
-does constrain it over time -- but adding it before the three-state version has been scored
-would mean never knowing which part helped.
+WHY THE FOURTH STATE IS THE COMPASS BIAS. L4 scored the three-state filter with the compass
+feeding it and found the heading error had a FLOOR: mean 0.32-0.37 degrees on every run, near
+constant, while the filter claimed 0.157. A constant offset is exactly what averaging cannot
+remove, so no amount of compass data was ever going to get under it. The fourth state is that
+offset, estimated rather than assumed.
+
+It is observable only because two different things say something about heading. The compass
+measures yaw + bias -- one equation, two unknowns, and on its own it can never separate them.
+GNSS plus the motion model says where the van actually went, which constrains yaw alone. The
+difference between the two is the bias, and it is learned by DRIVING; parked, it is not
+learned at all, and the filter correctly keeps its prior.
+
+WHY SPEED AND GYRO BIAS ARE STILL NOT STATES. Speed is measured directly and its error is
+small and roughly multiplicative -- L2-GAP put sampled-speed integration within 0.14 % of the
+true path. Gyro bias is the next candidate, and it is deliberately NOT added here: the point
+of this phase is to find out how much of the remaining heading error the compass offset alone
+explains, and two new states at once would make that unanswerable.
 
 SIDESLIP IS NOT CORRECTED HERE. L2-GAP measured the van travelling 0.756 degrees off its own
 heading on average and up to 3.151, and that mismatch is the largest single error in the dead
@@ -61,9 +71,23 @@ GNSS_SIGMA_M = 0.02
 #: ...and what the compass is believed to be worth. Matches COMPASS_NOISE_DEG in the sensor
 #: profile. It is deliberately NOT told about the compass BIAS: a filter cannot subtract an
 #: offset it does not estimate, so the bias becomes the floor under the heading accuracy.
-#: Widening R to cover the bias would only make the filter ignore a sensor that is telling the
-#: truth on average; estimating the bias is a state, and that is a later decision.
+#: The compass BIAS is not folded in here -- it is state 3, estimated from the measurements.
+#: Widening R to cover it would only make the filter ignore a sensor that is telling the truth
+#: on average, which is the opposite of what is wanted.
 COMPASS_SIGMA_RAD = math.radians(1.0)
+
+#: What the filter believes about the compass offset BEFORE it has seen anything: nothing, to
+#: within a couple of degrees. Deliberately not the injected value -- the filter is not told
+#: the answer, it is given room to find one. Equal to the seed's yaw uncertainty on purpose,
+#: so the first compass reading splits its innovation evenly between heading and offset rather
+#: than the prior quietly deciding which of the two is to blame.
+BIAS_SIGMA0_RAD = math.radians(2.0)
+
+#: How fast the offset is allowed to move, as a random walk, per square-root second. A real
+#: magnetometer offset wanders with temperature and surroundings over minutes, not frames.
+#: At this rate an unobserved offset loosens by about 0.2 degrees over 100 seconds: enough to
+#: track a slow drift, far too slow to absorb a single bad reading.
+BIAS_RW_SIGMA_RAD_PER_SQRT_S = math.radians(0.02)
 
 #: Below this speed a GNSS fix may move x and y but MUST NOT rotate the heading.
 #:
@@ -99,8 +123,8 @@ class LocalizationEKF:
     def __init__(self, geo: Optional[GeoFrame] = None, gnss_sigma_m: float = GNSS_SIGMA_M):
         self.geo = geo or DEFAULT_GEO
         self.gnss_sigma_m = float(gnss_sigma_m)
-        self.x = np.zeros(3, dtype=float)          # [x, y, yaw]
-        self.P = np.zeros((3, 3), dtype=float)
+        self.x = np.zeros(4, dtype=float)          # [x, y, yaw, compass bias]
+        self.P = np.zeros((4, 4), dtype=float)
         self.seeded = False
         self.t = None                              # the filter's own clock, in SIM time
         self.speed = 0.0
@@ -128,9 +152,12 @@ class LocalizationEKF:
         rather than zero -- a filter that begins certain refuses the corrections that would
         have told it otherwise.
         """
-        self.x = np.array([float(x), float(y), _wrap(float(yaw))], dtype=float)
+        # The compass offset starts at ZERO and unknown-to-within-BIAS_SIGMA0. It is never
+        # seeded from truth, and nothing here knows what the simulated offset is.
+        self.x = np.array([float(x), float(y), _wrap(float(yaw)), 0.0], dtype=float)
         self.P = np.diag([pos_sigma_m ** 2, pos_sigma_m ** 2,
-                          math.radians(yaw_sigma_deg) ** 2]).astype(float)
+                          math.radians(yaw_sigma_deg) ** 2,
+                          BIAS_SIGMA0_RAD ** 2]).astype(float)
         self.seeded = True
         self.t = sim_time
         self.speed = 0.0
@@ -187,9 +214,12 @@ class LocalizationEKF:
         self.distance_m += abs(step)
 
         # --- jacobian of that motion with respect to the state ---
-        F = np.array([[1.0, 0.0, -step * s],
-                      [0.0, 1.0, step * c],
-                      [0.0, 0.0, 1.0]], dtype=float)
+        # The compass offset does not move the van, so its row and column are inert here --
+        # it changes only through the random walk below and through compass corrections.
+        F = np.array([[1.0, 0.0, -step * s, 0.0],
+                      [0.0, 1.0, step * c, 0.0],
+                      [0.0, 0.0, 1.0, 0.0],
+                      [0.0, 0.0, 0.0, 1.0]], dtype=float)
 
         # --- process noise, built in the frame the van is MOVING in, then rotated ---
         # along  : the speed could be a percent out
@@ -200,9 +230,10 @@ class LocalizationEKF:
         Qpos = R @ np.diag([along, cross]) @ R.T
         qyaw = (GYRO_NOISE_RAD_S ** 2) * dt + (GYRO_BIAS_RAD_S * dt) ** 2 \
             + YAW_NOISE_FLOOR_RAD2_PER_S * dt
-        Q = np.zeros((3, 3), dtype=float)
+        Q = np.zeros((4, 4), dtype=float)
         Q[:2, :2] = Qpos
         Q[2, 2] = qyaw
+        Q[3, 3] = (BIAS_RW_SIGMA_RAD_PER_SQRT_S ** 2) * dt
 
         self.P = F @ self.P @ F.T + Q
         self.t = sim_time
@@ -224,7 +255,7 @@ class LocalizationEKF:
             return False
         sig = self.gnss_sigma_m if sigma_m is None else float(sigma_m)
         Rm = np.diag([sig ** 2, sig ** 2]).astype(float)
-        H = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=float)
+        H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=float)
         z = np.array([gx, gy], dtype=float)
         y = z - H @ self.x
         S = H @ self.P @ H.T + Rm
@@ -235,13 +266,19 @@ class LocalizationEKF:
             return False
         if abs(self.speed) < GNSS_YAW_MIN_SPEED_MPS:
             K = K.copy()
-            K[2, :] = 0.0                      # position yes, heading no
+            # Position yes, heading no -- and that means BOTH heading states. Zeroing only the
+            # yaw row would leave the same bad inference a door: a few centimetres of residual
+            # at a crawl would flow into the compass offset instead, where it would persist
+            # long after the van sped up. The offset is a heading quantity; it is gated with
+            # the heading.
+            K[2, :] = 0.0
+            K[3, :] = 0.0
             self.gnss_yaw_suppressed += 1
         self.x = self.x + K @ y
         self.x[2] = _wrap(self.x[2])
         # Joseph form: stays symmetric and positive-definite over a long run, where the short
         # form quietly does not.
-        A = np.eye(3) - K @ H
+        A = np.eye(4) - K @ H
         self.P = A @ self.P @ A.T + K @ Rm @ K.T
         self.corrections += 1
         self.last_gnss_t = sim_time
@@ -260,15 +297,20 @@ class LocalizationEKF:
         geo.bearing_to_yaw, which encodes the measured compass = yaw + 90 degrees. The
         innovation is WRAPPED before use, so a measurement at +179 and a state at -179 are two
         degrees apart rather than three hundred and fifty eight.
+
+        The measurement model is    compass = yaw + bias + noise,   so H touches both heading
+        states. That single row cannot tell them apart by itself -- it constrains their SUM.
+        What separates them is everything else the filter knows: GNSS and the motion model
+        pin yaw, and whatever is left over in the compass residual is the offset.
         """
         if not self.seeded:
             return False
         if not math.isfinite(yaw_meas):
             return False
         sig = COMPASS_SIGMA_RAD if sigma_rad is None else float(sigma_rad)
-        H = np.array([[0.0, 0.0, 1.0]], dtype=float)
+        H = np.array([[0.0, 0.0, 1.0, 1.0]], dtype=float)
         Rm = np.array([[sig ** 2]], dtype=float)
-        innov = _wrap(float(yaw_meas) - float(self.x[2]))
+        innov = _wrap(float(yaw_meas) - (float(self.x[2]) + float(self.x[3])))
         S = H @ self.P @ H.T + Rm
         try:
             K = self.P @ H.T @ np.linalg.inv(S)
@@ -276,7 +318,8 @@ class LocalizationEKF:
             return False
         self.x = self.x + (K @ np.array([innov], dtype=float))
         self.x[2] = _wrap(self.x[2])
-        A = np.eye(3) - K @ H
+        self.x[3] = _wrap(self.x[3])
+        A = np.eye(4) - K @ H
         self.P = A @ self.P @ A.T + K @ Rm @ K.T
         self.heading_corrections += 1
         return True
@@ -289,6 +332,18 @@ class LocalizationEKF:
                     speed=(-self.speed if self.reverse else self.speed),
                     confidence=1.0, healthy=True, reason="EKF",
                     cov=self.covariance(), sim_time=self.t)
+
+    @property
+    def heading_bias_rad(self) -> float:
+        """The compass offset the filter has worked out for itself, in radians."""
+        return float(self.x[3])
+
+    @property
+    def bias_sigma_rad(self) -> float:
+        """How sure it is of that, one standard deviation. Starts at BIAS_SIGMA0_RAD and only
+        comes down by driving -- parked, there is nothing to separate offset from heading."""
+        v = float(self.P[3, 3])
+        return math.sqrt(v) if v > 0 else float("nan")
 
     def covariance(self) -> PoseCovariance:
         """Straight from the filter's own P. Not a growth model, not a fitted curve --
@@ -320,6 +375,9 @@ class LocalizationEKF:
         cov = self.covariance()
         return {"seeded": True, "x": round(float(self.x[0]), 3), "y": round(float(self.x[1]), 3),
                 "yaw_deg": round(math.degrees(float(self.x[2])), 3),
+                # The fourth state and how sure it is. Nothing told the filter this number.
+                "heading_bias_deg": round(math.degrees(float(self.x[3])), 4),
+                "sigma_bias_deg": round(math.degrees(self.bias_sigma_rad), 4),
                 "sigma_x_m": round(cov.sigma_x, 4), "sigma_y_m": round(cov.sigma_y, 4),
                 "sigma_yaw_deg": round(math.degrees(cov.sigma_yaw), 4),
                 "distance_m": round(self.distance_m, 2),
