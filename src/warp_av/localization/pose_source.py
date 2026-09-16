@@ -75,8 +75,17 @@ class CarlaTruthPoseSource(EgoPoseSource):
     stand-ins have a transform but no velocity and perception only ever wanted x, y and yaw.
     """
 
-    def __init__(self, actor):
+    def __init__(self, actor, world=None):
         self._actor = actor
+        # L3: the simulator's own clock, so the speed this source reports carries the time it
+        # was taken rather than the time it was asked for. `get_snapshot` returns the last
+        # tick the client already has, so this costs no round trip.
+        self._world = world
+        if self._world is None:
+            try:
+                self._world = actor.get_world()
+            except Exception:
+                self._world = None
 
     def pose(self) -> Pose:
         try:
@@ -93,10 +102,18 @@ class CarlaTruthPoseSource(EgoPoseSource):
                 yaw=math.radians(tf.rotation.yaw),
                 speed=speed,
                 cov=PoseCovariance.exact(),
+                sim_time=self.sim_time(),
             )
         except Exception as e:                       # noqa: BLE001 - same contract as before
             return Pose(healthy=False, reason=f"POSE_SOURCE_ERROR: {e}",
                         confidence=0.0, cov=PoseCovariance.unknown())
+
+    def sim_time(self) -> Optional[float]:
+        """The simulator's clock now, or None where there is no simulator (replay, tests)."""
+        try:
+            return float(self._world.get_snapshot().timestamp.elapsed_seconds)
+        except Exception:
+            return None
 
     def sensor_to_world(self, sim_time: float, captured=None) -> Optional[np.ndarray]:
         """What CARLA stamped on the delivery, which IS the sensor's pose at capture.

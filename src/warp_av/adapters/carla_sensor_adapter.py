@@ -21,6 +21,7 @@ import numpy as np
 import os
 import time
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional, List, Callable
 
@@ -160,6 +161,58 @@ class ImuReading:
     timestamp: float = field(default_factory=time.time)
 
 
+# ---- how real the sensors are allowed to be (L3, 2026-09-16) -------------------------------
+#
+# L2-GAP measured CARLA's GNSS and gyro to be PERFECT: one unique satellite fix in 605
+# stationary samples, and a gyro whose bias and noise were exactly 0.00000000. Every noise
+# attribute on both blueprints defaults to zero and nothing here had ever set one. A filter
+# fitted against sensors like that is a filter fitted against ground truth, and its gains mean
+# nothing the moment it meets a real receiver.
+#
+# So there are two profiles, chosen with WARP_SENSOR_NOISE:
+#
+#   ideal      what it has always been -- zero noise. The default, so that every existing
+#              measurement, fixture and regression run keeps its meaning.
+#   noisy_sim  sensors that can actually be fused against.
+#
+# THESE ARE SIMULATION-DEVELOPMENT ASSUMPTIONS, NOT HARDWARE SPECIFICATIONS. No receiver or
+# IMU has been chosen, nothing has been measured on a bench, and no datasheet was consulted.
+# They are figures of the right ORDER for the class of part the roadmap implies -- an RTK GNSS
+# and an automotive MEMS gyro -- picked so the estimator has something honest to work against.
+# When real parts are chosen these must be replaced with their measured values.
+#
+#: RTK-class horizontal noise. 0.02 m is roughly what a fixed RTK solution holds; anything
+#: consumer-grade is 1-3 m, and at that level no filter can meet the 0.10 m p95 the stack
+#: needs (L0). That is a hardware conclusion, and it is recorded here because this constant
+#: is where it becomes visible.
+GNSS_NOISE_M = 0.02
+GNSS_BIAS_M = 0.01
+#: Automotive MEMS gyro: white noise on the rate, plus a slowly-wandering bias. 5e-5 rad/s is
+#: about 10 deg/hour, which is ordinary for the class.
+GYRO_NOISE_RAD_S = 0.002
+GYRO_BIAS_RAD_S = 5e-5
+
+#: Metres to degrees, for CARLA's GNSS blueprint, which wants noise in degrees while every
+#: requirement we have is in metres. Measured in L2-GAP (localization/geo.py).
+_DEG_PER_M = 8.983e-06
+
+
+def sensor_noise_profile(env=None) -> dict:
+    """Which sensor realism to spawn with. WARP_SENSOR_NOISE=ideal|noisy_sim."""
+    env = os.environ if env is None else env
+    want = str(env.get("WARP_SENSOR_NOISE", "ideal")).strip().lower()
+    if want not in ("ideal", "noisy_sim"):
+        want = "ideal"
+    if want == "ideal":
+        return {"name": "ideal", "gnss_stddev_deg": 0.0, "gnss_bias_deg": 0.0,
+                "gyro_stddev": 0.0, "gyro_bias": 0.0}
+    return {"name": "noisy_sim",
+            "gnss_stddev_deg": GNSS_NOISE_M * _DEG_PER_M,
+            "gnss_bias_deg": GNSS_BIAS_M * _DEG_PER_M,
+            "gyro_stddev": GYRO_NOISE_RAD_S,
+            "gyro_bias": GYRO_BIAS_RAD_S}
+
+
 #: Longer than this between two IMU samples and the gap is a stall, a restart or a dropped
 #: sensor -- not a turn. The IMU ticks at 20 Hz, so this is eight missed samples.
 IMU_MAX_GAP_S = 0.4
@@ -212,6 +265,14 @@ class CarlaSensorAdapter:
         self._lidar_callbacks: List[Callable] = []
 
         # Health tracking
+        # L3: every measurement an estimator may fuse, each stamped with the SIMULATOR's time
+        # rather than the moment it happened to arrive here. L2-GAP measured the jitter that
+        # makes this necessary: the IMU's nominal 0.05 s arrives anywhere from 0.0065 s to
+        # 0.15 s apart. Anything that assumes a fixed period is integrating a fiction.
+        # Bounded, so a filter that stops draining it cannot grow memory without limit.
+        self.fusion_q = deque(maxlen=2000)
+        self.fusion_dropped = 0
+
         # L2: how far the van has turned, summed over every IMU sample (see _integrate_turn).
         self.imu_turn_rad = 0.0
         self.imu_turn_dt_s = 0.0
@@ -319,14 +380,25 @@ class CarlaSensorAdapter:
         print(f"[CarlaSensorAdapter] LiDAR: {'full 360-degree sweeps (accumulated)' if self.lidar_full_sweep else 'raw per-frame deliveries (WARP_LIDAR_SWEEP=0)'}")
 
         # --- GNSS (GPS) ---
+        prof = sensor_noise_profile()
+        self.noise_profile = prof
         gnss_bp = bp_lib.find('sensor.other.gnss')
         gnss_bp.set_attribute('sensor_tick', '0.1')
+        # L3: a satellite fix the estimator can actually be fitted against (see above).
+        for attr, val in (("noise_lat_stddev", prof["gnss_stddev_deg"]),
+                          ("noise_lon_stddev", prof["gnss_stddev_deg"]),
+                          ("noise_lat_bias", prof["gnss_bias_deg"]),
+                          ("noise_lon_bias", prof["gnss_bias_deg"])):
+            gnss_bp.set_attribute(attr, str(val))
         gnss = self.world.spawn_actor(gnss_bp, carla.Transform(), attach_to=self.vehicle)
         gnss.listen(self._on_gnss)
         self.sensors.append(gnss)
 
         # --- IMU ---
         imu_bp = bp_lib.find('sensor.other.imu')
+        for attr, val in (("noise_gyro_stddev_z", prof["gyro_stddev"]),
+                          ("noise_gyro_bias_z", prof["gyro_bias"])):
+            imu_bp.set_attribute(attr, str(val))
         imu_bp.set_attribute('sensor_tick', '0.05')  # 20 Hz
         imu = self.world.spawn_actor(imu_bp, carla.Transform(), attach_to=self.vehicle)
         imu.listen(self._on_imu)
@@ -427,6 +499,11 @@ class CarlaSensorAdapter:
             altitude=gnss.altitude, timestamp=time.time()
         )
         self._last_gnss_time = time.time()
+        try:
+            self.fusion_q.append(("gnss", float(gnss.timestamp),
+                                  float(gnss.latitude), float(gnss.longitude)))
+        except Exception:
+            self.fusion_dropped += 1
 
     def _on_imu(self, imu):
         if not self.imu_enabled:
@@ -443,6 +520,10 @@ class CarlaSensorAdapter:
         )
         self._last_imu_time = time.time()
         self._integrate_turn(imu)
+        try:
+            self.fusion_q.append(("gyro", float(imu.timestamp), float(imu.gyroscope.z), 0.0))
+        except Exception:
+            self.fusion_dropped += 1
 
     def _integrate_turn(self, imu):
         """Add this sample's turn to a running total of how far the van has rotated (L2).

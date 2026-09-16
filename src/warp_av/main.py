@@ -42,6 +42,7 @@ from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .localization.pose_source import CarlaTruthPoseSource
 from .localization.dead_reckoning import DeadReckoning
+from .localization.ekf import LocalizationEKF
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
@@ -127,6 +128,12 @@ class WarpAV:
         # gyro alone. It DRIVES NOTHING -- it runs beside the stack so a drive can be scored
         # against CARLA's truth and the drift finally measured. Nothing reads its answer.
         self.dead_reckoning = DeadReckoning()
+        # L3: the first FUSED estimate -- gyro and wheels to carry it, GNSS to hold it.
+        # Shadow, like the dead reckoner beside it: nothing that drives reads its answer.
+        # The two run together on purpose, so the fusion can be scored against the thing it
+        # is supposed to improve on rather than against nothing.
+        self.ekf = LocalizationEKF()
+        self._last_yaw_rate = 0.0
 
         print("[Init] Setting up sensors...")
         self.sensor_adapter = CarlaSensorAdapter(
@@ -944,6 +951,13 @@ class WarpAV:
         try:
             self.dead_reckoning.seed(pose.x, pose.y, pose.yaw,
                                      turn_rad=getattr(self.sensor_adapter, "imu_turn_rad", None))
+            # INITIALISATION ONLY. After this the filter never hears from the pose source
+            # again -- it lives on speed, gyro and GNSS until the mission ends.
+            self.ekf.seed(pose.x, pose.y, pose.yaw, pose.sim_time)
+            try:
+                self.sensor_adapter.fusion_q.clear()
+            except Exception:
+                pass
         except Exception:
             pass
         self.logger.log_event("mission_started", f"Destination: ({dest_x}, {dest_y})")
@@ -1018,6 +1032,15 @@ class WarpAV:
             if not getattr(self, "_dr_moaned", False):
                 self._dr_moaned = True
                 print(f"[DeadReckoning] step failed (said once): {e}")
+        # ...and the fused estimate, on the measurements' OWN clock rather than this tick's
+        # (L3). Wrapped for the same reason: a shadow estimator must never be able to stop
+        # the van.
+        try:
+            self._step_ekf(pose)
+        except Exception as e:
+            if not getattr(self, "_ekf_moaned", False):
+                self._ekf_moaned = True
+                print(f"[EKF] step failed (said once): {e}")
         _phase("where am i")
 
         # 2. Perceive
@@ -1604,6 +1627,7 @@ class WarpAV:
             # guess beside a van that has since been moved, which is exactly what made the
             # first L2 scoring run look like a 176 m error when the arithmetic was fine.
             self.dead_reckoning.forget()
+            self.ekf.forget()
             detail = "Arrived at destination"
             if getattr(self, "_parking_spot", None):
                 sp = self._parking_spot
@@ -1913,9 +1937,49 @@ class WarpAV:
             # L2, scoring only: what wheel speed and a gyro alone would have said, and how far
             # that has wandered from the pose the van is actually driving on.
             "dead_reckoning": self._dead_reckoning_state(pose),
+            # L3, scoring only: the fused estimate and how far it has wandered.
+            "ekf": self._ekf_state(pose),
             "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
                             if self.mission_manager.current_mission else None),
         }
+
+    def _step_ekf(self, pose) -> None:
+        """Feed the filter every measurement waiting, oldest first (L3).
+
+        The queue holds gyro samples at 20 Hz and GNSS fixes at 10 Hz, each carrying the
+        SIMULATOR's clock. They are sorted before use because a callback can hand one over
+        late; the filter itself refuses anything at or before its own time, so a duplicate or
+        an overtaking sample is dropped and counted rather than integrated backwards.
+        """
+        if not self.ekf.seeded:
+            return
+        self.ekf.set_speed(pose.speed, bool(getattr(self, "_reversing", False)), pose.sim_time)
+        q = getattr(self.sensor_adapter, "fusion_q", None)
+        if q is None:
+            return
+        batch = []
+        while q:
+            batch.append(q.popleft())
+        for kind, t, a, b in sorted(batch, key=lambda m: m[1]):
+            if kind == "gyro":
+                self._last_yaw_rate = a
+                self.ekf.predict_to(t, a)
+            elif kind == "gnss":
+                self.ekf.predict_to(t, self._last_yaw_rate)
+                self.ekf.correct_gnss(a, b, t)
+
+    def _ekf_state(self, pose) -> dict:
+        """What the fused estimate says, and how wrong it is. Scoring only -- nothing that
+        drives the van reads any of this."""
+        try:
+            st = self.ekf.state()
+            if st.get("seeded"):
+                st["error"] = {k: (round(v, 4) if isinstance(v, float) else v)
+                               for k, v in self.ekf.error_against(pose).items()}
+                st["noise_profile"] = getattr(self.sensor_adapter, "noise_profile", {}).get("name")
+            return st
+        except Exception:
+            return {"seeded": False, "error": "unavailable"}
 
     def _dead_reckoning_state(self, pose) -> dict:
         """What the wheels and the gyro alone say, and how wrong that is (L2).
@@ -2529,6 +2593,7 @@ class WarpAV:
     def api_stop_mission(self):
         self._forget_the_manoeuvre()
         self.dead_reckoning.forget()
+        self.ekf.forget()
         self.behavior.cancel_mission()
         self.vehicle_adapter.disengage_autonomy()
         if self.mission_manager.current_mission:

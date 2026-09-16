@@ -22,6 +22,7 @@ import time
 import math
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
 
 #: A drifting fault reaches its full value over this long (see inject_fault).
 FAULT_RAMP_S = 10.0
@@ -110,6 +111,10 @@ class Pose:
     reason: str = "OK"
     #: How unsure the above is. Zero-and-is_truth while the source is the simulator.
     cov: PoseCovariance = field(default_factory=PoseCovariance)
+    #: The SIMULATOR's clock at the moment this pose (and its speed) was read, when the
+    #: source can say. Fusion weights measurements by when they were taken, and L2-GAP found
+    #: speed to be the one input that arrived with no time of its own. None off-simulator.
+    sim_time: Optional[float] = None
 
 
 class LocalizationSystem:
