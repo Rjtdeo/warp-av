@@ -265,3 +265,41 @@ def test_the_road_and_the_sky_are_dropped_by_height():
 def test_registration_of_nothing_says_nothing():
     got = register(np.zeros((0, 2)), np.zeros((0, 2)))
     assert got["correspondences"] == 0 and not got["converged"]
+
+
+# ---- it must not depend on a library that may not be there --------------------------------
+
+def test_the_numpy_path_gives_the_same_answer_as_the_scipy_one():
+    """scipy is not a declared dependency of this project and is NOT installed on the CARLA
+    rig. The first build imported it directly, ran perfectly on the development machine, and
+    refused every registration on the rig -- reporting NO_CORRESPONDENCE, which reads as a
+    geometric failure rather than a missing import. The answer must not depend on which
+    machine it runs on."""
+    from warp_av.localization import lidar_odometry as mod
+    w = town()
+    moved = move(w, dyaw=math.radians(1.5), dx=0.7)
+    saved = mod.cKDTree
+    try:
+        _, with_scipy = run_pair(w, moved)
+        mod.cKDTree = None
+        _, without = run_pair(w, moved)
+    finally:
+        mod.cKDTree = saved
+    assert with_scipy.valid and without.valid
+    assert without.delta_yaw == pytest.approx(with_scipy.delta_yaw, abs=1e-9)
+    assert without.delta_x == pytest.approx(with_scipy.delta_x, abs=1e-9)
+    assert without.delta_y == pytest.approx(with_scipy.delta_y, abs=1e-9)
+
+
+def test_it_works_with_no_scipy_at_all():
+    """The rig's actual condition, asserted directly rather than inferred."""
+    from warp_av.localization import lidar_odometry as mod
+    saved = mod.cKDTree
+    try:
+        mod.cKDTree = None
+        w = town()
+        _, m = run_pair(w, move(w, dyaw=math.radians(2.0)))
+        assert m.valid, m.reason
+        assert m.delta_yaw_deg == pytest.approx(2.0, abs=0.05)
+    finally:
+        mod.cKDTree = saved

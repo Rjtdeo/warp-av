@@ -55,8 +55,67 @@ import numpy as np
 
 try:
     from scipy.spatial import cKDTree
-except Exception:                                  # pragma: no cover - scipy is a dependency
+except Exception:                                  # pragma: no cover - exercised on the rig
     cKDTree = None
+
+
+class _Neighbours:
+    """Nearest-neighbour lookup over a small 2-D cloud, with or without scipy.
+
+    WHY THIS EXISTS. The first version imported scipy directly. It ran on the development
+    machine, where scipy happens to be installed as somebody else's transitive dependency, and
+    refused every single registration on the CARLA rig, where it is not -- reporting
+    NO_CORRESPONDENCE, which reads as "the scene did not match" rather than "the maths never
+    ran". A missing library should not be able to disguise itself as a geometric failure.
+
+    So the cloud is searched with numpy when scipy is absent. The clouds here are small by
+    construction -- a few hundred points after voxel thinning -- and a bucketed brute-force
+    search over that is comfortably inside the 100 ms a 10 Hz sweep allows, so nothing is
+    given up by not requiring the dependency.
+    """
+
+    def __init__(self, xy: np.ndarray):
+        self.xy = np.asarray(xy, dtype=np.float64)
+        self.tree = cKDTree(self.xy) if cKDTree is not None else None
+
+    def query(self, pts: np.ndarray, radius: float):
+        """(distance, index) of the nearest point to each of `pts`; distance is inf and index
+        out of range where nothing lies within `radius`."""
+        if self.tree is not None:
+            return self.tree.query(pts, k=1, distance_upper_bound=radius)
+        n = self.xy.shape[0]
+        if n == 0 or pts.shape[0] == 0:
+            return np.full(pts.shape[0], np.inf), np.zeros(pts.shape[0], dtype=np.int64)
+        best_d = np.full(pts.shape[0], np.inf)
+        best_i = np.zeros(pts.shape[0], dtype=np.int64)
+        step = max(1, int(2_000_000 // max(1, n)))          # cap the working matrix
+        for a in range(0, pts.shape[0], step):
+            blk = pts[a:a + step]
+            d2 = ((blk[:, None, 0] - self.xy[None, :, 0]) ** 2
+                  + (blk[:, None, 1] - self.xy[None, :, 1]) ** 2)
+            j = np.argmin(d2, axis=1)
+            best_d[a:a + step] = np.sqrt(d2[np.arange(blk.shape[0]), j])
+            best_i[a:a + step] = j
+        far = best_d > radius
+        best_d[far] = np.inf
+        best_i[far] = n                                      # out of range, like cKDTree
+        return best_d, best_i
+
+    def knn(self, k: int):
+        """Indices of the k nearest points to every point in the cloud, itself included."""
+        n = self.xy.shape[0]
+        k = min(k, n)
+        if self.tree is not None:
+            return self.tree.query(self.xy, k=k)[1]
+        out = np.zeros((n, k), dtype=np.int64)
+        step = max(1, int(2_000_000 // max(1, n)))
+        for a in range(0, n, step):
+            blk = self.xy[a:a + step]
+            d2 = ((blk[:, None, 0] - self.xy[None, :, 0]) ** 2
+                  + (blk[:, None, 1] - self.xy[None, :, 1]) ** 2)
+            out[a:a + step] = np.argpartition(d2, k - 1, axis=1)[:, :k]
+        return out
+
 
 # ---- what gets registered ----------------------------------------------------------------
 #: Points nearer than this are mostly road and the van's own body; further than this the beams
@@ -192,10 +251,9 @@ def normals_2d(xy: np.ndarray, k: int = NORMAL_NEIGHBOURS):
     whether a point gets a point-to-line residual or a point-to-point one.
     """
     n = xy.shape[0]
-    if cKDTree is None or n < k + 1:
+    if n < k + 1:
         return np.zeros((n, 2)), np.zeros(n)
-    tree = cKDTree(xy)
-    _, idx = tree.query(xy, k=min(k, n))
+    idx = _Neighbours(xy).knn(k)
     nb = xy[idx]                                     # (n, k, 2)
     nb = nb - nb.mean(axis=1, keepdims=True)
     # per-point 2x2 scatter, done as one batched product
@@ -251,9 +309,9 @@ def register(source: np.ndarray, target: np.ndarray,
     out = {"theta": 0.0, "tx": 0.0, "ty": 0.0, "fitness": 0.0, "inlier_ratio": 0.0,
            "rmse": float("inf"), "correspondences": 0, "iterations": 0, "converged": False,
            "yaw_information": 0.0, "cov": None}
-    if cKDTree is None or source.shape[0] < MIN_POINTS or target.shape[0] < MIN_POINTS:
+    if source.shape[0] < MIN_POINTS or target.shape[0] < MIN_POINTS:
         return out
-    tree = cKDTree(target)
+    tree = _Neighbours(target)
     nrm, planarity = normals_2d(target)
     flat = planarity >= MIN_PLANARITY
     theta, tx, ty = init
@@ -264,7 +322,7 @@ def register(source: np.ndarray, target: np.ndarray,
         u = np.c_[c * source[:, 0] - s_ * source[:, 1],
                   s_ * source[:, 0] + c * source[:, 1]]          # R(theta) p
         moved = u + np.array([tx, ty])
-        dist, idx = tree.query(moved, k=1, distance_upper_bound=MAX_CORRESPONDENCE_M)
+        dist, idx = tree.query(moved, MAX_CORRESPONDENCE_M)
         ok = np.isfinite(dist)
         n_corr = int(ok.sum())
         out["fitness"] = n_corr / float(source.shape[0])
@@ -276,12 +334,13 @@ def register(source: np.ndarray, target: np.ndarray,
         if m < MIN_CORRESPONDENCES:
             out["iterations"] = it
             return out
-        q = target[idx[sel]]
+        q = target[np.clip(idx[sel], 0, target.shape[0] - 1)]
         d = moved[sel] - q                       # the full point-to-point offset
         us = u[sel]
         lever = np.c_[-us[:, 1], us[:, 0]]       # d(R p)/dtheta
-        fsel = flat[idx[sel]]
-        ns = nrm[idx[sel]]
+        ci = np.clip(idx[sel], 0, target.shape[0] - 1)
+        fsel = flat[ci]
+        ns = nrm[ci]
 
         # A point on a wall is free to slide ALONG it: score only the across-wall part.
         # A corner has no meaningful normal, and for a corner the full offset IS the right
