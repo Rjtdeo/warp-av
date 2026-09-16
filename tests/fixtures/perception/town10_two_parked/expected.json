@@ -2,7 +2,7 @@
  "note": "thresholds = the numbers measured when this file was written, minus a margin; a change that drops below them fails tests/test_replay_harness.py",
  "objects": {
   "carlacola": {
-   "min_recall": 0.0,
+   "min_recall": 0.9,
    "distance_m": 16.0,
    "visible": true,
    "labelled_points": 78,

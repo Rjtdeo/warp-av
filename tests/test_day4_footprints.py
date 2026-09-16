@@ -79,7 +79,11 @@ def test_detected_object_defaults_to_unmeasured():
     assert (o.length_m, o.width_m, o.height_m, o.yaw_deg) == (0.0, 0.0, 0.0, 0.0)
 
 
-def test_smaller_cell_separates_two_things_a_metre_apart():
+def test_two_things_a_metre_apart_are_two_things_whatever_the_grid():
+    """This used to read "a coarse grid glues them together", and it did: the flood fill joins
+    CELLS, so at 1.2 m two squares 2 m apart came out as one blob and only the van's own 0.8 m
+    grid kept them apart. Since 2026-09-15 the points inside a blob are re-joined by DISTANCE
+    (BODY_GAP_M), so how coarse the grid is no longer decides whether two bodies are one."""
     pts = list(rect(10.0, 0.0, 0.4, 0.4)) + list(rect(10.0, 2.0, 0.4, 0.4))
-    assert len(cluster_points(pts, cell=1.2)) == 1, "a coarse grid glues them together"
-    assert len(cluster_points(pts, cell=0.8)) == 2, "the van's grid should keep them apart"
+    assert len(cluster_points(pts, cell=0.8)) == 2, "the van's grid keeps them apart, as before"
+    assert len(cluster_points(pts, cell=1.2)) == 2, "and a coarse one no longer glues them"

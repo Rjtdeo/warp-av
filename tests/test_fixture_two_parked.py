@@ -107,24 +107,23 @@ def test_the_pipeline_replays_on_it():
 
 # ---- the fault it was recorded to hold -------------------------------------------------------
 
-def test_one_blob_swallows_both_of_them():
-    """What goes wrong today. Recorded so a fix has something to be scored against, and so
-    this stops passing the moment one lands."""
+def test_neither_blob_swallows_the_other():
+    """Until 2026-09-15 these two shared one blob of 118 points, 7.08 x 2.62 m, centred
+    between them -- near enough to the 4x4 to count as finding it, 5.3 m from the truck,
+    which was therefore lost. Now the points inside a blob are joined by distance rather than
+    by grid cell, and half a metre of air is enough to keep them apart."""
     cl, meta, objects = blobs()
     both = [c for c in cl if all(near([c], o, meta) for o in objects)]
-    swallowed = [c for c in cl
-                 if near([c], objects[0], meta) or near([c], objects[1], meta)]
-    assert len(swallowed) == 1, f"today they share one blob; got {len(swallowed)}"
-    c = swallowed[0]
-    assert c["length_m"] > 6.0, f"one body 7 m long where there are two of 5: {c['length_m']:.2f}"
-    assert both == [], "and its centre is not even within reach of both"
+    assert both == [], "no blob covers both of them"
+    for o in objects:
+        for c in near(cl, o, meta):
+            assert c["length_m"] < 6.5, \
+                f"{o['blueprint']}'s blob is {c['length_m']:.2f} m long: it has swallowed its neighbour"
 
 
-@pytest.mark.xfail(strict=True, reason="two parked vehicles half a metre apart are still one "
-                                       "blob; this is the fixture's whole purpose")
 def test_each_parked_vehicle_gets_its_own_blob():
-    """What should happen. Strict, so it fails loudly as an unexpected pass once the split
-    works -- that is the signal to delete the xfail, not to celebrate quietly."""
+    """What the fixture was recorded to make true. It was a strict xfail from the day the
+    fixture landed until the split worked, which is what made the change visible."""
     cl, meta, objects = blobs()
     for o in objects:
         got = near(cl, o, meta)

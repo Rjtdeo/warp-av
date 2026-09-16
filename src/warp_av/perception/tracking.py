@@ -249,6 +249,50 @@ def merge_split_clusters(clusters, gap_base=None, gap_per_m=None,
     return out
 
 
+def _separate_bodies(pts):
+    """One blob's points, split where there is real empty space in it: a list of point lists.
+
+    Joins points by distance rather than by grid cell (see BODY_GAP_M). The distance test is
+    indexed on a BODY_GAP_M grid, so each point is compared only with points in the nine cells
+    around it, never with every other point in the blob.
+    """
+    if len(pts) < 2 * BODY_MIN_POINTS:
+        return [pts]
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    if max(max(xs) - min(xs), max(ys) - min(ys)) > BODY_SPLIT_MAX_M:
+        return [pts]                       # a wall or a facade, not two bodies
+    cells = {}
+    for i, p in enumerate(pts):
+        cells.setdefault((int(p[0] // BODY_GAP_M), int(p[1] // BODY_GAP_M)), []).append(i)
+    parent = list(range(len(pts)))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    gap2 = BODY_GAP_M * BODY_GAP_M
+    for (cx, cy), here in cells.items():
+        for dx, dy in ((0, 0), (0, 1), (1, -1), (1, 0), (1, 1)):
+            there = cells.get((cx + dx, cy + dy))
+            if not there:
+                continue
+            for i in here:
+                xi, yi = pts[i][0], pts[i][1]
+                for j in there:
+                    if i == j or root(i) == root(j):
+                        continue
+                    if (xi - pts[j][0]) ** 2 + (yi - pts[j][1]) ** 2 <= gap2:
+                        parent[root(j)] = root(i)
+    bodies = {}
+    for i in range(len(pts)):
+        bodies.setdefault(root(i), []).append(pts[i])
+    big = [v for v in bodies.values() if len(v) >= BODY_MIN_POINTS]
+    return big if len(big) >= 2 else [pts]
+
+
 def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
                    ego_half_len=3.2, ego_half_wid=1.3, max_clusters=DEFAULT_MAX_CLUSTERS, heights=None,
                    return_members=False, min_points_far=None, far_range_m=FAR_RANGE_M):
@@ -308,64 +352,67 @@ def cluster_points(points, cell=1.0, min_points=3, max_range=55.0,
             need = min_points_far if math.hypot(fx, fy) >= far_range_m else min_points
         if len(pts) < need:
             continue
-        mx = sum(p[0] for p in pts) / len(pts)
-        my = sum(p[1] for p in pts) / len(pts)
-        extent = max(math.hypot(p[0] - mx, p[1] - my) for p in pts)
-        height = None
-        if hs is not None:
-            hv = [p[2] for p in pts if p[2] is not None and p[2] == p[2]]
-            height = max(hv) if hv else None
-        # The footprint is measured from the points the van could REACH -- everything at or
-        # below its own roof (FOOTPRINT_MAX_HEIGHT_M). A lamp arm three metres up is not ground
-        # the van has to steer around, and folding it in turns a column into a long body. Where
-        # the height of a point is unknown, or too few are low enough to measure, all of them
-        # are used, which is what happened before this and is the cautious answer.
-        low = [p for p in pts if p[2] is None or p[2] != p[2] or p[2] <= FOOTPRINT_MAX_HEIGHT_M]
-        foot = low if len(low) >= FOOTPRINT_MIN_POINTS else pts
-        fx = sum(p[0] for p in foot) / len(foot)
-        fy = sum(p[1] for p in foot) / len(foot)
-        # direction of the blob's long axis, 0 = along the van's forward axis,
-        # 90 = across it (from the 2x2 covariance of its points)
-        sxx = sum((p[0] - fx) ** 2 for p in foot)
-        syy = sum((p[1] - fy) ** 2 for p in foot)
-        sxy = sum((p[0] - fx) * (p[1] - fy) for p in foot)
-        theta = 0.5 * math.atan2(2.0 * sxy, sxx - syy) if len(foot) > 1 else 0.0
-        axis_deg = abs(math.degrees(theta))
-        # the blob's footprint: how long it is along that axis and how wide across it.
-        # The LiDAR only ever sees the near face of a thing, so both are lower bounds.
-        ct, st = math.cos(theta), math.sin(theta)
-        along = [(p[0] - fx) * ct + (p[1] - fy) * st for p in foot]
-        across = [-(p[0] - fx) * st + (p[1] - fy) * ct for p in foot]
-        length_m = max(along) - min(along)
-        width_m = max(across) - min(across)
-        # The rectangle the planner judges it by (fit_rectangle): near the van, the smallest
-        # one round the points; further off, the spread's own rectangle -- centred on ITS
-        # middle, not on the average of the points, which a side-on car piles at one corner.
-        a_mid = 0.5 * (max(along) + min(along))
-        c_mid = 0.5 * (max(across) + min(across))
-        box_x = fx + a_mid * ct - c_mid * st
-        box_y = fy + a_mid * st + c_mid * ct
-        box_len, box_wid, box_yaw = length_m, width_m, None
-        if (len(foot) >= BOX_FIT_MIN_POINTS and math.hypot(mx, my) <= BOX_FIT_RANGE_M
-                and abs(my) <= BOX_FIT_MAX_SIDEWAYS_M):
-            box_x, box_y, box_len, box_wid, box_yaw = fit_rectangle([(p[0], p[1]) for p in foot])
-        if width_m > length_m:                       # keep 'length' the longer side
-            length_m, width_m = width_m, length_m
-            theta += math.pi / 2
-        yaw_deg = math.degrees(math.atan2(math.sin(theta), math.cos(theta)))
-        c = {"x": mx, "y": my,
-             "distance": math.hypot(mx, my),
-             "n": len(pts), "extent": extent,
-             "height": height, "length": 2.0 * extent,
-             "axis_deg": axis_deg,
-             "length_m": length_m, "width_m": width_m,
-             "box_x": box_x, "box_y": box_y, "box_len": box_len, "box_wid": box_wid,
-             "box_yaw_deg": yaw_deg if box_yaw is None else box_yaw,
-             "yaw_deg": yaw_deg,
-             "weak": len(pts) < min_points}
-        if return_members:
-            c["members"] = [p[3] for p in pts]
-        clusters.append(c)
+        # one blob, unless there is real empty space inside it: two parked bodies
+        # half a metre apart are two bodies, not one (see BODY_GAP_M)
+        for pts in _separate_bodies(pts):
+            mx = sum(p[0] for p in pts) / len(pts)
+            my = sum(p[1] for p in pts) / len(pts)
+            extent = max(math.hypot(p[0] - mx, p[1] - my) for p in pts)
+            height = None
+            if hs is not None:
+                hv = [p[2] for p in pts if p[2] is not None and p[2] == p[2]]
+                height = max(hv) if hv else None
+            # The footprint is measured from the points the van could REACH -- everything at or
+            # below its own roof (FOOTPRINT_MAX_HEIGHT_M). A lamp arm three metres up is not ground
+            # the van has to steer around, and folding it in turns a column into a long body. Where
+            # the height of a point is unknown, or too few are low enough to measure, all of them
+            # are used, which is what happened before this and is the cautious answer.
+            low = [p for p in pts if p[2] is None or p[2] != p[2] or p[2] <= FOOTPRINT_MAX_HEIGHT_M]
+            foot = low if len(low) >= FOOTPRINT_MIN_POINTS else pts
+            fx = sum(p[0] for p in foot) / len(foot)
+            fy = sum(p[1] for p in foot) / len(foot)
+            # direction of the blob's long axis, 0 = along the van's forward axis,
+            # 90 = across it (from the 2x2 covariance of its points)
+            sxx = sum((p[0] - fx) ** 2 for p in foot)
+            syy = sum((p[1] - fy) ** 2 for p in foot)
+            sxy = sum((p[0] - fx) * (p[1] - fy) for p in foot)
+            theta = 0.5 * math.atan2(2.0 * sxy, sxx - syy) if len(foot) > 1 else 0.0
+            axis_deg = abs(math.degrees(theta))
+            # the blob's footprint: how long it is along that axis and how wide across it.
+            # The LiDAR only ever sees the near face of a thing, so both are lower bounds.
+            ct, st = math.cos(theta), math.sin(theta)
+            along = [(p[0] - fx) * ct + (p[1] - fy) * st for p in foot]
+            across = [-(p[0] - fx) * st + (p[1] - fy) * ct for p in foot]
+            length_m = max(along) - min(along)
+            width_m = max(across) - min(across)
+            # The rectangle the planner judges it by (fit_rectangle): near the van, the smallest
+            # one round the points; further off, the spread's own rectangle -- centred on ITS
+            # middle, not on the average of the points, which a side-on car piles at one corner.
+            a_mid = 0.5 * (max(along) + min(along))
+            c_mid = 0.5 * (max(across) + min(across))
+            box_x = fx + a_mid * ct - c_mid * st
+            box_y = fy + a_mid * st + c_mid * ct
+            box_len, box_wid, box_yaw = length_m, width_m, None
+            if (len(foot) >= BOX_FIT_MIN_POINTS and math.hypot(mx, my) <= BOX_FIT_RANGE_M
+                    and abs(my) <= BOX_FIT_MAX_SIDEWAYS_M):
+                box_x, box_y, box_len, box_wid, box_yaw = fit_rectangle([(p[0], p[1]) for p in foot])
+            if width_m > length_m:                       # keep 'length' the longer side
+                length_m, width_m = width_m, length_m
+                theta += math.pi / 2
+            yaw_deg = math.degrees(math.atan2(math.sin(theta), math.cos(theta)))
+            c = {"x": mx, "y": my,
+                 "distance": math.hypot(mx, my),
+                 "n": len(pts), "extent": extent,
+                 "height": height, "length": 2.0 * extent,
+                 "axis_deg": axis_deg,
+                 "length_m": length_m, "width_m": width_m,
+                 "box_x": box_x, "box_y": box_y, "box_len": box_len, "box_wid": box_wid,
+                 "box_yaw_deg": yaw_deg if box_yaw is None else box_yaw,
+                 "yaw_deg": yaw_deg,
+                 "weak": len(pts) < min_points}
+            if return_members:
+                c["members"] = [p[3] for p in pts]
+            clusters.append(c)
     global LAST_CLUSTER_TOTAL
     LAST_CLUSTER_TOTAL = len(clusters)
     if len(clusters) > max_clusters:
@@ -442,6 +489,22 @@ CLASS_SIZE_LIMITS = {
 # and the pair came out as one 2.66 m long body lying across a parking approach. Turned across
 # the way in, a box that long reaches about a metre sideways, and that is what refused it.
 # A wall keeps its length: the points below the roof span it just the same.
+# Two bodies with air between them are two bodies. The flood fill joins CELLS, so on a 0.8 m
+# grid anything within about a cell of anything else becomes one blob. Live in F_reroute on
+# 2026-09-15 a stopped truck and a 4x4 parked 0.47 m from it came out as one 7.2 m body
+# centred between them: the van held 15.7 m back from a truck it was reading at 10.6, and the
+# truck was never reported as an object at all. Recorded as town10_two_parked.
+#
+# So inside a blob the points are re-joined by DISTANCE instead of by cell: a point belongs
+# with another when it is within BODY_GAP_M of it. One body's returns run nearly continuously
+# and stay whole; two bodies with a gap come apart. Measured on all five fixtures: the two
+# parked vehicles separate, the four town03 recordings do not move at all -- same recall, same
+# merges, same shattering -- for 7 % more blobs and 2.5 ms of tick at worst.
+BODY_GAP_M = 0.50            # metres of EMPTY SPACE that make one body two
+BODY_MIN_POINTS = 6          # a piece smaller than this is not a body of its own
+BODY_SPLIT_MAX_M = 14.0      # ...and a blob longer than the longest vehicle (CLASS_SIZE_LIMITS)
+                             # is a wall or a facade: splitting those costs time and gains
+                             # nothing, so they are left exactly as they were
 FOOTPRINT_MAX_HEIGHT_M = 2.8      # the van's roof, plus a little for pitch and range error
 FOOTPRINT_MIN_POINTS = 2          # ...below it, or there is nothing to measure and all are used
 SIZE_SPREAD_BASE_M = 0.15
