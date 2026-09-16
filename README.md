@@ -1,28 +1,22 @@
 # Warp AV — Autonomous Vehicle Software Platform
 
-Autonomous cargo vehicle software stack running in CARLA simulation with ROS 2.
+Autonomous cargo vehicle software stack running in CARLA simulation.
+
+The stack is plain Python: one process holding a ~10 Hz autonomy loop and a Flask + SocketIO
+API that also serves the operator console. **There is no ROS 2 in this repository** — no
+`rclpy`, no launch files, no message definitions, no colcon workspace. The boundary a future
+vehicle sits behind is `src/warp_av/vehicle_interface.py`, not a ROS topic. (Earlier versions
+of this file described a ROS 2 setup that was never built; corrected 2026-09-15.)
 
 ## Quick Start
 
 ### Prerequisites
-- Ubuntu 22.04
-- NVIDIA GPU with drivers installed
+- CARLA 0.9.15, and a machine that can run it (NVIDIA GPU with drivers)
 - Python 3.10+
-- ROS 2 Humble
+- Any OS CARLA supports. The live rig this project is developed against is Windows; the test
+  suite runs anywhere and needs no simulator.
 
-### 1. Install ROS 2 Humble
-```bash
-sudo apt update && sudo apt install -y software-properties-common
-sudo add-apt-repository universe
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
-sudo sh -c 'echo "deb http://packages.ros.org/ros2/ubuntu jammy main" > /etc/apt/sources.list.d/ros2.list'
-sudo apt update
-sudo apt install -y ros-humble-desktop python3-colcon-common-extensions python3-pip
-echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
-source ~/.bashrc
-```
-
-### 2. Install CARLA 0.9.15
+### 1. Install CARLA 0.9.15
 ```bash
 # Download CARLA
 sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 1AF1527DE64CB8D9
@@ -34,37 +28,51 @@ sudo apt install -y carla-simulator
 # Extract to ~/carla
 ```
 
-### 3. Install Python Dependencies
+### 2. Install Python Dependencies
 ```bash
 cd warp-av
 pip install -r requirements.txt
 ```
+(`requirements-working.txt` is a frozen `pip freeze` from an older machine that happened to
+have ROS 2 installed. Nothing in this repository reads it and nothing here imports those
+packages — install `requirements.txt`.)
 
-### 4. Build ROS 2 Workspace
+### 3. Start CARLA and the stack
 ```bash
-cd warp-av
-colcon build
-source install/setup.bash
-```
-
-### 5. Launch Everything
-```bash
-# Terminal 1: Start CARLA
+# Terminal 1: start CARLA
 cd ~/carla && ./CarlaUE4.sh
 
-# Terminal 2: Launch autonomy stack
-ros2 launch warp_av full_stack.launch.py
-
-# Terminal 3: Open operator console
-cd src/console && python3 -m http.server 8080
-# Open http://localhost:8080 in browser
+# Terminal 2: start the autonomy stack
+cd warp-av && python3 run.py
 ```
 
-### 6. Run a Mission
-Open the operator console and click "Start Mission", or:
+`run.py` puts `src/` and CARLA's `PythonAPI/carla` on the path — set `CARLA_PYTHONAPI` if
+CARLA lives somewhere unusual — then runs the autonomy loop at 10 Hz and serves the API and
+the operator console together on port 5000. There is no separate console server to start.
+
+### 4. Run a Mission
+Open the operator console at **http://localhost:5000** and click START MISSION, or call the
+API directly:
+
 ```bash
-ros2 topic pub /mission/goal std_msgs/String '{"data": "destination_1"}' --once
+# pick a destination from the town's spawn points
+curl -s http://localhost:5000/api/spawn_points | python3 -m json.tool | head
+
+# then drive to it (x and y are CARLA world coordinates)
+curl -X POST http://localhost:5000/api/mission/start \
+     -H 'Content-Type: application/json' \
+     -d '{"x": <X>, "y": <Y>}'
 ```
+
+`GET /api/state` reports what the van is doing at any moment — pose, behaviour and why,
+the planner's verdict, perception, and sensor health.
+
+### 5. Run the tests (no CARLA needed)
+```bash
+PYTHONPATH=src python3 -m pytest -q tests
+```
+A stub `carla` module is injected by `tests/conftest.py`, so the whole suite runs on a laptop
+with no simulator.
 
 ## Architecture
 See [architecture/README.md](architecture/README.md)
