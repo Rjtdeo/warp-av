@@ -420,6 +420,13 @@ class WarpAV:
     REROUTE_AFTER_S = 6.0
     REROUTE_WITHIN_M = 45.0
     REROUTE_EVERY_S = 15.0
+    #: How far up the route to look for a turn-off when reporting WHY there is none to take.
+    #: Diagnostics only: nothing is rerouted on the strength of a junction this far off. A
+    #: refusal that says "no junction within 16 m" reads like a near miss; live in F_reroute on
+    #: 2026-09-15 the truth was that the first one is 132 m on, past the blockage, and the only
+    #: one behind is 38 m back -- further than the van can ever reverse. Those are different
+    #: situations and an operator needs to be told which one this is.
+    REROUTE_LOOK_FAR_M = 200.0
     #: what counts as "the road is blocked" for this: something in the way, a road that has
     #: stayed blocked, and a junction whose far side is blocked (the van is held before it)
     BLOCKED_REASONS = (VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
@@ -523,14 +530,31 @@ class WarpAV:
             self._note_move(NO_WAY_ROUND,
                             f"the way is blocked {at_m:.0f} m ahead and there is no junction "
                             f"between here and it — nothing to turn off at")
+            # ...and say WHICH kind of no it is. A junction just out of reach is a wait; the
+            # nearest one being further up the road than the van will ever get is a street
+            # with no exit, and somebody has to come and turn the van round.
+            far = None
+            try:
+                far = self.planner.distance_to_next_junction(
+                    self._route, pose.x, pose.y, horizon_m=self.REROUTE_LOOK_FAR_M)
+            except Exception:
+                pass
+            if span is not None:
+                why = (f"the next junction is {span[0]:.0f} m along, past the blockage at "
+                       f"{reach:.0f} m — the van cannot drive through it to reach it")
+            elif far is not None:
+                why = (f"no junction within {reach:.0f} m of where the van could turn off "
+                       f"from; the first one on this road is {far:.0f} m ahead, the far side "
+                       f"of the blockage — there is no way round it from here")
+            else:
+                why = (f"no junction within {reach:.0f} m of where the van could turn off "
+                       f"from, and none at all in the next {self.REROUTE_LOOK_FAR_M:.0f} m of "
+                       f"this road — it has no exit the van can reach")
             self._record_reroute(
-                "NO_DIVERSION_POINT",
-                (f"no junction on the route within {reach:.0f} m of where the van could turn "
-                 f"off from" if span is None else
-                 f"the next junction is {span[0]:.0f} m along, past the blockage at "
-                 f"{reach:.0f} m — the van cannot drive through it to reach it"),
+                "NO_DIVERSION_POINT", why,
                 blocker_distance_m=round(at_m, 2), diversion_reach_m=round(reach, 2),
                 next_junction_m=(None if span is None else round(span[0], 2)),
+                first_junction_on_road_m=(None if far is None else round(far, 1)),
                 back_out_m=float(self.REVERSE_MAX_M))
             return
         bx, by = pose.x + c * at_m, pose.y + s_ * at_m

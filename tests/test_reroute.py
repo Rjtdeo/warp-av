@@ -32,7 +32,7 @@ def test_the_map_is_asked_by_making_the_blocked_road_expensive():
 def test_the_van_only_asks_when_there_is_somewhere_to_turn_off():
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text()
     i = src.index("def _maybe_reroute")
-    body = src[i:i + 7000]
+    body = src[i:i + 9000]
     assert "span = self.planner.junction_span" in body
     # The junction is looked for from where the van could still turn off FROM -- it backs out
     # at most REVERSE_MAX_M -- and must lie between there and the blockage, never beyond it.

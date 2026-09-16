@@ -43,7 +43,7 @@ def van(route=None, van_x=20.0, blocker_m=1.5, blocked_for_s=30.0, asked_ago_s=6
     s = SimpleNamespace()
     s.said, s.logged, s.asked = [], [], []
     for k in ("BLOCKED_REASONS", "REROUTE_AFTER_S", "REROUTE_EVERY_S", "REROUTE_WITHIN_M",
-              "REVERSE_MAX_M", "REROUTE_LOG_EVERY_S"):
+              "REVERSE_MAX_M", "REROUTE_LOG_EVERY_S", "REROUTE_LOOK_FAR_M"):
         setattr(s, k, getattr(WarpAV, k))
     s.REROUTE_LOG_EVERY_S = 0.0                  # in a test every change is written
     now = time.time()
@@ -292,3 +292,36 @@ def test_a_broken_recorder_can_never_stop_a_reroute():
     s.logger.log_event = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full"))
     s.go()
     assert s._route is other, "the reroute still happened"
+
+
+# ---- a dead end should not read like a near miss (F_reroute, 2026-09-15) -------------------
+
+def test_a_junction_out_of_reach_and_a_road_with_no_exit_read_differently():
+    """F sits on a road whose first junction is 132 m on, the far side of the truck, and whose
+    nearest one behind is 38 m back -- further than the van will ever reverse. The refusal
+    said only "no junction within 16 m", which reads like a near miss rather than a street the
+    van cannot leave. Those are different situations and an operator needs to be told which."""
+    beyond = van(route=road(junction_at=60.0), van_x=20.0, blocker_m=1.5, alternate=road(n=30))
+    beyond.go()
+    r = beyond._reroute
+    assert r["code"] == "NO_DIVERSION_POINT"
+    assert r["first_junction_on_road_m"] is not None, "there IS one, further up the road"
+    assert "the far side of the blockage" in r["reason"]
+
+    none_at_all = van(route=road(junction_at=None), van_x=20.0, blocker_m=1.5, alternate=road(n=30))
+    none_at_all.go()
+    r2 = none_at_all._reroute
+    assert r2["code"] == "NO_DIVERSION_POINT"
+    assert r2["first_junction_on_road_m"] is None
+    assert "no exit the van can reach" in r2["reason"]
+    assert r["reason"] != r2["reason"], "the two noes say different things"
+
+
+def test_how_far_it_looks_to_report_is_not_how_far_it_will_reroute():
+    """The long look is diagnostics only: a junction 60 m off is still refused."""
+    s = van(route=road(junction_at=60.0), van_x=20.0, blocker_m=1.5, alternate=road(n=30))
+    s.go()
+    assert s._reroute["code"] == "NO_DIVERSION_POINT"
+    assert s.asked == [], "the map was never asked"
+    assert s._route.waypoints[0].x == 0.0, "and the route is untouched"
+    assert WarpAV.REROUTE_LOOK_FAR_M > WarpAV.REROUTE_WITHIN_M
