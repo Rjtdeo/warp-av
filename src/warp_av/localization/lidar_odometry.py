@@ -48,6 +48,7 @@ IT DRIVES NOTHING. Shadow mode: the measurement is published for scoring and not
 from __future__ import annotations
 
 import math
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
@@ -419,10 +420,15 @@ class LidarOdometry:
     Shadow only. Nothing that steers, plans or brakes reads a number this produces.
     """
 
-    def __init__(self):
+    def __init__(self, keep_recent: int = 16):
         self._prev: Optional[np.ndarray] = None
         self._prev_t: Optional[float] = None
         self.last: Optional[LidarOdometryMeasurement] = None
+        # Every measurement since the last few reports, not just the newest. A sweep is
+        # registered at about 10 Hz and the evidence recorder samples at 5, so reporting only
+        # `last` would silently drop half of them -- and a scoring run that sees half the
+        # measurements cannot say what the accumulated drift was.
+        self.recent: deque = deque(maxlen=int(keep_recent))
         self.attempts = 0
         self.valid_count = 0
         self.refusals: dict = {}
@@ -448,6 +454,7 @@ class LidarOdometry:
         m = LidarOdometryMeasurement(sim_time=float(sim_time), dt=dt)
         self.attempts += 1
         self.last = m
+        self.recent.append(m)
         if not (0.0 < dt <= MAX_DT_S):
             return self._refuse(m, "BAD_DT")
         if cur.shape[0] < MIN_POINTS or prev.shape[0] < MIN_POINTS:
@@ -490,4 +497,5 @@ class LidarOdometry:
              "refusals": dict(self.refusals)}
         if self.last is not None:
             d["last"] = self.last.as_dict()
+            d["recent"] = [x.as_dict() for x in self.recent]
         return d
