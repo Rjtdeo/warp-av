@@ -41,6 +41,7 @@ from .perception.camera_lidar_perception import CameraLidarPerception
 from .pacing import sleep_remainder
 from .localization.localization import LocalizationSystem
 from .localization.pose_source import CarlaTruthPoseSource
+from .localization.dead_reckoning import DeadReckoning
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
@@ -122,6 +123,10 @@ class WarpAV:
         # there is now a single place to replace when the estimator arrives.
         print("[Init] Pose source: CARLA truth (one source for localization, LiDAR, perception)")
         self.pose_source = CarlaTruthPoseSource(self.vehicle_adapter.vehicle)
+        # L2: the first thing here that ESTIMATES where the van is, from wheel speed and a
+        # gyro alone. It DRIVES NOTHING -- it runs beside the stack so a drive can be scored
+        # against CARLA's truth and the drift finally measured. Nothing reads its answer.
+        self.dead_reckoning = DeadReckoning()
 
         print("[Init] Setting up sensors...")
         self.sensor_adapter = CarlaSensorAdapter(
@@ -934,6 +939,13 @@ class WarpAV:
 
         # Start logging
         self.logger.start_mission_log(mission.mission_id)
+        # L2: dead reckoning starts from a known pose, because that is what dead reckoning
+        # is -- the question it answers is how far it has wandered N metres later.
+        try:
+            self.dead_reckoning.seed(pose.x, pose.y, pose.yaw,
+                                     turn_rad=getattr(self.sensor_adapter, "imu_turn_rad", None))
+        except Exception:
+            pass
         self.logger.log_event("mission_started", f"Destination: ({dest_x}, {dest_y})")
         if getattr(self, "_parking_note", None):
             self.logger.log_event("parking_spot", self._parking_note)
@@ -993,6 +1005,19 @@ class WarpAV:
 
         # 1. Localize
         pose = self.localization.update()
+        # ...and, beside it and read by nothing, what the wheels and the gyro alone would say
+        # (L2). Speed is the van's own speedometer -- on a real vehicle that is wheel speed off
+        # CAN -- and the turn is the IMU total the sensor adapter sums at 20 Hz. Wrapped
+        # because an estimator that drives nothing must never be able to stop the van.
+        try:
+            self.dead_reckoning.update(
+                speed_mps=pose.speed,
+                reverse=bool(getattr(self, "_reversing", False)),
+                turn_rad=getattr(self.sensor_adapter, "imu_turn_rad", None))
+        except Exception as e:
+            if not getattr(self, "_dr_moaned", False):
+                self._dr_moaned = True
+                print(f"[DeadReckoning] step failed (said once): {e}")
         _phase("where am i")
 
         # 2. Perceive
@@ -1881,9 +1906,33 @@ class WarpAV:
             "uptime_s": round(time.time() - self._start_time, 1),
 
             "localization": {"confidence": round(pose.confidence, 2), "quality": pose.quality.value, "healthy": pose.healthy},
+            # L2, scoring only: what wheel speed and a gyro alone would have said, and how far
+            # that has wandered from the pose the van is actually driving on.
+            "dead_reckoning": self._dead_reckoning_state(pose),
             "destination": ({"x": self.mission_manager.current_mission.destination_x, "y": self.mission_manager.current_mission.destination_y}
                             if self.mission_manager.current_mission else None),
         }
+
+    def _dead_reckoning_state(self, pose) -> dict:
+        """What the wheels and the gyro alone say, and how wrong that is (L2).
+
+        Scoring only. Nothing reads this to make a decision; it is published so a drive can be
+        graded against CARLA's own truth afterwards, and so the drift finally has a number.
+        `pose` is what the van is ACTUALLY driving on, which today is the simulator's answer,
+        so the error below is the estimate against ground truth.
+        """
+        try:
+            st = self.dead_reckoning.state()
+            if st.get("seeded"):
+                st["error"] = {k: (round(v, 4) if isinstance(v, float) else v)
+                               for k, v in self.dead_reckoning.error_against(pose).items()}
+                sa = self.sensor_adapter
+                st["imu"] = {"turn_deg": round(math.degrees(getattr(sa, "imu_turn_rad", 0.0)), 3),
+                             "samples": getattr(sa, "imu_turn_samples", 0),
+                             "gaps": getattr(sa, "imu_turn_gaps", 0)}
+            return st
+        except Exception:
+            return {"seeded": False, "error": "unavailable"}
 
     def _lidar_sweep_telemetry(self) -> dict:
         """Perception fix 1: is the LiDAR handing over whole sweeps? One read

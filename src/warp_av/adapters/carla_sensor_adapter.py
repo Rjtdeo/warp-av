@@ -160,6 +160,18 @@ class ImuReading:
     timestamp: float = field(default_factory=time.time)
 
 
+#: Longer than this between two IMU samples and the gap is a stall, a restart or a dropped
+#: sensor -- not a turn. The IMU ticks at 20 Hz, so this is eight missed samples.
+IMU_MAX_GAP_S = 0.4
+
+#: Which way CARLA's gyro-z points relative to the van's yaw. CARLA's world is left-handed and
+#: yaw grows clockwise seen from above, so this is NOT obviously +1 and guessing it would put
+#: the estimator's heading exactly backwards. It is MEASURED, live, by turning the van and
+#: comparing the summed gyro against the simulator's own yaw (scratch/l2_gyro_sign.py), and the
+#: measurement is written down in the L2 report rather than assumed here.
+GYRO_Z_SIGN = 1.0
+
+
 class CarlaSensorAdapter:
     """
     Manages all sensors attached to the CARLA vehicle.
@@ -200,6 +212,13 @@ class CarlaSensorAdapter:
         self._lidar_callbacks: List[Callable] = []
 
         # Health tracking
+        # L2: how far the van has turned, summed over every IMU sample (see _integrate_turn).
+        self.imu_turn_rad = 0.0
+        self.imu_turn_dt_s = 0.0
+        self.imu_turn_samples = 0
+        self.imu_turn_gaps = 0
+        self._imu_prev_t = None
+
         self._last_camera_time = 0.0
         # day 14: is the picture a real one? (frozen / black / blank)
         self._last_thumb = None
@@ -423,6 +442,34 @@ class CarlaSensorAdapter:
             timestamp=time.time()
         )
         self._last_imu_time = time.time()
+        self._integrate_turn(imu)
+
+    def _integrate_turn(self, imu):
+        """Add this sample's turn to a running total of how far the van has rotated (L2).
+
+        The IMU arrives at 20 Hz and the driving loop runs at 9-10 Hz, so a loop that simply
+        read the newest gyro value and multiplied by its own tick would throw away every other
+        sample and approximate a changing turn rate by one instant of it. Heading is the axis
+        the stack is most sensitive to -- L1.5 measured it failing at half a degree -- so the
+        turning is summed HERE, where every sample arrives, and the estimator reads the total.
+
+        The total is an angle in radians, monotonic in the sense that it only ever accumulates;
+        a reader takes the difference since it last looked. Nothing here decides anything: the
+        only consumer is the dead-reckoning estimator, which drives nothing.
+        """
+        try:
+            t = float(getattr(imu, "timestamp", 0.0)) or time.time()
+            if self._imu_prev_t is not None:
+                dt = t - self._imu_prev_t
+                if 0.0 < dt < IMU_MAX_GAP_S:
+                    self.imu_turn_rad += GYRO_Z_SIGN * float(imu.gyroscope.z) * dt
+                    self.imu_turn_dt_s += dt
+                    self.imu_turn_samples += 1
+                else:
+                    self.imu_turn_gaps += 1     # a stall or a restart: do not invent a turn
+            self._imu_prev_t = t
+        except Exception:
+            self.imu_turn_gaps += 1
 
     def on_camera(self, callback):
         self._camera_callbacks.append(callback)
