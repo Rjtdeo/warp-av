@@ -27,3 +27,6 @@ scratch/
 !rl/models/README.md
 !logs/demo_runs/
 !logs/demo_runs/*.jsonl
+
+# V1 evidence runs: one folder per run, never committed (large traces)
+scenarios/results/runs/

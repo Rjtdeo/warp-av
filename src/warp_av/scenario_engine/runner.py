@@ -10,7 +10,8 @@ Executes one catalog scenario against a *running* CARLA + Warp AV stack:
     5. poll GET /api/state at ~10 Hz, stepping actor behaviours and firing triggers
        (e-stop / pause / inject / ... go through the same HTTP API the console uses)
     6. stop at timeout or terminal condition, clean up actors
-    7. compute metrics, evaluate, write scenarios/results/<id>.json
+    7. compute metrics, evaluate, write scenarios/results/runs/<run_id>/<id>.json (+ .trace.jsonl,
+       run_manifest.json, SUMMARY.md, summary.csv) -- one folder per run, nothing overwritten
 
 `--dry-run` performs steps 1–4 in "plan only" mode without CARLA or the API so
 the catalog can be sanity-checked on any machine.
@@ -19,6 +20,10 @@ from __future__ import annotations
 
 import json
 import math
+import platform
+import socket
+import subprocess
+import sys
 import time
 import traceback
 from pathlib import Path
@@ -27,9 +32,45 @@ from typing import Dict, List, Optional
 import requests
 
 from .evaluator import compute_metrics, evaluate
+from .evidence import build_evidence, write_run_summary
 
-RESULTS_DIR = Path(__file__).resolve().parents[3] / "scenarios" / "results"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+RESULTS_DIR = REPO_ROOT / "scenarios" / "results"
+RUNS_DIR = RESULTS_DIR / "runs"
 POLL_HZ = 10.0
+ENABLE_COMPONENTS = ("perception", "localization", "controller", "planner", "vehicle_connection",
+                     "camera", "lidar", "gnss", "imu", "tick_latency")
+
+
+def _git(args: List[str]) -> Optional[str]:
+    try:
+        return subprocess.check_output(["git"] + args, cwd=REPO_ROOT, text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return None
+
+
+def repo_git_sha() -> Optional[str]:
+    return _git(["rev-parse", "HEAD"])
+
+
+def repo_git_dirty() -> Optional[bool]:
+    out = _git(["status", "--porcelain", "--untracked-files=no"])
+    return None if out is None else bool(out)
+
+
+def parse_reset_spec(text: Optional[str]) -> Optional[dict]:
+    """'spawn:12' -> spawn point 12; 'x,y,yaw' -> that pose; '' / None -> no reset."""
+    if not text:
+        return None
+    t = text.strip()
+    if t.startswith("spawn:"):
+        return {"mode": "spawn_point", "index": int(t[len("spawn:"):])}
+    parts = [float(v) for v in t.split(",")]
+    if len(parts) == 2:
+        parts.append(0.0)
+    if len(parts) != 3:
+        raise ValueError(f"reset spec must be 'spawn:N' or 'x,y,yaw_deg', got {text!r}")
+    return {"mode": "absolute", "x": parts[0], "y": parts[1], "yaw_deg": parts[2]}
 
 
 class RunnerError(RuntimeError):
@@ -55,13 +96,24 @@ class Api:
 
 class ScenarioRunner:
     def __init__(self, api_url="http://localhost:5000", carla_host="localhost", carla_port=2000,
-                 results_dir: Path = RESULTS_DIR, dry_run: bool = False, verbose: bool = True):
+                 results_dir: Path = RESULTS_DIR, dry_run: bool = False, verbose: bool = True,
+                 run_id: Optional[str] = None, seed: Optional[int] = None, reset_ego: Optional[dict] = None):
         self.api = Api(api_url)
+        self.api_url = api_url
         self.carla_host, self.carla_port = carla_host, carla_port
         self.results_dir = Path(results_dir)
-        self.results_dir.mkdir(parents=True, exist_ok=True)
         self.dry_run = dry_run
         self.verbose = verbose
+        # V1 evidence: every run gets its own folder, named by time and code, and nothing in it
+        # is ever overwritten. Folders are made on first write, so --dry-run touches no disk.
+        self.git_sha = repo_git_sha()
+        self.git_dirty = repo_git_dirty()
+        self.run_id = run_id or time.strftime("%Y%m%d_%H%M%S") + "_" + (self.git_sha or "nogit")[:7]
+        self.run_dir = self.results_dir / "runs" / self.run_id
+        self.seed = seed
+        self.reset_ego = reset_ego
+        self.planned_ids: Optional[List[str]] = None
+        self._manifest: Optional[dict] = None
 
     def log(self, msg):
         if self.verbose:
@@ -78,7 +130,12 @@ class ScenarioRunner:
 
         t_start = time.time()
         meta = {"collisions": [], "route_xy": [], "trigger_time": None, "first_fault_time": None,
-                "clear_time": None, "mission_completed": False, "event_log": [], "warnings": []}
+                "clear_time": None, "mission_completed": False, "event_log": [], "warnings": [],
+                # V1 evidence
+                "run_id": self.run_id, "git_sha_runner": self.git_sha, "git_dirty": self.git_dirty,
+                "seed": self.seed, "map": None, "map_expected": scenario["odd"]["town"], "carla_version": None,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "start_xy": None, "goal_xy": None,
+                "stack": None, "start_check": None, "ego_reset": None}
         trace: List[dict] = []
         wh = None
         err = None
@@ -88,6 +145,8 @@ class ScenarioRunner:
             if wh.ego is None:
                 raise RunnerError("no ego vehicle found in CARLA — is the autonomy stack running?")
             town_now = wh.town()
+            meta["map"] = town_now
+            meta["carla_version"] = wh.versions()
             if town_now != scenario["odd"]["town"]:
                 meta["warnings"].append(f"town mismatch: scenario wants {scenario['odd']['town']}, CARLA has {town_now}")
                 self.log(f"  ! {meta['warnings'][-1]} (continuing)")
@@ -95,17 +154,46 @@ class ScenarioRunner:
             # make sure we start from a clean autonomy state
             self.api.post("/api/estop/clear")
             self.api.post("/api/mission/stop")
-            for comp in ("perception", "localization", "controller", "planner", "vehicle_connection", "camera", "lidar", "gnss", "imu", "tick_latency"):
+            if self.reset_ego is not None:
+                # V1: the same start for every scenario, so a run does not inherit where the last one ended
+                try:
+                    off = wh.reset_ego(self.reset_ego)
+                    meta["ego_reset"] = {"spec": self.reset_ego, "settled_off_m": round(off, 2)}
+                    self.log(f"  ego reset to {self.reset_ego} (came to rest {off:.2f} m from it)")
+                    if off > 2.0:
+                        meta["warnings"].append(f"ego reset came to rest {off:.1f} m from the requested point")
+                except Exception as e_reset:
+                    meta["warnings"].append(f"ego reset failed: {e_reset}")
+                    self.log(f"  ! {meta['warnings'][-1]}")
+            for comp in ENABLE_COMPONENTS:
                 self.api.post("/api/test/inject", {"component": comp, "action": "enable"})
             if "cruise_speed_mps" in scenario["mission"]:
                 self.api.post("/api/config/speed_limit", {"cruise_speed_mps": scenario["mission"]["cruise_speed_mps"]})
             time.sleep(0.5)
+            st0 = self._state()
+            meta["start_check"] = self._start_check(st0)
+            if not meta["start_check"]["clean"]:
+                meta["warnings"].append("unclean start: " + "; ".join(meta["start_check"]["problems"]))
+                self.log(f"  ! {meta['warnings'][-1]}")
+            meta["stack"] = {"git_sha": st0.get("version"), "perception_mode": st0.get("perception_mode"),
+                             "noise_profile": (st0.get("ekf") or {}).get("noise_profile"),
+                             "cruise_speed_mps": st0.get("cruise_speed_mps"), "loop_hz_at_start": st0.get("loop_hz"),
+                             "uptime_s": st0.get("uptime_s")}
+            if self.git_sha and st0.get("version") and not self.git_sha.startswith(str(st0.get("version"))):
+                meta["warnings"].append(f"stack runs {st0.get('version')} but this checkout is {self.git_sha[:7]}: stale stack?")
+                self.log(f"  ! {meta['warnings'][-1]}")
 
             # weather
             wh.set_weather(scenario["odd"]["weather"])
 
             # actors
             ctrls = [ActorController(wh, a) for a in scenario.get("actors", [])]
+            if self.seed is not None:
+                # the only randomness the engine can pin: CARLA's traffic manager (autopilot actors)
+                try:
+                    wh.traffic_manager().set_random_device_seed(int(self.seed))
+                except Exception as e_seed:
+                    meta["warnings"].append(f"seed not applied to the traffic manager: {e_seed}")
             pre_route_ok = all(a["spawn"].get("mode") != "at_destination" for a in scenario.get("actors", []))
             start_at = float(scenario["mission"].get("start_at_s", 0.0))
 
@@ -131,6 +219,10 @@ class ScenarioRunner:
             def start_mission(dest_spec):
                 nonlocal mission_started, mission_start_time, route_loaded
                 dest_tr = wh.resolve_location(dest_spec)
+                if meta["start_xy"] is None:
+                    sx, sy, _ = wh.ego_xy_yaw()
+                    meta["start_xy"] = (round(sx, 2), round(sy, 2))
+                meta["goal_xy"] = (round(dest_tr.location.x, 2), round(dest_tr.location.y, 2))
                 code, resp = self.api.post("/api/mission/start", {"x": dest_tr.location.x, "y": dest_tr.location.y})
                 meta["event_log"].append({"t": time.time() - t0, "event": "start_mission", "resp": resp, "code": code})
                 self.log(f"  → mission start ({dest_tr.location.x:.1f}, {dest_tr.location.y:.1f}) -> {code} {resp}")
@@ -165,8 +257,18 @@ class ScenarioRunner:
                     spawn_all()
 
                 st = self._state()
-                ex, ey, _ = wh.ego_xy_yaw()
+                ex, ey, eyaw = wh.ego_xy_yaw()
                 sample = {"t": now, "state": st, "actors": wh.positions(), "ego": (ex, ey)}
+                try:
+                    # V1 evidence: what CARLA knows at the same instant. Never fatal.
+                    sample["ego_yaw"] = round(eyaw, 4)
+                    sample["ego_speed"] = round(wh.ego_speed(), 3)
+                    sample["ego_box"] = wh.ego_box()
+                    sample["boxes"] = wh.actor_boxes()
+                    sample["nearest_any"] = wh.nearest_other_actor()
+                    sample["light"] = wh.ego_light()
+                except Exception as e_ev:
+                    sample["evidence_error"] = f"{type(e_ev).__name__}: {e_ev}"
                 trace.append(sample)
 
                 # actor triggers & behaviour stepping
@@ -222,7 +324,7 @@ class ScenarioRunner:
             try:
                 self.api.post("/api/mission/stop")
                 self.api.post("/api/estop/clear")
-                for comp in ("perception", "localization", "controller", "planner", "vehicle_connection", "camera", "lidar", "gnss", "imu", "tick_latency"):
+                for comp in ENABLE_COMPONENTS:
                     self.api.post("/api/test/inject", {"component": comp, "action": "enable"})
             except Exception:
                 pass
@@ -238,13 +340,82 @@ class ScenarioRunner:
             "checks": verdict["checks"], "metrics": metrics, "warnings": meta["warnings"], "event_log": meta["event_log"],
             "collisions": meta["collisions"], "started_at": t_start, "elapsed_s": round(meta["elapsed_s"], 2),
             "trace_len": len(trace), "behaviors_timeline": self._timeline(trace, t_start),
+            "run_id": self.run_id, "runner_error": err,
+            "meta": {k: meta.get(k) for k in ("run_id", "git_sha_runner", "git_dirty", "seed", "map", "map_expected",
+                                              "carla_version", "started_at", "start_xy", "goal_xy", "stack",
+                                              "start_check", "ego_reset")},
         }
-        (self.results_dir / f"{sid}.json").write_text(
-            json.dumps(result, indent=1, default=str), encoding="utf-8")
-        trace_text = "\n".join(json.dumps(s, default=str) for s in trace)
-        (self.results_dir / f"{sid}.trace.jsonl").write_text(trace_text, encoding="utf-8")
+        self._persist(sid, result, trace)
         self.log(f"  => {result['verdict']}: {result['reason']}")
         return result
+
+    # ------------------------------------------------------------------ V1 evidence: persistence
+    def _start_check(self, st: dict) -> dict:
+        """Is the van actually clean before the scenario starts? Faults cleared, safety ok, no
+        mission, standing still. Recorded, never enforced: an unclean start is itself evidence."""
+        problems = []
+        faults = st.get("active_faults") or {}
+        if faults:
+            problems.append(f"faults still active: {sorted(faults)}")
+        safety = (st.get("safety") or {}).get("state")
+        if safety not in (None, "ok"):
+            problems.append(f"safety state {safety}: {(st.get('safety') or {}).get('reason')}")
+        mstate = (st.get("mission") or {}).get("state", "idle")
+        if mstate != "idle":
+            problems.append(f"mission state {mstate}")
+        speed = float((st.get("pose") or {}).get("speed") or 0.0)
+        if speed > 0.3:
+            problems.append(f"still moving at {speed:.1f} m/s")
+        if st.get("last_tick_error"):
+            problems.append(f"last tick error: {st.get('last_tick_error')}")
+        return {"clean": not problems, "problems": problems,
+                "stack_collisions_before": (st.get("collision") or {}).get("count"),
+                "autonomy_state": st.get("autonomy_state")}
+
+    def _unique(self, stem: str, suffix: str) -> Path:
+        p = self.run_dir / f"{stem}{suffix}"
+        n = 2
+        while p.exists():
+            p = self.run_dir / f"{stem}__{n}{suffix}"
+            n += 1
+        return p
+
+    def _write_manifest(self, result: dict):
+        if self._manifest is not None:
+            return
+        meta = result.get("meta") or {}
+        self._manifest = {
+            "run_id": self.run_id, "started_at": meta.get("started_at"),
+            "git_sha_runner": self.git_sha, "git_dirty": self.git_dirty,
+            "git_sha_stack": (meta.get("stack") or {}).get("git_sha"),
+            "map": meta.get("map"), "carla_server": (meta.get("carla_version") or {}).get("server"),
+            "carla_client": (meta.get("carla_version") or {}).get("client"),
+            "seed": self.seed, "reset_ego": self.reset_ego, "api_url": self.api_url,
+            "carla_host": self.carla_host, "carla_port": self.carla_port, "poll_hz": POLL_HZ,
+            "host": socket.gethostname(), "platform": platform.platform(), "python": sys.version.split()[0],
+            "planned_ids": self.planned_ids,
+        }
+        (self.run_dir / "run_manifest.json").write_text(json.dumps(self._manifest, indent=1, default=str), encoding="utf-8")
+
+    def _persist(self, sid: str, result: dict, trace: List[dict]) -> dict:
+        """Write <sid>.json + <sid>.trace.jsonl into the run folder, never over an existing file,
+        then rebuild the run's SUMMARY.md / summary.csv."""
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._write_manifest(result)
+        res_path = self._unique(sid, ".json")
+        stem = res_path.name[:-len(".json")]
+        trace_path = self.run_dir / f"{stem}.trace.jsonl"
+        result["result_file"] = str(res_path)
+        result["trace_file"] = str(trace_path)
+        result["evidence"] = build_evidence(result)
+        trace_text = "\n".join(json.dumps(s, default=str) for s in trace)
+        trace_path.write_text(trace_text, encoding="utf-8")
+        res_path.write_text(json.dumps(result, indent=1, default=str), encoding="utf-8")
+        try:
+            write_run_summary(self.run_dir)
+        except Exception as e_sum:
+            self.log(f"  ! summary not rebuilt: {e_sum}")
+        return {"result": res_path, "trace": trace_path}
 
     # ------------------------------------------------------------------ helpers
     def _state(self) -> dict:

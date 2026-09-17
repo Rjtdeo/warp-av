@@ -16,6 +16,8 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional
 
+from .evidence import box_gap
+
 
 def _op(op: str, actual, expected) -> bool:
     try:
@@ -60,6 +62,94 @@ def _dist_point_to_polyline(px, py, pts) -> float:
         cx, cy = ax + t * dx, ay + t * dy
         best = min(best, math.hypot(px - cx, py - cy))
     return best if best != float("inf") else 0.0
+
+
+def _percentile(vals: List[float], q: float) -> Optional[float]:
+    if not vals:
+        return None
+    v = sorted(vals)
+    k = max(0, min(len(v) - 1, int(round(q * (len(v) - 1)))))
+    return v[k]
+
+
+def _v1_metrics(trace: List[dict], states: List[dict], ts: List[float], speeds: List[float],
+                behaviors: List[str], safety_states: List[str]) -> Dict[str, Any]:
+    """V1 evidence: numbers taken from CARLA truth and the van's own timing, all optional.
+    Every field is None when the trace does not carry what it needs."""
+    m: Dict[str, Any] = {}
+    egos = [s.get("ego") for s in trace]
+    m["distance_m"] = round(sum(math.dist(a, b) for a, b in zip(egos, egos[1:])
+                                if a and b and a[0] is not None and b[0] is not None), 1)
+    truth_speeds = [float(s["ego_speed"]) for s in trace if s.get("ego_speed") is not None]
+    m["max_speed_truth_mps"] = round(max(truth_speeds), 2) if truth_speeds else None
+
+    hz = [float(s["loop_hz"]) for s in states if s.get("loop_hz")]
+    m["loop_hz_mean"] = round(sum(hz) / len(hz), 2) if hz else None
+    m["loop_hz_min"] = round(min(hz), 2) if hz else None
+    m["loop_hz_p05"] = round(_percentile(hz, 0.05), 2) if hz else None
+    tick = [float(s["tick_ms"]) for s in states if s.get("tick_ms") is not None]
+    m["tick_ms_mean"] = round(sum(tick) / len(tick), 1) if tick else None
+    m["tick_ms_max"] = round(max(tick), 1) if tick else None
+    m["poll_hz_actual"] = round((len(ts) - 1) / (ts[-1] - ts[0]), 2) if len(ts) > 1 and ts[-1] > ts[0] else None
+
+    counts = [s["collision"]["count"] for s in states if isinstance(s.get("collision"), dict) and s["collision"].get("count") is not None]
+    m["stack_collision_count"] = (counts[-1] - counts[0]) if counts else None
+
+    near = [s["nearest_any"] for s in trace if isinstance(s.get("nearest_any"), dict) and s["nearest_any"].get("m") is not None]
+    if near:
+        best = min(near, key=lambda n: n["m"])
+        m["min_distance_any_actor_m"] = round(best["m"], 2)
+        m["nearest_any_actor_type"] = best.get("type")
+    else:
+        m["min_distance_any_actor_m"] = None
+        m["nearest_any_actor_type"] = None
+
+    closest = []
+    for s in states:
+        c = (s.get("perception") or {}).get("closest_distance")
+        if isinstance(c, (int, float)) and 0 <= c < 900:
+            closest.append(float(c))
+    m["min_perception_closest_m"] = round(min(closest), 1) if closest else None
+
+    gap = None
+    for s in trace:
+        eb, boxes = s.get("ego_box"), s.get("boxes")
+        if not eb or not boxes:
+            continue
+        for b in boxes.values():
+            g = box_gap(eb, b)
+            gap = g if gap is None else min(gap, g)
+    m["min_gap_to_actor_m"] = round(gap, 2) if gap is not None else None
+
+    preasons = [((s.get("planner") or {}).get("reason") or "") for s in states]
+    m["planner_reasons_seen"] = sorted(set(r for r in preasons if r))
+    m["planner_reason_final"] = next((r for r in reversed(preasons) if r), None)
+    m["behavior_final"] = behaviors[-1] if behaviors else None
+    m["safety_final"] = safety_states[-1] if safety_states else None
+    m["safety_reason_final"] = (states[-1].get("safety") or {}).get("reason") if states else None
+
+    # movement while the light affecting the ego was red (CARLA's own colour, not the camera's)
+    moved, run_len, seen = 0.0, 0.0, set()
+    prev = None
+    for s in trace:
+        light = s.get("light") or {}
+        st_ = light.get("affected_state") or light.get("forced_state")
+        if st_:
+            seen.add(st_)
+        at_red = light.get("affected_state") == "Red"
+        if at_red and prev is not None and prev.get("light") and prev["light"].get("affected_state") == "Red":
+            a, b = prev.get("ego"), s.get("ego")
+            if a and b and a[0] is not None and b[0] is not None:
+                run_len += math.dist(a, b)
+        elif not at_red:
+            moved = max(moved, run_len)
+            run_len = 0.0
+        prev = s
+    m["moved_at_red_m"] = round(max(moved, run_len), 1)
+    m["light_states_seen"] = sorted(seen)
+    stops = [s["light"]["forced_stop_m"] for s in trace if isinstance(s.get("light"), dict) and s["light"].get("forced_stop_m") is not None]
+    m["forced_light_min_stop_m"] = round(min(stops), 1) if stops else None
+    return m
 
 
 def compute_metrics(trace: List[dict], meta: dict) -> Dict[str, Any]:
@@ -161,6 +251,9 @@ def compute_metrics(trace: List[dict], meta: dict) -> Dict[str, Any]:
     m["resumed_after_clear"] = False
     if clear_t is not None:
         m["resumed_after_clear"] = any(v > 1.0 for t, v in zip(ts, speeds) if t > clear_t + 0.5)
+
+    # V1 evidence: CARLA truth and stack timing, all optional
+    m.update(_v1_metrics(trace, states, ts, speeds, behaviors, safety_states))
     return m
 
 

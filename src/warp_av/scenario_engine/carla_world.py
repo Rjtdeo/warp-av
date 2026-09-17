@@ -29,6 +29,9 @@ class WorldHelper:
         self._collision_sensor = None
         self._tm = None
         self._route_xy: List[Tuple[float, float]] = []
+        self._frozen_lights: List[carla.Actor] = []       # lights this run forced; thawed in cleanup()
+        self._forced_light = None                          # the one the ego is meant to meet
+        self._forced_stop_xy: List[Tuple[float, float]] = []
         if self.ego is not None:
             self._attach_collision_sensor()
 
@@ -81,9 +84,113 @@ class WorldHelper:
         base = state.split("_then_")[0].replace("_on_approach", "").replace("all_", "").replace("_flash", "")
         tl.set_state(mapping.get(base, carla.TrafficLightState.Red))
         tl.freeze(True)
+        # V1 evidence: remember it so cleanup() can thaw it (a frozen light used to outlive the
+        # scenario and colour every later run), and so the trace can say how far the ego is
+        # from ITS stop line.
+        self._frozen_lights.append(tl)
+        self._forced_light = tl
+        try:
+            self._forced_stop_xy = [(w.transform.location.x, w.transform.location.y) for w in tl.get_stop_waypoints()]
+        except Exception:
+            self._forced_stop_xy = []
         return True
 
     # ------------------------------------------------------------------ geometry
+    # ------------------------------------------------------------------ V1 evidence: CARLA truth, read only
+    def versions(self) -> dict:
+        try:
+            return {"client": self.client.get_client_version(), "server": self.client.get_server_version()}
+        except Exception:
+            return {"client": None, "server": None}
+
+    def ego_speed(self) -> float:
+        v = self.ego.get_velocity()
+        return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+
+    @staticmethod
+    def _box_of(actor) -> Optional[list]:
+        """[x, y, yaw_rad, half_length, half_width]: the actor's bounding box seen from above."""
+        try:
+            tr = actor.get_transform()
+            bb = actor.bounding_box
+            yaw = math.radians(tr.rotation.yaw)
+            # the box centre sits bb.location away from the actor origin, in the actor's own frame
+            cx = tr.location.x + math.cos(yaw) * bb.location.x - math.sin(yaw) * bb.location.y
+            cy = tr.location.y + math.sin(yaw) * bb.location.x + math.cos(yaw) * bb.location.y
+            return [round(cx, 3), round(cy, 3), round(yaw, 4), round(max(bb.extent.x, 0.05), 3), round(max(bb.extent.y, 0.05), 3)]
+        except Exception:
+            return None
+
+    def ego_box(self) -> Optional[list]:
+        return self._box_of(self.ego)
+
+    def actor_boxes(self) -> Dict[str, list]:
+        out = {}
+        for n, a in list(self.spawned.items()):
+            b = self._box_of(a)
+            if b is not None:
+                out[n] = b
+        return out
+
+    def nearest_other_actor(self) -> Optional[dict]:
+        """Closest vehicle / walker / prop ACTOR to the ego, centre to centre, whoever spawned it.
+        Things baked into the map mesh (the static layer's parked cars, street furniture) are not
+        actors and stay invisible here; only the collision sensor can see those."""
+        ex, ey, _ = self.ego_xy_yaw()
+        best = None
+        for a in self.world.get_actors():
+            tid = a.type_id
+            if a.id == self.ego.id or not (tid.startswith("vehicle.") or tid.startswith("walker.pedestrian") or tid.startswith("static.prop")):
+                continue
+            loc = a.get_location()
+            d = math.hypot(loc.x - ex, loc.y - ey)
+            if best is None or d < best["m"]:
+                best = {"m": round(d, 2), "type": tid, "id": a.id}
+        return best
+
+    def ego_light(self) -> Optional[dict]:
+        """The light CARLA says is affecting the ego right now (and its real colour), plus the
+        forced light's colour and how far the ego is from that light's stop line."""
+        out = {}
+        try:
+            tl = self.ego.get_traffic_light()
+            if tl is not None:
+                out["affected_id"] = tl.id
+                out["affected_state"] = str(tl.get_state()).split(".")[-1]
+        except Exception:
+            pass
+        if self._forced_light is not None:
+            try:
+                out["forced_id"] = self._forced_light.id
+                out["forced_state"] = str(self._forced_light.get_state()).split(".")[-1]
+                if self._forced_stop_xy:
+                    ex, ey, _ = self.ego_xy_yaw()
+                    out["forced_stop_m"] = round(min(math.hypot(ex - x, ey - y) for x, y in self._forced_stop_xy), 2)
+            except Exception:
+                pass
+        return out or None
+
+    def reset_ego(self, spec: dict, settle_s: float = 1.0) -> float:
+        """Teleport the ego to a location spec with zero velocity, let it settle, and return how far
+        (m) it came to rest from the requested point. Test-fixture control only: the caller has
+        already stopped the mission, and nothing in the autonomy stack is told."""
+        tr = self.resolve_location(spec)
+        tr = carla.Transform(carla.Location(x=tr.location.x, y=tr.location.y, z=tr.location.z + 0.3), tr.rotation)
+        zero = carla.Vector3D(0.0, 0.0, 0.0)
+        try:
+            self.ego.set_target_velocity(zero)
+            self.ego.set_target_angular_velocity(zero)
+        except Exception:
+            pass
+        self.ego.set_transform(tr)
+        time.sleep(settle_s)
+        try:
+            self.ego.set_target_velocity(zero)
+        except Exception:
+            pass
+        ex, ey, _ = self.ego_xy_yaw()
+        return math.dist((ex, ey), (tr.location.x, tr.location.y))
+
     def set_route(self, xy: List[Tuple[float, float]]):
         self._route_xy = xy
 
@@ -249,6 +356,13 @@ class WorldHelper:
                 self._collision_sensor.destroy()
             except Exception:
                 pass
+        for tl in self._frozen_lights:
+            try:
+                tl.freeze(False)
+            except Exception:
+                pass
+        self._frozen_lights = []
+        self._forced_light = None
 
 
 # ----------------------------------------------------------------------
