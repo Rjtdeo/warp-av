@@ -23,11 +23,12 @@ from typing import Dict, List, Optional, Sequence, Tuple
 V1_FIELDS = [
     "scenario_id", "run_id", "verdict", "reason", "family", "capability_status",
     "git_sha_runner", "git_sha_stack", "git_dirty", "seed", "map", "map_expected", "carla_server", "started_at",
-    "start_xy", "goal_xy", "duration_s", "distance_m", "completed", "final_mission_state",
+    "start_xy", "goal_xy", "duration_s", "distance_m", "completed", "mission_record_state", "mission_reason_ended",
+    "final_goal_distance_m", "final_mission_state",
     "collision_count", "stack_collision_count",
     "min_gap_to_actor_m", "min_distance_to_actor_m", "min_distance_any_actor_m", "min_perception_closest_m",
     "behavior_final", "behaviors_seen", "safety_final", "safety_states_seen", "planner_reason_final",
-    "loop_hz_mean", "loop_hz_min", "loop_hz_p05", "tick_ms_max", "poll_hz_actual",
+    "loop_hz_mean", "loop_hz_min", "loop_hz_p05", "tick_ms_max", "poll_hz_actual", "poll_api_ms_median", "poll_truth_ms_median",
     "moved_at_red_m", "start_clean", "ego_reset_off_m", "warnings", "result_file", "trace_file",
 ]
 
@@ -109,6 +110,9 @@ def build_evidence(result: dict) -> dict:
         "duration_s": _r(m.get("elapsed_s")),
         "distance_m": _r(m.get("distance_m"), 1),
         "completed": m.get("mission_completed"),
+        "mission_record_state": m.get("mission_record_state"),
+        "mission_reason_ended": m.get("mission_reason_ended"),
+        "final_goal_distance_m": _r(m.get("final_goal_distance_m"), 1),
         "final_mission_state": m.get("final_mission_state"),
         "collision_count": m.get("collision_count"),
         "stack_collision_count": m.get("stack_collision_count"),
@@ -126,6 +130,8 @@ def build_evidence(result: dict) -> dict:
         "loop_hz_p05": _r(m.get("loop_hz_p05"), 1),
         "tick_ms_max": _r(m.get("tick_ms_max"), 1),
         "poll_hz_actual": _r(m.get("poll_hz_actual"), 1),
+        "poll_api_ms_median": _r(m.get("poll_api_ms_median"), 1),
+        "poll_truth_ms_median": _r(m.get("poll_truth_ms_median"), 1),
         "moved_at_red_m": _r(m.get("moved_at_red_m"), 1),
         "start_clean": (meta.get("start_check") or {}).get("clean"),
         "ego_reset_off_m": (meta.get("ego_reset") or {}).get("settled_off_m"),
@@ -148,7 +154,8 @@ def _cell(v) -> str:
 
 
 SUMMARY_COLUMNS = [
-    ("scenario_id", "ID"), ("verdict", "Verdict"), ("family", "Family"), ("completed", "Done"),
+    ("scenario_id", "ID"), ("verdict", "Verdict"), ("family", "Family"), ("completed", "Done"), ("mission_record_state", "Mission record"),
+    ("final_goal_distance_m", "To goal m"),
     ("collision_count", "Coll (sensor)"), ("stack_collision_count", "Coll (stack)"),
     ("min_gap_to_actor_m", "Min gap m"), ("min_distance_any_actor_m", "Nearest actor m"),
     ("distance_m", "Dist m"), ("duration_s", "Time s"), ("loop_hz_mean", "Hz mean"), ("loop_hz_min", "Hz min"),

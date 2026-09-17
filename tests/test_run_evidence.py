@@ -48,8 +48,15 @@ def test_v1_metrics_from_truth():
                       "ego_box": [x, 0.0, 0.0, 2.0, 1.0], "boxes": {"obs": [20.0, 0.0, 0.0, 0.5, 0.5]},
                       "nearest_any": {"m": 20.0 - x, "type": "static.prop.barrel", "id": 9},
                       "light": {"affected_state": "Red", "forced_state": "Red", "forced_stop_m": 30.0 - x} if i >= 2 else None})
-    m = compute_metrics(trace, {"collisions": []})
+    for i, s in enumerate(trace):
+        s["poll_ms"] = {"api": 40.0 + i, "truth": 2000.0, "actors": 1.0}
+    m = compute_metrics(trace, {"collisions": [], "goal_xy": (13.0, 4.0),
+                                "mission_records": [{"mission_id": "mission_0001", "state": "completed", "reason_ended": "Arrived at destination"}]})
     assert m["distance_m"] == 10.0                       # five steps of 2 m along CARLA truth
+    assert m["mission_completed"] is True                # the stack's own record says so, even though /api/state never showed it
+    assert m["mission_record_state"] == "completed" and m["mission_reason_ended"] == "Arrived at destination"
+    assert m["final_goal_distance_m"] == 5.0             # last truth pose (10, 0) to the goal (13, 4)
+    assert m["poll_api_ms_median"] == 42.0 and m["poll_truth_ms_max"] == 2000.0 and m["poll_actors_ms_median"] == 1.0
     assert m["loop_hz_mean"] == pytest.approx(6.5) and m["loop_hz_min"] == 4.0 and m["loop_hz_p05"] == 4.0
     assert m["tick_ms_max"] == 150.0
     assert m["stack_collision_count"] == 1                # the van's own counter went 0 -> 1
@@ -69,8 +76,13 @@ def test_v1_metrics_are_optional():
              {"t": 1.1, "state": {"pose": {"speed": 0}}, "actors": {}, "ego": (0.0, 0.0)}]
     m = compute_metrics(trace, {"collisions": []})
     for k in ("loop_hz_mean", "stack_collision_count", "min_distance_any_actor_m", "min_gap_to_actor_m",
-              "min_perception_closest_m", "planner_reason_final", "forced_light_min_stop_m"):
+              "min_perception_closest_m", "planner_reason_final", "forced_light_min_stop_m", "final_goal_distance_m",
+              "poll_api_ms_median", "mission_record_state"):
         assert m[k] is None, k
+    assert m["mission_completed"] is False
+    # an empty trace still reports what the mission record says
+    m0 = compute_metrics([], {"collisions": [], "mission_records": [{"state": "failed", "reason_ended": "no route"}]})
+    assert m0["mission_completed"] is False and m0["mission_record_state"] == "failed"
     assert m["distance_m"] == 0.0 and m["moved_at_red_m"] == 0.0
 
 
@@ -96,6 +108,7 @@ def test_build_evidence_has_every_v1_field():
     assert list(row) == V1_FIELDS
     assert row["git_sha_stack"] == "abc1234" and row["map"] == "Town10HD" and row["map_expected"] == "Town03"
     assert row["min_gap_to_actor_m"] == 1.23 and row["completed"] is True and row["start_clean"] is True
+    assert "mission_record_state" in row and "final_goal_distance_m" in row and "poll_api_ms_median" in row
     assert row["seed"] is None                            # no seed handling in the engine: say so, do not invent one
     assert build_evidence({"scenario_id": "x"})["loop_hz_mean"] is None
 

@@ -139,7 +139,10 @@ class ScenarioRunner:
                 "run_id": self.run_id, "git_sha_runner": self.git_sha, "git_dirty": self.git_dirty,
                 "seed": self.seed, "map": None, "map_expected": scenario["odd"]["town"], "carla_version": None,
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "start_xy": None, "goal_xy": None,
-                "stack": None, "start_check": None, "ego_reset": None}
+                "stack": None, "start_check": None, "ego_reset": None,
+                "mission_ids": [], "mission_records": [], "phase_times": {}}
+        phase = meta["phase_times"]
+        t_run0 = time.time()
         trace: List[dict] = []
         wh = None
         err = None
@@ -156,6 +159,7 @@ class ScenarioRunner:
                 self.log(f"  ! {meta['warnings'][-1]} (continuing)")
 
             # make sure we start from a clean autonomy state
+            phase["world_ready"] = round(time.time() - t_run0, 2)
             self.api.post("/api/estop/clear")
             self.api.post("/api/mission/stop")
             if self.reset_ego is not None:
@@ -169,12 +173,14 @@ class ScenarioRunner:
                 except Exception as e_reset:
                     meta["warnings"].append(f"ego reset failed: {e_reset}")
                     self.log(f"  ! {meta['warnings'][-1]}")
+            phase["ego_reset_done"] = round(time.time() - t_run0, 2)
             for comp in ENABLE_COMPONENTS:
                 self.api.post("/api/test/inject", {"component": comp, "action": "enable"})
             if "cruise_speed_mps" in scenario["mission"]:
                 self.api.post("/api/config/speed_limit", {"cruise_speed_mps": scenario["mission"]["cruise_speed_mps"]})
             time.sleep(0.5)
             st0 = self._state()
+            phase["clean_start_done"] = round(time.time() - t_run0, 2)
             meta["start_check"] = self._start_check(st0)
             if not meta["start_check"]["clean"]:
                 meta["warnings"].append("unclean start: " + "; ".join(meta["start_check"]["problems"]))
@@ -227,8 +233,10 @@ class ScenarioRunner:
                     sx, sy, _ = wh.ego_xy_yaw()
                     meta["start_xy"] = (round(sx, 2), round(sy, 2))
                 meta["goal_xy"] = (round(dest_tr.location.x, 2), round(dest_tr.location.y, 2))
+                phase.setdefault("first_mission_post", round(time.time() - t_run0, 2))
                 code, resp = self.api.post("/api/mission/start", {"x": dest_tr.location.x, "y": dest_tr.location.y})
                 meta["event_log"].append({"t": time.time() - t0, "event": "start_mission", "resp": resp, "code": code})
+                phase.setdefault("first_mission_started", round(time.time() - t_run0, 2))
                 self.log(f"  → mission start ({dest_tr.location.x:.1f}, {dest_tr.location.y:.1f}) -> {code} {resp}")
                 mission_started = True
                 mission_start_time = time.time()
@@ -260,7 +268,10 @@ class ScenarioRunner:
                     route_loaded = True
                     spawn_all()
 
+                phase.setdefault("first_poll", round(now - t_run0, 2))
+                t_a = time.perf_counter()
                 st = self._state()
+                t_b = time.perf_counter()
                 ex, ey, eyaw = wh.ego_xy_yaw()
                 sample = {"t": now, "state": st, "actors": wh.positions(), "ego": (ex, ey)}
                 try:
@@ -273,9 +284,15 @@ class ScenarioRunner:
                     sample["light"] = wh.ego_light()
                 except Exception as e_ev:
                     sample["evidence_error"] = f"{type(e_ev).__name__}: {e_ev}"
+                t_c = time.perf_counter()
+                sample["poll_ms"] = {"api": round((t_b - t_a) * 1000, 1), "truth": round((t_c - t_b) * 1000, 1)}
                 trace.append(sample)
+                mid = (st.get("mission") or {}).get("mission_id")
+                if mid and mid not in meta["mission_ids"]:
+                    meta["mission_ids"].append(mid)
 
                 # actor triggers & behaviour stepping
+                t_d = time.perf_counter()
                 for c in ctrls:
                     if not c.triggered and "trigger" in c.spec and self._trigger_met(c.spec["trigger"], st, elapsed, wh, c, events, ctrls):
                         c.fire()
@@ -286,6 +303,7 @@ class ScenarioRunner:
                     c.step(dt)
                 if meta["trigger_time"] is None and mission_started and all("trigger" not in c.spec for c in ctrls) and ctrls:
                     meta["trigger_time"] = mission_start_time
+                sample["poll_ms"]["actors"] = round((time.perf_counter() - t_d) * 1000, 1)
 
                 # events
                 for i, e in enumerate(events):
@@ -332,6 +350,14 @@ class ScenarioRunner:
                     self.api.post("/api/test/inject", {"component": comp, "action": "enable"})
             except Exception:
                 pass
+            try:
+                # The stack drops a finished mission from /api/state on the same tick it completes,
+                # so "completed" is never visible there (first V1 run, WAV-0010). The mission's own
+                # record in /api/history is the only place the outcome survives.
+                hist = self.api.get("/api/history")
+                meta["mission_records"] = [h for h in hist if h.get("mission_id") in meta["mission_ids"]]
+            except Exception as e_h:
+                meta["warnings"].append(f"mission history not read: {e_h}")
             if wh is not None:
                 wh.cleanup()
 
@@ -347,7 +373,8 @@ class ScenarioRunner:
             "run_id": self.run_id, "runner_error": err,
             "meta": {k: meta.get(k) for k in ("run_id", "git_sha_runner", "git_dirty", "seed", "map", "map_expected",
                                               "carla_version", "started_at", "start_xy", "goal_xy", "stack",
-                                              "start_check", "ego_reset")},
+                                              "start_check", "ego_reset", "mission_ids", "mission_records",
+                                              "phase_times")},
         }
         self._persist(sid, result, trace)
         self.log(f"  => {result['verdict']}: {result['reason']}")

@@ -82,6 +82,10 @@ def _v1_metrics(trace: List[dict], states: List[dict], ts: List[float], speeds: 
                                 if a and b and a[0] is not None and b[0] is not None), 1)
     truth_speeds = [float(s["ego_speed"]) for s in trace if s.get("ego_speed") is not None]
     m["max_speed_truth_mps"] = round(max(truth_speeds), 2) if truth_speeds else None
+    for part in ("api", "truth", "actors"):
+        vals = [float(s["poll_ms"][part]) for s in trace if isinstance(s.get("poll_ms"), dict) and s["poll_ms"].get(part) is not None]
+        m[f"poll_{part}_ms_median"] = round(_percentile(vals, 0.5), 1) if vals else None
+        m[f"poll_{part}_ms_max"] = round(max(vals), 1) if vals else None
 
     hz = [float(s["loop_hz"]) for s in states if s.get("loop_hz")]
     m["loop_hz_mean"] = round(sum(hz) / len(hz), 2) if hz else None
@@ -155,7 +159,11 @@ def _v1_metrics(trace: List[dict], states: List[dict], ts: List[float], speeds: 
 def compute_metrics(trace: List[dict], meta: dict) -> Dict[str, Any]:
     m: Dict[str, Any] = {}
     if not trace:
-        return {"elapsed_s": meta.get("elapsed_s", 0.0), "collision_count": len(meta.get("collisions", []))}
+        records = meta.get("mission_records") or []
+        return {"elapsed_s": meta.get("elapsed_s", 0.0), "collision_count": len(meta.get("collisions", [])),
+                "mission_completed": any(r.get("state") == "completed" for r in records),
+                "mission_record_state": records[-1].get("state") if records else None,
+                "mission_reason_ended": records[-1].get("reason_ended") if records else None}
     t0 = trace[0]["t"]
     states = [s["state"] for s in trace]
     speeds = [float(s.get("pose", {}).get("speed", 0.0)) for s in states]
@@ -168,9 +176,13 @@ def compute_metrics(trace: List[dict], meta: dict) -> Dict[str, Any]:
     m["elapsed_s"] = round(meta.get("elapsed_s", ts[-1] - t0), 2)
     m["collision_count"] = len(meta.get("collisions", []))
     m["final_mission_state"] = states[-1].get("mission", {}).get("state", "idle")
+    records = meta.get("mission_records") or []
     m["mission_completed"] = bool(meta.get("mission_completed", False) or
                                   any(s.get("mission", {}).get("state") == "completed" for s in states) or
-                                  "mission_complete" in behaviors)
+                                  "mission_complete" in behaviors or
+                                  any(r.get("state") == "completed" for r in records))
+    m["mission_reason_ended"] = records[-1].get("reason_ended") if records else None
+    m["mission_record_state"] = records[-1].get("state") if records else None
     m["behaviors_seen"] = sorted(set(b for b in behaviors if b))
     m["safety_states_seen"] = sorted(set(x for x in safety_states if x))
     m["behavior_reasons_seen"] = sorted(set(r for r in reasons if r))
@@ -254,6 +266,9 @@ def compute_metrics(trace: List[dict], meta: dict) -> Dict[str, Any]:
 
     # V1 evidence: CARLA truth and stack timing, all optional
     m.update(_v1_metrics(trace, states, ts, speeds, behaviors, safety_states))
+    goal = meta.get("goal_xy")
+    last = trace[-1].get("ego")
+    m["final_goal_distance_m"] = (round(math.dist(last, goal), 1) if goal and last and last[0] is not None else None)
     return m
 
 
