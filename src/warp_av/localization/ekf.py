@@ -3,7 +3,8 @@
 Phase L3. Three inputs, three states, one correction. Deliberately the smallest filter that
 can be honest, because a filter nobody can debug is worse than dead reckoning.
 
-    STATE      x, y, yaw, gyro_bias    metres, metres, radians, radians/second
+    STATE      x, y, yaw, gyro_bias, compass_bias
+               metres, metres, radians, radians/second, radians
     PREDICT    wheel speed + gyro yaw rate, over the ACTUAL time between measurements
     CORRECT    GNSS position, converted to local metres (localization/geo.py)
 
@@ -78,6 +79,21 @@ YAW_NOISE_FLOOR_RAD2_PER_S = 1e-8
 #: tuned until the score looked good.
 GNSS_SIGMA_M = 0.02
 
+#: ...and the part of the GNSS error that does NOT average away. The CONFIGURED receiver bias
+#: (adapters/carla_sensor_adapter.GNSS_BIAS_M), drawn once and held for the drive.
+#:
+#: This is the whole reason the position covariance has been dishonest since L3, and the reason
+#: is worth writing down because it is invisible from inside the filter. Fed a stream of fixes
+#: that all lean the same way, the filter converges onto the LEANED position and its
+#: innovations go quiet -- the measurements agree with the estimate, because the estimate has
+#: moved to where the measurements are. The normalised innovation squared stays at 1.83 with a
+#: centimetre of offset present, exactly as it does with none: measured, not assumed.
+#:
+#: So P collapses towards the white-noise floor while the true error keeps the offset in it.
+#: A filter cannot estimate this away -- nothing else in the van measures absolute position --
+#: but it must not claim to be surer than the offset it cannot see.
+GNSS_BIAS_M = 0.01
+
 #: What the compass is worth as an ABSOLUTE heading anchor, and why it is back.
 #:
 #: L6 first removed it outright. That was wrong, and the scoring said so: heading on
@@ -87,13 +103,24 @@ GNSS_SIGMA_M = 0.02
 #: only through the direction of travel, and that coupling is deliberately gated off below
 #: 2 m/s, which is exactly when a van turns. Seed, then drift.
 #:
-#: So the compass is fused again, at a weight that reflects what it actually is: about a
-#: degree of noise with an offset of the same order sitting under it, which is why the sigma
-#: here is wider than the noise alone. It is an ANCHOR, not a heading source -- at this weight
+#: It is an ANCHOR, not a heading source: at this weight, once GNSS has pinned the heading,
 #: a single reading barely moves the estimate, and what it buys is that the angle cannot walk
-#: away over a route. The floor it puts under heading accuracy is its own offset, and that
-#: floor is measured and reported rather than wished away.
-COMPASS_SIGMA_RAD = math.radians(1.2)
+#: away over a route.
+#:
+#: L7 narrows this back to the compass's NOISE alone. L6 widened it to 1.2 degrees to cover an
+#: offset the filter could not remove; the offset is now state 4, so paying for it twice would
+#: only throw away a sensor that is right on average.
+COMPASS_SIGMA_RAD = math.radians(1.0)
+
+#: What the filter believes about the compass offset before it has seen anything: nothing, to
+#: within a couple of degrees. Deliberately NOT the injected value -- a test asserts that value
+#: appears nowhere in this module.
+COMPASS_BIAS_SIGMA0_RAD = math.radians(2.0)
+
+#: How fast that offset may wander. A magnetometer's offset moves with temperature and with
+#: what is parked next to it, over minutes rather than frames. At this rate an unobserved
+#: offset loosens by about 0.06 degrees over 100 seconds.
+COMPASS_BIAS_RW_RAD_PER_SQRT_S = math.radians(0.006)
 
 #: What the filter believes about the GYRO's offset before it has seen anything: not much,
 #: to within half a milliradian per second. Comfortably wider than anything the simulated
@@ -142,8 +169,9 @@ class LocalizationEKF:
     def __init__(self, geo: Optional[GeoFrame] = None, gnss_sigma_m: float = GNSS_SIGMA_M):
         self.geo = geo or DEFAULT_GEO
         self.gnss_sigma_m = float(gnss_sigma_m)
-        self.x = np.zeros(4, dtype=float)          # [x, y, yaw, gyro bias rad/s]
-        self.P = np.zeros((4, 4), dtype=float)
+        # [x, y, yaw, gyro bias rad/s, compass bias rad]
+        self.x = np.zeros(5, dtype=float)
+        self.P = np.zeros((5, 5), dtype=float)
         self.seeded = False
         self.t = None                              # the filter's own clock, in SIM time
         self.speed = 0.0
@@ -159,6 +187,12 @@ class LocalizationEKF:
         self.lidar_corrections = 0
         self.lidar_rejected = 0
         self.compass_corrections = 0
+        # Filter consistency, measured WITHOUT truth (L7). The normalised innovation squared
+        # is the standard test: if the filter's idea of its own uncertainty is right, a 2-D
+        # GNSS innovation scores 2 on average. Much more than 2 and it is overconfident about
+        # something -- and unlike an error-versus-sigma comparison, this needs no simulator.
+        self.nis_gnss = deque(maxlen=400)
+        self.innov_gnss = deque(maxlen=400)
         self.distance_m = 0.0
         self.last_gnss_t = None
         self.last_lidar_t = None
@@ -182,10 +216,11 @@ class LocalizationEKF:
         """
         # The gyro offset starts at ZERO and unknown to within GYRO_BIAS_SIGMA0. It is never
         # seeded from truth, and nothing here knows what the simulated offset is.
-        self.x = np.array([float(x), float(y), _wrap(float(yaw)), 0.0], dtype=float)
+        self.x = np.array([float(x), float(y), _wrap(float(yaw)), 0.0, 0.0], dtype=float)
         self.P = np.diag([pos_sigma_m ** 2, pos_sigma_m ** 2,
                           math.radians(yaw_sigma_deg) ** 2,
-                          GYRO_BIAS_SIGMA0_RAD_S ** 2]).astype(float)
+                          GYRO_BIAS_SIGMA0_RAD_S ** 2,
+                          COMPASS_BIAS_SIGMA0_RAD ** 2]).astype(float)
         self.seeded = True
         self.t = sim_time
         self.speed = 0.0
@@ -196,6 +231,8 @@ class LocalizationEKF:
         self.gnss_yaw_suppressed = 0
         self.lidar_corrections = self.lidar_rejected = 0
         self.compass_corrections = 0
+        self.nis_gnss.clear()
+        self.innov_gnss.clear()
         self.distance_m = 0.0
         self.last_gnss_t = None
         self.last_lidar_t = None
@@ -268,10 +305,13 @@ class LocalizationEKF:
         #   d(yaw)/d(bias) = -dt        the offset is subtracted from the rate
         #   d(x)/d(bias)   = +step*s*dt/2 , d(y)/d(bias) = -step*c*dt/2
         #                               through the midpoint heading used for the step
-        F = np.array([[1.0, 0.0, -step * s, 0.5 * dt * step * s],
-                      [0.0, 1.0, step * c, -0.5 * dt * step * c],
-                      [0.0, 0.0, 1.0, -dt],
-                      [0.0, 0.0, 0.0, 1.0]], dtype=float)
+        # The compass offset moves nothing: it is a property of an instrument, not of the
+        # van, so its row and column really are inert here. The gyro offset's are not.
+        F = np.array([[1.0, 0.0, -step * s, 0.5 * dt * step * s, 0.0],
+                      [0.0, 1.0, step * c, -0.5 * dt * step * c, 0.0],
+                      [0.0, 0.0, 1.0, -dt, 0.0],
+                      [0.0, 0.0, 0.0, 1.0, 0.0],
+                      [0.0, 0.0, 0.0, 0.0, 1.0]], dtype=float)
 
         # --- process noise, built in the frame the van is MOVING in, then rotated ---
         # along  : the speed could be a percent out
@@ -281,10 +321,11 @@ class LocalizationEKF:
         R = np.array([[c, -s], [s, c]], dtype=float)
         Qpos = R @ np.diag([along, cross]) @ R.T
         qyaw = (GYRO_NOISE_RAD_S ** 2) * dt + YAW_NOISE_FLOOR_RAD2_PER_S * dt
-        Q = np.zeros((4, 4), dtype=float)
+        Q = np.zeros((5, 5), dtype=float)
         Q[:2, :2] = Qpos
         Q[2, 2] = qyaw
         Q[3, 3] = (GYRO_BIAS_RW_RAD_S_PER_SQRT_S ** 2) * dt
+        Q[4, 4] = (COMPASS_BIAS_RW_RAD_PER_SQRT_S ** 2) * dt
 
         self.P = F @ self.P @ F.T + Q
         self.t = sim_time
@@ -306,7 +347,7 @@ class LocalizationEKF:
             return False
         sig = self.gnss_sigma_m if sigma_m is None else float(sigma_m)
         Rm = np.diag([sig ** 2, sig ** 2]).astype(float)
-        H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]], dtype=float)
+        H = np.array([[1.0, 0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0]], dtype=float)
         z = np.array([gx, gy], dtype=float)
         y = z - H @ self.x
         S = H @ self.P @ H.T + Rm
@@ -324,12 +365,18 @@ class LocalizationEKF:
             # the heading.
             K[2, :] = 0.0
             K[3, :] = 0.0
+            K[4, :] = 0.0
             self.gnss_yaw_suppressed += 1
+        try:
+            self.nis_gnss.append(float(y @ np.linalg.inv(S) @ y))
+            self.innov_gnss.append((float(sim_time), float(y[0]), float(y[1])))
+        except np.linalg.LinAlgError:
+            pass
         self.x = self.x + K @ y
         self.x[2] = _wrap(self.x[2])
         # Joseph form: stays symmetric and positive-definite over a long run, where the short
         # form quietly does not.
-        A = np.eye(4) - K @ H
+        A = np.eye(5) - K @ H
         self.P = A @ self.P @ A.T + K @ Rm @ K.T
         self.corrections += 1
         self.last_gnss_t = sim_time
@@ -397,7 +444,7 @@ class LocalizationEKF:
             self.lidar_rejected += 1
             return False
         z = _wrap(float(delta_yaw))
-        H = np.array([[0.0, 0.0, 0.0, -float(dt)]], dtype=float)
+        H = np.array([[0.0, 0.0, 0.0, -float(dt), 0.0]], dtype=float)
         Rm = np.array([[float(sigma_rad) ** 2]], dtype=float)
         innov = z - (gyro_angle - float(self.x[3]) * float(dt))
         S = H @ self.P @ H.T + Rm
@@ -408,7 +455,7 @@ class LocalizationEKF:
             return False
         self.x = self.x + (K @ np.array([innov], dtype=float))
         self.x[2] = _wrap(self.x[2])
-        A = np.eye(4) - K @ H
+        A = np.eye(5) - K @ H
         self.P = A @ self.P @ A.T + K @ Rm @ K.T
         self.lidar_corrections += 1
         self.last_lidar_t = sim_time
@@ -428,9 +475,9 @@ class LocalizationEKF:
         if not self.seeded or not math.isfinite(yaw_meas):
             return False
         sig = COMPASS_SIGMA_RAD if sigma_rad is None else float(sigma_rad)
-        H = np.array([[0.0, 0.0, 1.0, 0.0]], dtype=float)
+        H = np.array([[0.0, 0.0, 1.0, 0.0, 1.0]], dtype=float)
         Rm = np.array([[sig ** 2]], dtype=float)
-        innov = _wrap(float(yaw_meas) - float(self.x[2]))
+        innov = _wrap(float(yaw_meas) - (float(self.x[2]) + float(self.x[4])))
         S = H @ self.P @ H.T + Rm
         try:
             K = self.P @ H.T @ np.linalg.inv(S)
@@ -438,7 +485,8 @@ class LocalizationEKF:
             return False
         self.x = self.x + (K @ np.array([innov], dtype=float))
         self.x[2] = _wrap(self.x[2])
-        A = np.eye(4) - K @ H
+        self.x[4] = _wrap(self.x[4])
+        A = np.eye(5) - K @ H
         self.P = A @ self.P @ A.T + K @ Rm @ K.T
         self.compass_corrections += 1
         return True
@@ -484,6 +532,24 @@ class LocalizationEKF:
                     confidence=1.0, healthy=True, reason="EKF",
                     cov=self.covariance(), sim_time=self.t)
 
+    def pose_at(self, now: float) -> Optional[Pose]:
+        """The same pose, with its AGE charged to the uncertainty. What a consumer should ask
+        for, because what it gets is where the van was when the last measurement landed."""
+        p = self.pose()
+        if p is not None:
+            p.cov = self.covariance(now=now)
+        return p
+
+    @property
+    def compass_bias_rad(self) -> float:
+        """The compass offset the filter has worked out for itself, in radians."""
+        return float(self.x[4])
+
+    @property
+    def compass_bias_sigma_rad(self) -> float:
+        v = float(self.P[4, 4])
+        return math.sqrt(v) if v > 0 else float("nan")
+
     @property
     def gyro_bias_rad_s(self) -> float:
         """The gyro offset the filter has worked out for itself, in radians per second."""
@@ -496,19 +562,44 @@ class LocalizationEKF:
         v = float(self.P[3, 3])
         return math.sqrt(v) if v > 0 else float("nan")
 
-    def covariance(self) -> PoseCovariance:
-        """Straight from the filter's own P. Not a growth model, not a fitted curve --
-        the first uncertainty in this project that is computed rather than assumed."""
+    def covariance(self, now: Optional[float] = None) -> PoseCovariance:
+        """The filter's own P, plus the two things P structurally cannot contain.
+
+        Both are physical, both come from configured values rather than from scoring, and
+        neither is a multiplier chosen until the containment looked better:
+
+        THE GNSS OFFSET. See GNSS_BIAS_M. An error every fix shares does not average away, and
+        the filter converges onto it without ever seeing it.
+
+        AGE. The state stands at the last measurement's timestamp, not at the instant somebody
+        reads it. A consumer reading a pose `now` is reading where the van WAS, and at 4 m/s a
+        tenth of a second is 0.4 m. Pass `now` and that is charged for honestly; leave it out
+        and the answer describes the pose at its own timestamp, which is what it always did.
+        """
         P = self.P
-        return PoseCovariance(xx=float(P[0, 0]), yy=float(P[1, 1]), yaw=float(P[2, 2]),
+        extra = GNSS_BIAS_M ** 2
+        if now is not None and self.t is not None:
+            age = float(now) - float(self.t)
+            if age > 0.0:
+                extra += (abs(self.speed) * age) ** 2
+        return PoseCovariance(xx=float(P[0, 0]) + extra, yy=float(P[1, 1]) + extra,
+                              yaw=float(P[2, 2]),
                               xy=float(P[0, 1]), x_yaw=float(P[0, 2]), y_yaw=float(P[1, 2]))
 
     def error_against(self, truth: Pose) -> dict:
+        """Scored against truth AT THE TRUTH'S OWN MOMENT, and the age charged for.
+
+        The estimate stands at the last measurement it was given; the truth it is compared
+        against was read at the tick. Those differ by about twelve milliseconds here, which
+        sounds like nothing and is four centimetres at 4 m/s -- the largest single contributor
+        to the position error this project has been reporting. It is a real error for anyone
+        reading the pose, so it is charged to the uncertainty rather than explained away.
+        """
         if not self.seeded or truth is None:
             return {}
         dx, dy = self.x[0] - truth.x, self.x[1] - truth.y
         c, s = math.cos(truth.yaw), math.sin(truth.yaw)
-        cov = self.covariance()
+        cov = self.covariance(now=truth.sim_time)
         err = math.hypot(dx, dy)
         sig = math.sqrt(max(1e-12, 0.5 * (cov.xx + cov.yy)))
         yaw_err = math.degrees(_wrap(float(self.x[2]) - truth.yaw))
@@ -529,6 +620,8 @@ class LocalizationEKF:
                 # The fourth state and how sure it is. Nothing told the filter this number.
                 "gyro_bias_deg_s": round(math.degrees(self.gyro_bias_rad_s), 5),
                 "sigma_gyro_bias_deg_s": round(math.degrees(self.gyro_bias_sigma_rad_s), 5),
+                "compass_bias_deg": round(math.degrees(self.compass_bias_rad), 4),
+                "sigma_compass_bias_deg": round(math.degrees(self.compass_bias_sigma_rad), 4),
                 "sigma_x_m": round(cov.sigma_x, 4), "sigma_y_m": round(cov.sigma_y, 4),
                 "sigma_yaw_deg": round(math.degrees(cov.sigma_yaw), 4),
                 "distance_m": round(self.distance_m, 2),
@@ -541,5 +634,10 @@ class LocalizationEKF:
                 "gnss_yaw_suppressed": self.gnss_yaw_suppressed,
                 "lidar_age_s": (round(self.t - self.last_lidar_t, 2)
                                 if (self.t is not None and self.last_lidar_t is not None) else None),
+                # The filter's OWN clock, so the gap between it and the moment a consumer
+                # reads the pose can be measured rather than guessed at.
+                "clock": (round(float(self.t), 4) if self.t is not None else None),
+                "nis_gnss": (round(sum(self.nis_gnss) / len(self.nis_gnss), 3)
+                             if self.nis_gnss else None),
                 "gnss_age_s": (round(self.t - self.last_gnss_t, 2)
                                if (self.t is not None and self.last_gnss_t is not None) else None)}

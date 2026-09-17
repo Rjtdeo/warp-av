@@ -276,13 +276,145 @@ def test_the_compass_is_an_anchor_not_a_heading_source():
     assert moved < 0.5, "one compass reading may nudge the heading, never steer it"
 
 
-def test_the_compass_offset_is_not_estimated():
-    """L4.1 tried exactly that. With GNSS course as the only rotation reference, the offset
-    state absorbed the sideslip as well and heading got worse. The fourth state is the GYRO's
-    offset; there is no compass offset state, and this is the guard against one reappearing."""
+def test_the_compass_offset_starts_at_zero_and_unknown():
+    """It is estimated again in L7, but never handed the answer."""
+    from warp_av.localization.ekf import COMPASS_BIAS_SIGMA0_RAD
     f = ekf()
-    assert f.x.shape == (4,), "four states: x, y, yaw, gyro bias"
-    assert hasattr(f, "gyro_bias_rad_s") and not hasattr(f, "heading_bias_rad")
+    assert f.x.shape == (5,), "x, y, yaw, gyro bias, compass bias"
+    assert f.compass_bias_rad == 0.0
+    assert f.compass_bias_sigma_rad == pytest.approx(COMPASS_BIAS_SIGMA0_RAD)
+
+
+def test_nothing_in_the_filter_knows_the_injected_compass_offset():
+    """Checked against the module's CONSTANTS rather than its prose: the docstrings discuss
+    the injected value at length, which is the point of them, and a text search would either
+    ban that discussion or be trivially evaded by writing the number differently."""
+    from warp_av.localization import ekf as mod
+    answer = math.radians(0.30)
+    for name in dir(mod):
+        v = getattr(mod, name)
+        if isinstance(v, float) and abs(abs(v) - answer) < 1e-9:
+            raise AssertionError("%s carries the injected offset" % name)
+    f = ekf()
+    assert f.compass_bias_rad == 0.0, "and the state starts at zero, not at the answer"
+
+
+def test_lidar_keeps_the_compass_offset_from_swallowing_the_sideslip():
+    """THE experiment of this phase, and the thing L4.1 got wrong.
+
+    A van crabs: it travels a little to the side of where its nose points. GNSS sees where it
+    WENT, the compass sees where it POINTS plus an offset. In L4.1 those were the only two
+    voices, so the offset state had no way to tell the two disagreements apart and settled on
+    offset-minus-sideslip -- roughly twice the injected value, with heading worse for it.
+
+    L7 was built on the expectation that LiDAR would break that tie. IT DOES NOT, and this
+    test records the fact rather than the hope. LiDAR measures how the heading CHANGES; it says
+    nothing about where the heading IS. The compass gives yaw + offset and GNSS gives
+    yaw + sideslip: two equations in three unknowns, and a constraint on the derivative of one
+    of them adds no fourth. Measured with LiDAR on and with LiDAR off, the offset converges to
+    the same wrong number to four decimal places.
+
+    Separating these needs an independent ABSOLUTE heading -- a second GNSS antenna, or
+    matching the LiDAR against a map -- not another state.
+    """
+    offset = math.radians(0.30)
+    slip = math.radians(0.75)                      # L2-GAP measured 0.756 on this van
+    f = ekf(speed=8.0)
+    t, x, y, yaw = 100.0, 0.0, 0.0, 0.0
+    for i in range(4000):
+        t += 0.05
+        f.set_speed(8.0, False, t)
+        f.predict_to(t, 0.0)
+        x += 8.0 * 0.05 * math.cos(yaw + slip)     # travelling off the nose
+        y += 8.0 * 0.05 * math.sin(yaw + slip)
+        f.correct_lidar_yaw_rate(0.0, 0.05, t, math.radians(0.06))
+        if i % 2 == 0:
+            f.correct_compass(yaw + offset, t)
+        if i % 5 == 0:
+            lat, lon = geo.to_latlon(x, y)
+            f.correct_gnss(lat, lon, t)
+    got = math.degrees(f.compass_bias_rad)
+    assert got == pytest.approx(-0.45, abs=0.05), \
+        "it lands on offset-minus-sideslip, not on the offset"
+    assert math.degrees(f.x[2]) == pytest.approx(0.75, abs=0.05), \
+        "because the heading has been pulled onto the COURSE"
+
+
+def test_lidar_makes_no_difference_to_that_at_all():
+    """The sharpest statement of the limit: run the same drive with the rotation measurement
+    and without it, and the offset lands in the same place."""
+    def settle(with_lidar):
+        offset, slip = math.radians(0.30), math.radians(0.75)
+        f = ekf(speed=8.0)
+        t, x, y = 100.0, 0.0, 0.0
+        for i in range(3000):
+            t += 0.05
+            f.set_speed(8.0, False, t)
+            f.predict_to(t, 0.0)
+            x += 8.0 * 0.05 * math.cos(slip)
+            y += 8.0 * 0.05 * math.sin(slip)
+            if with_lidar:
+                f.correct_lidar_yaw_rate(0.0, 0.05, t, math.radians(0.06))
+            if i % 2 == 0:
+                f.correct_compass(offset, t)
+            if i % 5 == 0:
+                lat, lon = geo.to_latlon(x, y)
+                f.correct_gnss(lat, lon, t)
+        return math.degrees(f.compass_bias_rad)
+    assert settle(True) == pytest.approx(settle(False), abs=0.02)
+
+
+def test_with_no_sideslip_it_finds_the_offset_exactly():
+    """The other half of the proof: the estimator is not broken. Take the sideslip away and it
+    recovers the injected offset precisely. What defeats it is the ambiguity, not the maths."""
+    offset = math.radians(0.30)
+    f = ekf(speed=8.0)
+    t, x = 100.0, 0.0
+    for i in range(3000):
+        t += 0.05
+        f.set_speed(8.0, False, t)
+        f.predict_to(t, 0.0)
+        x += 8.0 * 0.05
+        f.correct_lidar_yaw_rate(0.0, 0.05, t, math.radians(0.06))
+        if i % 2 == 0:
+            f.correct_compass(offset, t)
+        if i % 5 == 0:
+            lat, lon = geo.to_latlon(x, 0.0)
+            f.correct_gnss(lat, lon, t)
+    assert math.degrees(f.compass_bias_rad) == pytest.approx(0.30, abs=0.03)
+    assert abs(math.degrees(f.x[2])) < 0.05
+
+
+def test_the_two_offsets_do_not_trade_error_with_each_other():
+    """A gyro offset and a compass offset can look alike over a short window: both push the
+    heading one way. They are separable because one acts on the RATE and the other on the
+    ANGLE, and this checks the filter keeps them apart rather than swapping error between."""
+    gyro_off = 5e-4
+    comp_off = math.radians(0.30)
+    f = ekf(speed=8.0)
+    t = 100.0
+    for i in range(4000):
+        t += 0.05
+        f.set_speed(8.0, False, t)
+        f.predict_to(t, gyro_off)                  # the gyro reads high by a constant
+        f.correct_lidar_yaw_rate(0.0, 0.05, t, math.radians(0.06))
+        if i % 2 == 0:
+            f.correct_compass(comp_off, t)
+    assert f.gyro_bias_rad_s == pytest.approx(gyro_off, rel=0.5), "the rate offset is the gyro's"
+    assert math.degrees(f.compass_bias_rad) == pytest.approx(0.30, abs=0.20), \
+        "and the angle offset is the compass's"
+
+
+def test_the_compass_offset_cannot_jump_in_one_reading():
+    f = ekf(speed=8.0)
+    t = 100.0
+    for i in range(400):
+        t += 0.05
+        f.predict_to(t, 0.0)
+        f.correct_compass(math.radians(0.3), t)
+    settled = f.compass_bias_rad
+    f.correct_compass(math.radians(45.0), t + 0.05)
+    assert abs(math.degrees(f.compass_bias_rad - settled)) < 1.0
 
 
 def test_the_compass_does_hold_the_heading_over_a_long_run():
@@ -571,3 +703,54 @@ def test_it_refuses_when_the_gyro_never_covered_the_window():
     f.predict_to(100.10, 0.0)
     assert f.correct_lidar_yaw_rate(0.01, 0.1, 140.0, math.radians(0.06)) is False
     assert f.lidar_rejected >= 1
+
+
+# ---- L7: reported uncertainty must contain what the filter cannot estimate -----------------
+
+def test_the_reported_sigma_never_drops_below_the_gnss_offset():
+    """A filter fed fixes that all lean the same way converges onto the lean and goes quiet.
+    It cannot estimate that offset -- nothing else measures absolute position -- so it must at
+    least not claim to be surer than the offset it cannot see."""
+    from warp_av.localization.ekf import GNSS_BIAS_M
+    f = ekf(speed=0.0)
+    lat, lon = geo.to_latlon(0.0, 0.0)
+    t = 100.0
+    for _ in range(600):                           # long enough for P to bottom out
+        t += 0.05
+        f.predict_to(t, 0.0)
+        f.correct_gnss(lat, lon, t)
+    assert f.pose().cov.sigma_x >= GNSS_BIAS_M
+    assert f.pose().cov.sigma_y >= GNSS_BIAS_M
+
+
+def test_a_stale_pose_is_reported_as_less_certain():
+    """The largest single contributor to this project's position error turned out to be twelve
+    milliseconds of age. At 4 m/s that is four centimetres, and it is a real error for whoever
+    reads the pose -- so it is charged, not explained away."""
+    f = ekf(speed=8.0)
+    t = 100.0
+    for _ in range(200):
+        t += 0.05
+        f.set_speed(8.0, False, t)
+        f.predict_to(t, 0.0)
+    fresh = f.covariance(now=t).sigma_x
+    stale = f.covariance(now=t + 0.1).sigma_x
+    assert stale > fresh
+    assert stale == pytest.approx(math.hypot(fresh, 8.0 * 0.1), rel=0.01)
+
+
+def test_age_is_only_charged_forwards():
+    """A timestamp from before the filter's own clock must not shrink the uncertainty."""
+    f = ekf(speed=8.0)
+    for i in range(20):
+        f.set_speed(8.0, False, 100.0 + 0.05 * (i + 1))
+        f.predict_to(100.0 + 0.05 * (i + 1), 0.0)
+    assert f.covariance(now=100.0).sigma_x == pytest.approx(f.covariance().sigma_x)
+
+
+def test_standing_still_age_costs_nothing():
+    """The charge is speed times age. Parked, a stale pose is still a correct pose."""
+    f = ekf(speed=0.0)
+    for i in range(20):
+        f.predict_to(100.0 + 0.05 * (i + 1), 0.0)
+    assert f.covariance(now=102.0).sigma_x == pytest.approx(f.covariance().sigma_x)
