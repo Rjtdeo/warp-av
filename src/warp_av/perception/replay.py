@@ -55,12 +55,6 @@ GROUND_TAGS = {0, 1, 2, 10, 24, 25}   # unlabeled, road, sidewalk, terrain, road
 OBJECT_TAGS = (12, 13, 14, 15, 16, 18, 19, 20, 21)   # people, vehicles, props
 MIN_VISIBLE_POINTS = 3
 LIDAR_HEIGHT_M = 2.5
-# What the scorer expects the camera to call a placed object. It used to be a hand-kept list
-# of model names, and the moment a fixture used a model nobody had added -- a Nissan Patrol, a
-# Carlacola truck (town10_two_parked, 2026-09-15) -- the scorer expected "obstacle" and marked
-# the camera wrong for correctly saying "vehicle". CARLA's blueprint already says which it is.
-
-
 
 
 def motion_from_fixture(fx, times=None, matrices=None):
@@ -100,6 +94,11 @@ def motion_from_fixture(fx, times=None, matrices=None):
         h.add_speed(prev[0], 0.0)
     return h
 
+
+# What the scorer expects the camera to call a placed object. It used to be a hand-kept list
+# of model names, and the moment a fixture used a model nobody had added -- a Nissan Patrol, a
+# Carlacola truck (town10_two_parked, 2026-09-15) -- the scorer expected "obstacle" and marked
+# the camera wrong for correctly saying "vehicle". CARLA's blueprint already says which it is.
 def expected_type_for(blueprint: str) -> str:
     """What a placed object should be called, from CARLA's own blueprint id."""
     if blueprint.startswith("walker."):
