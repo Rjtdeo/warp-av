@@ -104,8 +104,13 @@ class Api:
 class ScenarioRunner:
     def __init__(self, api_url="http://localhost:5000", carla_host="localhost", carla_port=2000,
                  results_dir: Path = RESULTS_DIR, dry_run: bool = False, verbose: bool = True,
-                 run_id: Optional[str] = None, seed: Optional[int] = None, reset_ego: Optional[dict] = None):
+                 run_id: Optional[str] = None, seed: Optional[int] = None, reset_ego: Optional[dict] = None,
+                 poll_hz: float = POLL_HZ):
         self.api = Api(api_url)
+        # How often the recorder asks the stack for its state. Each answer is ~50 KB of JSON
+        # built in the stack's own process, so a faster recorder is a slower van: the repeat of
+        # the first V1 run polled at 9 Hz and the van's loop fell from ~5 to ~4 Hz.
+        self.poll_hz = float(poll_hz)
         self.api_url = api_url
         self.carla_host, self.carla_port = carla_host, carla_port
         self.results_dir = Path(results_dir)
@@ -224,7 +229,7 @@ class ScenarioRunner:
             mission_start_time = None
             t0 = time.time()
             last_poll = t0
-            dt = 1.0 / POLL_HZ
+            dt = 1.0 / self.poll_hz
             timeout = float(scenario["timeout_s"])
             terminal_since = None
             route_loaded = False
@@ -425,7 +430,7 @@ class ScenarioRunner:
             "map": meta.get("map"), "carla_server": (meta.get("carla_version") or {}).get("server"),
             "carla_client": (meta.get("carla_version") or {}).get("client"),
             "seed": self.seed, "reset_ego": self.reset_ego, "api_url": self.api_url,
-            "carla_host": self.carla_host, "carla_port": self.carla_port, "poll_hz": POLL_HZ,
+            "carla_host": self.carla_host, "carla_port": self.carla_port, "poll_hz": self.poll_hz,
             "host": socket.gethostname(), "platform": platform.platform(), "python": sys.version.split()[0],
             "planned_ids": self.planned_ids,
         }

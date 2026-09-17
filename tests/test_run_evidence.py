@@ -125,7 +125,7 @@ def test_dry_run_touches_no_disk(tmp_path):
 
 def test_persist_never_overwrites_and_summarises(tmp_path):
     root = tmp_path / "results"
-    r = ScenarioRunner(results_dir=root, dry_run=True, verbose=False, run_id="v1_test", seed=None)
+    r = ScenarioRunner(results_dir=root, dry_run=True, verbose=False, run_id="v1_test", seed=None, poll_hz=5.0)
     r.planned_ids = ["WAV-0001", "WAV-0001"]
     trace = [{"t": 1.0, "state": {"pose": {"speed": 0}}, "actors": {}, "ego": (0.0, 0.0)}]
     p1 = r._persist("WAV-0001", _result(), trace)
@@ -137,6 +137,7 @@ def test_persist_never_overwrites_and_summarises(tmp_path):
     assert json.loads(p2["result"].read_text(encoding="utf-8"))["evidence"]["result_file"].endswith("WAV-0001__2.json")
     man = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
     assert man["run_id"] == "v1_test" and man["planned_ids"] == ["WAV-0001", "WAV-0001"] and man["git_sha_stack"] == "abc1234"
+    assert man["poll_hz"] == 5.0
     summary = (run_dir / "SUMMARY.md").read_text(encoding="utf-8")
     assert summary.count("| WAV-0001 |") == 2 and "PASS 1" in summary and "FAIL 1" in summary
     csv_lines = (run_dir / "summary.csv").read_text(encoding="utf-8").splitlines()

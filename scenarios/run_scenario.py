@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--results-dir", default=str(RESULTS_DIR))
     ap.add_argument("--reset-ego", help="'lane:x,y', 'spawn:N' or 'x,y,yaw_deg': teleport the ego there before every scenario")
     ap.add_argument("--seed", type=int, help="traffic-manager seed for autopilot actors (recorded either way)")
+    ap.add_argument("--poll-hz", type=float, default=10.0, help="recorder rate; each poll costs the stack a ~50 KB JSON build")
     a = ap.parse_args()
 
     cat = Catalog()
@@ -56,7 +57,7 @@ def main():
     print(f"{len(ids)} scenario(s) selected")
     runner = ScenarioRunner(api_url=a.api, carla_host=a.carla_host, carla_port=a.carla_port, dry_run=a.dry_run,
                             verbose=not a.quiet, results_dir=a.results_dir, run_id=a.run_id, seed=a.seed,
-                            reset_ego=parse_reset_spec(a.reset_ego))
+                            reset_ego=parse_reset_spec(a.reset_ego), poll_hz=a.poll_hz)
     runner.planned_ids = list(ids)
     if not a.dry_run:
         print(f"run folder: {runner.run_dir}")
