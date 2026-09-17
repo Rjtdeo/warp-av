@@ -1817,23 +1817,6 @@ class RoutePlanner:
         # its nose pointing across the next lane keeps ignoring that lane
         # (test_tilted_van_ignores_vehicle_off_route).
         off_route = footprint is not None and ego_lat > corridor_halfwidth_m
-        # V1.6 (WAV-0888, 2026-09-17): the van's OWN heading, looked along for a parked vehicle
-        # it is being carried into. Every rule here judges by the route line; on a bend the
-        # van can be 0.7-0.9 m outside that line and heading outward, with a car parked at
-        # the lane edge 13 m ahead and a metre to the side of its nose, and nothing looked
-        # along that heading until the van was a whole corridor width off the line (the
-        # off-route nose line below) -- true gap 0.36 m by then, at rest 0.26 m from the car.
-        # This line is the controller's intended path when there is one, else straight ahead,
-        # and reaches as far as the route sweep does. It only ever SLOWS (see the loop).
-        heading_reach_m = FOOTPRINT_STATIONARY_REACH_M
-        heading_line = None
-        heading_slow = False
-        if footprint is not None:
-            heading_line = _polyline(intended_path) if intended_path else []
-            if len(heading_line) < 2:
-                heading_line = [(ego_x, ego_y),
-                                (ego_x + cos_y * (heading_reach_m + 2.0 * footprint.half_length),
-                                 ego_y + sin_y * (heading_reach_m + 2.0 * footprint.half_length))]
         nose_reach_m = danger_m + footprint.swept_half_length if off_route else 0.0
         nose_line = None
         if off_route:
@@ -1975,36 +1958,6 @@ class RoutePlanner:
                         closest_lat = round(lat, 2)
                     blocked = True
                     _note_block(BLOCKED_SWEPT_PATH, obj, dist, lat)
-            # V1.6: EARLY SLOW for a parked vehicle on the van's own heading. Only where the
-            # route sweep is not already deciding for it (a bend, or further than 2.6 m from
-            # the line) and only while the van is still inside its corridor: the off-route
-            # nose line above keeps the hard stop. A conflict puts the car into the slow zone
-            # -- level SLOW at its real distance, never a block -- so rule 18 asks for the
-            # slow speed while there is still room (required inside distance_to_slow, V1.5).
-            # A car parked a safe way off a straight is as far from this line as from the
-            # route line and stays clear, so the parked rows of RC-1 are judged as before.
-            # Junction-adjacent objects stay exempt, as for the route sweep: turning past a
-            # car waiting in the cross street is the give-way logic's business.
-            if (heading_line is not None and not off_route and not sweep_decides and stationary
-                    and not near_junction
-                    and getattr(getattr(obj, "object_type", None), "value", None) == "vehicle"
-                    and -1.0 < obj.x <= heading_reach_m):
-                box_h = obstacle_box_for(obj, ego_yaw)
-                where_h = (wx, wy)
-                if box_h is not None:
-                    where_h = (wx + cos_y * box_h.dx - sin_y * box_h.dy,
-                               wy + sin_y * box_h.dx + cos_y * box_h.dy)
-                if sweep_conflict(heading_line, (ego_x, ego_y), footprint, where_h,
-                                  obstacle_radius=obstacle_radius_m(obj), horizon_m=heading_reach_m,
-                                  obstacle_box=box_h) is not None:
-                    found = True
-                    dist = max(0.0, float(obj.x))
-                    if dist < closest:
-                        closest = dist
-                        closest_type = obj.object_type
-                        closest_speed = obj.speed
-                        closest_lat = round(lat, 2)
-                    heading_slow = True
             if lat > lat_limit:
                 continue
             if want_detail:
@@ -2150,8 +2103,6 @@ class RoutePlanner:
         if passing_obj is not None and not blocked:
             decision.passing_id = int(getattr(passing_obj[0], "id", 0) or 0) or None
             decision.passing_lateral_m = passing_obj[2]
-        if heading_slow and not blocked:
-            decision.used_footprint = True          # the slow came from the body sweep along the heading
         self.last_decision = decision
         return decision
 
