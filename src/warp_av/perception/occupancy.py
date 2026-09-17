@@ -119,6 +119,17 @@ class GridSummary:
                 "cell_m": self.cell_m, "range_m": self.range_m}
 
 
+def path_in_van_frame(points_xy, x: float, y: float, yaw: float):
+    """World (x, y) points -> (forward, right) metres in the van's frame at pose (x, y, yaw
+    radians, CARLA frame). The grid's own frame: x forward, y to the right."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    out = []
+    for px, py in points_xy or []:
+        dx, dy = float(px) - x, float(py) - y
+        out.append((dx * c + dy * s, -dx * s + dy * c))
+    return out
+
+
 class OccupancyGrid:
     """Free, blocked and unseen space around the van, from one turn of the laser."""
 
@@ -440,6 +451,63 @@ class OccupancyGrid:
         free = int((cells == FREE).sum())
         blocked = int((cells == OCCUPIED).sum())
         return free, blocked, int(cells.size) - free - blocked
+
+    def strip_along(self, path, from_m: float, to_m: float, half_width_m: float):
+        """The same count as strip_ahead, over the ground under a PATH rather than a straight
+        line: `path` is the van's intended path as (forward, right) metres in the van's frame,
+        starting at or near its middle (see path_in_van_frame). Returns
+        ((free, blocked, unseen), nearest_block_m) -- the nearest solid square's distance
+        measured ALONG the path from the van's middle, or None for it when there is none -- or
+        None altogether when the map is not built or the path is too short to read.
+
+        Why it exists (V1.8, 2026-09-17): on the north-east bend of Town10HD the van's nose
+        points at the rear of a car parked on the outside of the curve while its route bends
+        away from it. A straight strip from the nose re-read that car every tick and the van
+        stood there for good, 4 m from a car it would have passed with 0.9 m to spare. The
+        ground the van is about to cover is the ground under its path, and on a bend that is
+        not the ground straight ahead."""
+        if not self.updated or to_m <= from_m or half_width_m <= 0 or path is None:
+            return None
+        pts = np.asarray(path, dtype=np.float32)
+        if pts.ndim != 2 or pts.shape[0] < 2:
+            return None
+        seg = np.diff(pts, axis=0)
+        seg_len = np.hypot(seg[:, 0], seg[:, 1])
+        keep = seg_len > 1e-6
+        if not keep.any():
+            return None
+        starts, seg, seg_len = pts[:-1][keep], seg[keep], seg_len[keep]
+        cum = np.concatenate([[0.0], np.cumsum(seg_len)])
+        # where along the path the van's middle is now: the path may be a tick old
+        t = np.clip(-(starts[:, 0] * seg[:, 0] + starts[:, 1] * seg[:, 1]) / (seg_len ** 2), 0.0, 1.0)
+        foot = starts + seg * t[:, None]
+        gap = np.hypot(foot[:, 0], foot[:, 1])
+        k = int(np.argmin(gap))
+        if gap[k] > 2.0:
+            return None                                   # not the path the van is on
+        s0 = cum[k] + t[k] * seg_len[k]
+        step = self.cell_m
+        ss = np.arange(s0 + from_m, min(s0 + to_m, cum[-1]) + 1e-6, step)
+        if ss.size < 2:
+            return None
+        idx = np.clip(np.searchsorted(cum, ss, side="right") - 1, 0, len(seg_len) - 1)
+        along = (ss - cum[idx]) / seg_len[idx]
+        cx = starts[idx, 0] + seg[idx, 0] * along
+        cy = starts[idx, 1] + seg[idx, 1] * along
+        tx, ty = seg[idx, 0] / seg_len[idx], seg[idx, 1] / seg_len[idx]
+        offsets = np.arange(-half_width_m, half_width_m + 1e-6, step, dtype=np.float32)
+        gx = cx[:, None] - ty[:, None] * offsets[None, :]      # (sample, offset); right of the path is +y
+        gy = cy[:, None] + tx[:, None] * offsets[None, :]
+        r, c = self.to_cell(gx, gy)
+        inside = (r >= 0) & (r < self.n) & (c >= 0) & (c < self.n)
+        cells = np.zeros(r.shape, dtype=np.uint8)
+        cells[inside] = self.cells[r[inside], c[inside]]
+        blocked_rows = np.flatnonzero((cells == OCCUPIED).any(axis=1))
+        free = int((cells == FREE).sum())
+        blocked = int((cells == OCCUPIED).sum())
+        counts = (free, blocked, int(cells.size) - free - blocked)
+        at = float(ss[blocked_rows[0]] - s0) if blocked_rows.size else None
+        return counts, at
 
     def nearest_block_ahead(self, from_m: float, to_m: float, half_width_m: float):
         """How far ahead the nearest solid square is, over the same strip of ground

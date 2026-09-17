@@ -75,6 +75,7 @@ from .planning.footprint_config import FootprintBlockingConfig
 from .planning.parking_check import spot_view, spot_counts, SPOT_DEFAULT_LEN_M, SPOT_DEFAULT_WID_M
 from .planning.footprint_debug import FootprintDebugConfig, FootprintDebugDrawer, build_frame
 from .perception.bay_finder import why_no_kerb
+from .perception.occupancy import path_in_van_frame
 
 
 from .world_model import build_world_model
@@ -89,6 +90,29 @@ from .sensor_health import HealthMonitor, read_sensors
 #: say before the van drives on is planner.nothing_is_standing_there.
 SEEN_FREE_LOOK_M = 7.0
 SEEN_FREE_MIN_LOOK_M = 2.0
+
+
+def ground_under_the_path(grid, trajectory, pose, front, half):
+    """(free, blocked, unseen) over the ground the van's body is about to cover, and how far
+    along it the nearest solid square is: read under the van's INTENDED PATH (the trajectory
+    the controller is following), and straight ahead only when there is no path to read.
+
+    V1.8 (2026-09-17): the straight strip is the wrong ground on a bend. On the north-east
+    bend of Town10HD the van came to rest with its nose on the rear of a car parked on the
+    outside of the curve, 4 m away, while its route turned left past it with 0.9 m to spare.
+    Straight ahead the strip held that car's solid squares every tick, nothing else held the
+    van, and it stood there 33 s (WAV-V15-BEND5, run v17_hold) -- four V1 missions died at
+    the same spot. The path is what the van will actually drive over."""
+    if trajectory is not None:
+        try:
+            path = path_in_van_frame(trajectory.xy(), pose.x, pose.y, pose.yaw)
+            read = grid.strip_along(path, front, front + GROUND_LOOK_M, half)
+        except Exception:
+            read = None
+        if read is not None:
+            return read
+    counts = grid.strip_ahead(front, front + GROUND_LOOK_M, half)
+    return counts, grid.nearest_block_ahead(front, front + GROUND_LOOK_M, half)
 
 #: While getting past something standing in the lane: how close a body may come before the
 #: van stops mid-manoeuvre, and how fast it may go. A squeeze inside the lane passes within
@@ -3753,7 +3777,7 @@ class WarpAV:
         if behaviour == DrivingBehavior.PARKING or self._overtake_point is not None:
             return
         half = self.footprint_blocking.footprint.half_width + GROUND_KEEP_M
-        counts = grid.strip_ahead(front, front + GROUND_LOOK_M, half)
+        counts, at = ground_under_the_path(grid, getattr(self, "_trajectory", None), pose, front, half)
         self._ground_says = what_the_ground_says(counts)
         if self._ground_says != BLOCKED_OCCUPANCY:
             if self._ground_says is not None and self._road_edge_ahead(pose):
@@ -3767,7 +3791,6 @@ class WarpAV:
                 if self._ground_says == UNKNOWN_SPACE and path.level == PATH_CLEAR:
                     path.level = PATH_UNSURE
             return
-        at = grid.nearest_block_ahead(front, front + GROUND_LOOK_M, half)
         if at is None:
             return
         free, blocked, unseen = counts
