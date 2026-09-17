@@ -59,12 +59,16 @@ def repo_git_dirty() -> Optional[bool]:
 
 
 def parse_reset_spec(text: Optional[str]) -> Optional[dict]:
-    """'spawn:12' -> spawn point 12; 'x,y,yaw' -> that pose; '' / None -> no reset."""
+    """'spawn:12' -> spawn point 12; 'lane:x,y' -> the lane under x,y, facing along it (how every
+    earlier live run placed the van); 'x,y,yaw' -> that pose; '' / None -> no reset."""
     if not text:
         return None
     t = text.strip()
     if t.startswith("spawn:"):
         return {"mode": "spawn_point", "index": int(t[len("spawn:"):])}
+    if t.startswith("lane:"):
+        x, y = (float(v) for v in t[len("lane:"):].split(","))
+        return {"mode": "lane", "x": x, "y": y}
     parts = [float(v) for v in t.split(",")]
     if len(parts) == 2:
         parts.append(0.0)

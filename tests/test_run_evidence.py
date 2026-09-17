@@ -143,6 +143,7 @@ def test_start_check_reports_what_is_not_clean():
 def test_parse_reset_spec():
     assert parse_reset_spec(None) is None and parse_reset_spec("") is None
     assert parse_reset_spec("spawn:12") == {"mode": "spawn_point", "index": 12}
+    assert parse_reset_spec("lane:-18,140.3") == {"mode": "lane", "x": -18.0, "y": 140.3}
     assert parse_reset_spec("1.5,-2,90") == {"mode": "absolute", "x": 1.5, "y": -2.0, "yaw_deg": 90.0}
     with pytest.raises(ValueError):
         parse_reset_spec("1,2,3,4")

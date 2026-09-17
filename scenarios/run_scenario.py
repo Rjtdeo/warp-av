@@ -15,7 +15,7 @@ summary.csv). One folder per run, nothing overwritten. Then: python3 scenarios/r
 V1 evidence options:
   --ids-file scratch/v1/subset.txt     scenario ids, one per line (# comments allowed); repeats allowed
   --run-id v1_first10                  name the run folder (default: time + git sha)
-  --reset-ego spawn:12 | x,y,yaw       teleport the ego to the same start before every scenario
+  --reset-ego lane:-18,140.3 | spawn:12 | x,y,yaw   teleport the ego to the same start before every scenario
   --seed 7                             pin CARLA's traffic manager (autopilot actors) to a seed
 """
 import argparse, os, sys
@@ -39,7 +39,7 @@ def main():
     ap.add_argument("--ids-file", help="file of scenario ids, one per line")
     ap.add_argument("--run-id", help="name of the run folder under scenarios/results/runs/")
     ap.add_argument("--results-dir", default=str(RESULTS_DIR))
-    ap.add_argument("--reset-ego", help="'spawn:N' or 'x,y,yaw_deg': teleport the ego there before every scenario")
+    ap.add_argument("--reset-ego", help="'lane:x,y', 'spawn:N' or 'x,y,yaw_deg': teleport the ego there before every scenario")
     ap.add_argument("--seed", type=int, help="traffic-manager seed for autopilot actors (recorded either way)")
     a = ap.parse_args()
 

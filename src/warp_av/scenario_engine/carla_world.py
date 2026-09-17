@@ -170,11 +170,16 @@ class WorldHelper:
                 pass
         return out or None
 
-    def reset_ego(self, spec: dict, settle_s: float = 1.0) -> float:
-        """Teleport the ego to a location spec with zero velocity, let it settle, and return how far
-        (m) it came to rest from the requested point. Test-fixture control only: the caller has
-        already stopped the mission, and nothing in the autonomy stack is told."""
-        tr = self.resolve_location(spec)
+    def reset_ego(self, spec: dict, settle_s: float = 3.0) -> float:
+        """Teleport the ego to a location spec with zero velocity, let it settle (a dropped van
+        falls for a moment, and its sensors need a few sweeps at the new place), and return how
+        far (m) it came to rest from the requested point. Test-fixture control only: the caller
+        has already stopped the mission, and nothing in the autonomy stack is told."""
+        if spec.get("mode") == "lane":
+            wp = self.map.get_waypoint(carla.Location(x=float(spec["x"]), y=float(spec["y"]), z=0.0))
+            tr = wp.transform
+        else:
+            tr = self.resolve_location(spec)
         tr = carla.Transform(carla.Location(x=tr.location.x, y=tr.location.y, z=tr.location.z + 0.3), tr.rotation)
         zero = carla.Vector3D(0.0, 0.0, 0.0)
         try:
