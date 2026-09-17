@@ -2009,8 +2009,16 @@ class RoutePlanner:
                     keep = sweep_conflict(heading_line, (ego_x, ego_y), roomy, where_h,
                                           obstacle_radius=radius_h, horizon_m=heading_reach_m,
                                           obstacle_box=box_h) is not None
+                # the intended path swings with every steering tick; a moment of "clear" is
+                # not the car gone, so the release waits until it has been clear for a grace
+                if held_car and not risk_now and not keep:
+                    since = hold.get("clear_since") or now_t
+                    if now_t - since < EDGE_HOLD_GRACE_S:
+                        keep = True
+                        hold = dict(hold, clear_since=since)
                 if risk_now or keep:
-                    hold = {"x": wx, "y": wy, "last": now_t}
+                    clear_since = None if (risk_now or (held_car and hold.get("clear_since") is None)) else hold.get("clear_since")
+                    hold = {"x": wx, "y": wy, "last": now_t, "clear_since": clear_since}
                     hold_matched = True
                     found = True
                     dist = max(0.0, float(obj.x))
@@ -2021,7 +2029,7 @@ class RoutePlanner:
                         closest_lat = round(lat, 2)
                     edge_slow = True
                 elif held_car:
-                    hold = None                      # safely clear of it: released
+                    hold = None                      # safely clear of it for a full grace: released
             if lat > lat_limit:
                 continue
             if want_detail:

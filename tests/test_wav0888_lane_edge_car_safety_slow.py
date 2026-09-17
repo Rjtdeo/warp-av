@@ -84,8 +84,13 @@ def test_case_c_the_hold_releases_once_the_car_is_passed_or_safely_clear():
     pl = planner()
     outward = (10.0, 0.8, math.radians(12.0))
     assert decide(pl, outward, [car_seen_from(outward)]).edge_hold is True
-    # the van has steered well back onto its line and is passing wide: safely clear -> released
+    # the van has steered well back onto its line and is passing wide: safely clear, but a
+    # single clear tick is not enough (the intended path swings with every steering tick)...
     wide = (14.0, -0.6, 0.0)
+    out = decide(pl, wide, [car_seen_from(wide)])
+    assert out.edge_hold is True and out.level == PATH_SLOW
+    # ...once it has been clear for the grace period, it is released
+    pl._edge_hold["clear_since"] -= 5.0
     out = decide(pl, wide, [car_seen_from(wide)])
     assert out.edge_hold is False and out.level == PATH_CLEAR
     # and a car already behind the nose is never held
