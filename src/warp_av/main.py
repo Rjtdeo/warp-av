@@ -1465,18 +1465,7 @@ class WarpAV:
                         behavior_output.desired_speed_mps = cap
                     behavior_output.reason += " | getting past something standing in the lane"
 
-        # Comfort: ease off rather than step down, and only where the slowing is for comfort
-        # (behavior.EASE_OFF_REASONS). Live on 2026-09-11 one object crossing the 20 m line
-        # stepped the van 4.0 -> 2.0 -> 4.0 m/s. A light, a junction, a yield, the run-in to a
-        # parking spot and every stop are still obeyed the moment they are decided.
-        if (not behavior_output.should_stop
-                and behavior_output.why in EASE_OFF_REASONS
-                and behavior_output.desired_speed_mps < getattr(self, "_eased_speed", 0.0)):
-            behavior_output.desired_speed_mps = max(behavior_output.desired_speed_mps,
-                                                    self._eased_speed - EASE_OFF_MPS)
-            behavior_output.reason += " | easing off"
-        self._eased_speed = (0.0 if behavior_output.should_stop
-                             else behavior_output.desired_speed_mps)
+        self._ease_off(behavior_output)
 
         # Curve-aware speed cap (Troy #2/#3): slow down BEFORE sharp bends.
         _phase("behaviour")
@@ -1904,6 +1893,8 @@ class WarpAV:
             "active_faults": dict(self.fault_injector.active),
             "last_tick_error": self._last_tick_error,
             "cruise_speed_mps": self.behavior.cruise_speed,
+            # what the behaviour asked for and what the ease-off let through (V1.5)
+            "speed_request": getattr(self, "_speed_request", None),
             "speed_limit_mps": getattr(self, "_limit_mps", None),
             "seen_ahead_m": (round(self._seen_ahead_m(), 1) if self._seen_ahead_m() is not None
                              else None),
@@ -3699,6 +3690,31 @@ class WarpAV:
                               f"already turning in")
         self.logger.stop_mission_log()
         print(f"[Parking] {why}")
+
+    def _ease_off(self, behavior_output):
+        """Comfort: ease off rather than step down, and only where the slowing is for comfort
+        (behavior.EASE_OFF_REASONS). Live on 2026-09-11 one object crossing the 20 m line
+        stepped the van 4.0 -> 2.0 -> 4.0 m/s. A light, a junction, a yield, the run-in to a
+        parking spot and every stop are still obeyed the moment they are decided.
+
+        And so is a request the behaviour marks safety_required: a stopping-distance rule
+        (the "cannot see past" caps, the slow zone with no room left). V1.5, 2026-09-17:
+        WAV-0615 asked for 2.0 m/s with a parked car 8.7 m ahead at 6.65 m/s, was eased to
+        7.25 m/s, kept the throttle on and hit the car at 6.6 m/s. Both numbers are kept in
+        _speed_request for the trace."""
+        raw = behavior_output.desired_speed_mps
+        if (not behavior_output.should_stop
+                and behavior_output.why in EASE_OFF_REASONS
+                and not behavior_output.safety_required
+                and behavior_output.desired_speed_mps < getattr(self, "_eased_speed", 0.0)):
+            behavior_output.desired_speed_mps = max(behavior_output.desired_speed_mps,
+                                                    self._eased_speed - EASE_OFF_MPS)
+            behavior_output.reason += " | easing off"
+        self._eased_speed = (0.0 if behavior_output.should_stop
+                             else behavior_output.desired_speed_mps)
+        self._speed_request = {"raw": round(raw, 2), "eased": round(behavior_output.desired_speed_mps, 2),
+                               "why": behavior_output.why, "safety": bool(behavior_output.safety_required),
+                               "stop": bool(behavior_output.should_stop)}
 
     def _note_move(self, what, said):
         """Put a move the van decided to make into the drive's story, beside the changes of

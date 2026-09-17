@@ -111,6 +111,17 @@ BLIND_REACTION_S = 0.4      # noticing, deciding and the brakes taking hold, at 
 BLIND_DECEL_MPS2 = 3.0      # comfortable braking for a laden van, not an emergency stop
 
 
+def distance_to_slow(speed_mps: float, to_mps: float) -> float:
+    """How far the van travels while slowing from `speed_mps` to `to_mps` under the same
+    model as stopping_speed_for: a reaction time, then comfortable braking. Zero when it is
+    already that slow. This is the line between a comfort slow-down and a required one
+    (V1.5, WAV-0615): an object nearer than this gives the van no room to ease into it."""
+    v = max(0.0, float(speed_mps)); to = max(0.0, float(to_mps))
+    if v <= to:
+        return 0.0
+    return v * BLIND_REACTION_S + (v * v - to * to) / (2.0 * BLIND_DECEL_MPS2)
+
+
 def stopping_speed_for(distance_m: float) -> float:
     """The fastest the van may go and still stop within `distance_m`.
 
@@ -163,6 +174,12 @@ class BehaviorOutput:
     why: str = ""                       # ...and the same thing as one of transitions.ALL_WHY
     desired_speed_mps: float = 0.0
     should_stop: bool = False
+    #: the speed is what stopping in time needs, not a comfort choice: the ease-off in main.py
+    #: must not touch it. Set by the stopping-distance rules (the "cannot see past" / "only
+    #: seen clear" caps, and the slow zone when the object is inside distance_to_slow).
+    #: V1.5, 2026-09-17: WAV-0615 hit a parked car after "slowing to 2.0 m/s" at 6.65 m/s,
+    #: 8.7 m from it, was eased to 7.25 m/s and the throttle stayed on.
+    safety_required: bool = False
     timestamp: float = field(default_factory=time.time)
 
 
@@ -670,10 +687,15 @@ class BehaviorSystem:
         elif not (seen < self.slow_distance + self.slow_release_m
                   and time.time() - self._slowing_since < self.slow_hold_s):
             return None
+        # Comfort or necessity? With room to spare the slow-down may be eased into; nearer
+        # than the distance the van needs to reach slow_speed from its present speed it may
+        # not (V1.5, WAV-0615).
+        speed_now = float(getattr(now.pose, "speed", 0.0) or 0.0)
+        required = seen < distance_to_slow(speed_now, self.slow_speed)
         return self._decide(
             DrivingBehavior.FOLLOWING_ROUTE,
             f"Object detected at {seen:.1f}m — slowing to {self.slow_speed:.1f} m/s",
-            speed=self.slow_speed, stop=False, why=OBJECT_AHEAD_SLOW
+            speed=self.slow_speed, stop=False, why=OBJECT_AHEAD_SLOW, safety_required=required
         )
 
     def _rule_parking(self, now):
@@ -838,42 +860,45 @@ class BehaviorSystem:
         if now - self._block_run_since >= self.block_latch_after_s:
             self._block_memory = (now, kind, distance)
 
-    def _decide(self, behavior, reason, speed, stop, why) -> BehaviorOutput:
+    def _decide(self, behavior, reason, speed, stop, why, safety_required=False) -> BehaviorOutput:
         # Every cap can only ever slow the van down, never speed it up, and none of them can
-        # turn a stop into driving. The tightest one wins.
+        # turn a stop into driving. The tightest one wins. The third field says whether the
+        # cap is a stopping-distance rule: those are required, not comfort (V1.5).
         caps = []
         # Safety's cap while a sense is missing (Perception V2 day 8).
         sensor_cap = getattr(self, "_speed_cap_mps", None)
         if sensor_cap is not None:
-            caps.append((float(sensor_cap), "a sensor is missing"))
+            caps.append((float(sensor_cap), "a sensor is missing", False))
         # Never go faster than you could stop in the distance to the nearest place you
         # cannot see into (Perception V2 day 12).
         blind = getattr(self, "_blind_spot_m", None)
         if blind is not None:
             caps.append((stopping_speed_for(float(blind)),
-                         f"cannot see past {float(blind):.1f} m beside the lane"))
+                         f"cannot see past {float(blind):.1f} m beside the lane", True))
         # ...and the same rule for the road AHEAD: unseen ground is not free ground, so never
         # travel faster than you could stop inside what the laser has actually seen empty
         # (Planning V2, P2: the half of unknown_space that does something).
         seen = getattr(self, "_seen_ahead_m", None)
         if seen is not None:
             caps.append((stopping_speed_for(float(seen)),
-                         f"the road is only seen clear for {float(seen):.1f} m"))
+                         f"the road is only seen clear for {float(seen):.1f} m", True))
         # About to put a wheel over the kerb the laser fitted: down to a crawl, so the
         # steering has time to bring the van back before its body is over it.
         if getattr(self, "_over_the_kerb", False):
-            caps.append((KERB_CRAWL_MPS, "the kerb is under where the van would be"))
+            caps.append((KERB_CRAWL_MPS, "the kerb is under where the van would be", False))
         # The limit on this piece of road, from the map. Not a cap that can be argued with.
         limit = getattr(self, "_speed_limit_mps", None)
         if limit is not None:
-            caps.append((float(limit), f"the limit here is {float(limit) * 3.6:.0f} km/h"))
+            caps.append((float(limit), f"the limit here is {float(limit) * 3.6:.0f} km/h", False))
         if caps:
-            cap, capped_by = min(caps, key=lambda cw: cw[0])
+            cap, capped_by, stopping_rule = min(caps, key=lambda cw: cw[0])
             if speed > cap:
                 speed = max(0.0, cap)
                 reason = f"{reason} (held to {speed:.1f} m/s: {capped_by})"
                 if speed == 0.0:
                     stop = True
+                if stopping_rule:
+                    safety_required = True
         # Every change of state, with its reason code, kept in order (P3): one line of a
         # drive's story. Same state and same reason next tick is not a change.
         rank, rule = getattr(self, "_rule_now", (0, ""))
@@ -890,7 +915,8 @@ class BehaviorSystem:
             reason=reason,
             why=why,
             desired_speed_mps=speed,
-            should_stop=stop
+            should_stop=stop,
+            safety_required=bool(safety_required)
         )
 
     def _junction_conflict(self, perception: PerceptionOutput, world=None, ego_yaw_rad=None):
