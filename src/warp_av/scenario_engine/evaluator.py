@@ -269,6 +269,20 @@ def compute_metrics(trace: List[dict], meta: dict) -> Dict[str, Any]:
     goal = meta.get("goal_xy")
     last = trace[-1].get("ego")
     m["final_goal_distance_m"] = (round(math.dist(last, goal), 1) if goal and last and last[0] is not None else None)
+    # V1.5: a scenario can PASS its own criteria and still end with the van frozen short of the
+    # goal (WAV-0281/0289 sat "stopped_blocked" for the last 9 s of a 60 s timeout). Say so.
+    tail = [s for s in trace if s["t"] >= ts[-1] - 3.0]
+    still = tail and all(float(s["state"].get("pose", {}).get("speed") or 0.0) < 0.3 for s in tail)
+    stopped_kinds = ("stopped_blocked", "stopped_obstacle", "stopped_vehicle", "stopped_pedestrian", "stopped_safety")
+    m["stuck_at_end"] = bool(still and m["final_mission_state"] in ("executing", "paused")
+                             and (m.get("behavior_final") in stopped_kinds)
+                             and (m["final_goal_distance_m"] is None or m["final_goal_distance_m"] > 10.0))
+    m["stuck_at_end_s"] = None
+    if m["stuck_at_end"]:
+        k = len(trace) - 1
+        while k > 0 and float(trace[k]["state"].get("pose", {}).get("speed") or 0.0) < 0.3:
+            k -= 1
+        m["stuck_at_end_s"] = round(ts[-1] - ts[k], 1)
     return m
 
 

@@ -24,7 +24,7 @@ V1_FIELDS = [
     "scenario_id", "run_id", "verdict", "reason", "family", "capability_status",
     "git_sha_runner", "git_sha_stack", "git_dirty", "seed", "map", "map_expected", "carla_server", "started_at",
     "start_xy", "goal_xy", "duration_s", "distance_m", "completed", "mission_record_state", "mission_reason_ended",
-    "final_goal_distance_m", "final_mission_state",
+    "final_goal_distance_m", "final_mission_state", "stuck_at_end", "stuck_at_end_s",
     "collision_count", "stack_collision_count",
     "min_gap_to_actor_m", "min_distance_to_actor_m", "min_distance_any_actor_m", "min_perception_closest_m",
     "behavior_final", "behaviors_seen", "safety_final", "safety_states_seen", "planner_reason_final",
@@ -114,6 +114,8 @@ def build_evidence(result: dict) -> dict:
         "mission_reason_ended": m.get("mission_reason_ended"),
         "final_goal_distance_m": _r(m.get("final_goal_distance_m"), 1),
         "final_mission_state": m.get("final_mission_state"),
+        "stuck_at_end": m.get("stuck_at_end"),
+        "stuck_at_end_s": m.get("stuck_at_end_s"),
         "collision_count": m.get("collision_count"),
         "stack_collision_count": m.get("stack_collision_count"),
         "min_gap_to_actor_m": _r(m.get("min_gap_to_actor_m")),
@@ -155,7 +157,7 @@ def _cell(v) -> str:
 
 SUMMARY_COLUMNS = [
     ("scenario_id", "ID"), ("verdict", "Verdict"), ("family", "Family"), ("completed", "Done"), ("mission_record_state", "Mission record"),
-    ("final_goal_distance_m", "To goal m"),
+    ("final_goal_distance_m", "To goal m"), ("stuck_at_end_s", "Stuck at end s"),
     ("collision_count", "Coll (sensor)"), ("stack_collision_count", "Coll (stack)"),
     ("min_gap_to_actor_m", "Min gap m"), ("min_distance_any_actor_m", "Nearest actor m"),
     ("distance_m", "Dist m"), ("duration_s", "Time s"), ("loop_hz_mean", "Hz mean"), ("loop_hz_min", "Hz min"),

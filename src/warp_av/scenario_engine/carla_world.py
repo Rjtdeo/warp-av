@@ -107,6 +107,13 @@ class WorldHelper:
         v = self.ego.get_velocity()
         return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
 
+    def sim_time(self) -> Optional[float]:
+        """The simulator's own clock (seconds since the episode began), from the cached snapshot."""
+        try:
+            return round(self.world.get_snapshot().timestamp.elapsed_seconds, 3)
+        except Exception:
+            return None
+
     @staticmethod
     def _box_of(actor) -> Optional[list]:
         """[x, y, yaw_rad, half_length, half_width]: the actor's bounding box seen from above."""

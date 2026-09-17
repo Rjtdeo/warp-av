@@ -167,3 +167,16 @@ def test_api_never_uses_the_name_localhost():
     # Windows tries ::1 first and pays ~2 s per call when the stack listens on IPv4 only
     assert Api("http://localhost:5000/").base == "http://127.0.0.1:5000"
     assert Api("http://192.168.1.102:5000").base == "http://192.168.1.102:5000"
+
+
+def test_stuck_at_end_is_visible_even_when_the_criteria_pass():
+    """V1.5 step 0: WAV-0281 and WAV-0289 passed their own criteria yet sat 'stopped_blocked'
+    for the last 9 s of the timeout, 22-25 m short of the goal. The row must say so."""
+    moving = [{"t": 100.0 + 0.2 * i, "state": _state(5.0), "actors": {}, "ego": (2.0 * i, 0.0)} for i in range(10)]
+    frozen = [{"t": 102.0 + 0.2 * i, "state": dict(_state(0.0), behavior="stopped_blocked"), "actors": {}, "ego": (18.0, 0.0)} for i in range(25)]
+    m = compute_metrics(moving + frozen, {"collisions": [], "goal_xy": (60.0, 0.0)})
+    assert m["stuck_at_end"] is True and m["stuck_at_end_s"] == pytest.approx(4.8, abs=0.25)
+    assert m["final_goal_distance_m"] == 42.0
+    # the same run that reaches its goal is not "stuck"
+    m2 = compute_metrics(moving + [dict(s, ego=(60.0, 0.0)) for s in frozen], {"collisions": [], "goal_xy": (60.0, 0.0)})
+    assert m2["stuck_at_end"] is False

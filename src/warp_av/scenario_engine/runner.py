@@ -286,6 +286,7 @@ class ScenarioRunner:
                     # V1 evidence: what CARLA knows at the same instant. Never fatal.
                     sample["ego_yaw"] = round(eyaw, 4)
                     sample["ego_speed"] = round(wh.ego_speed(), 3)
+                    sample["sim_t"] = wh.sim_time()
                     sample["ego_box"] = wh.ego_box()
                     sample["boxes"] = wh.actor_boxes()
                     sample["nearest_any"] = wh.nearest_other_actor()
