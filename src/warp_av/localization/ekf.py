@@ -44,6 +44,7 @@ to show whether that is enough. If it is not, the evidence will say so.
 from __future__ import annotations
 
 import math
+from collections import deque
 from typing import Optional
 
 import numpy as np
@@ -143,8 +144,12 @@ class LocalizationEKF:
         self.distance_m = 0.0
         self.last_gnss_t = None
         self.last_lidar_t = None
-        #: the newest RAW gyro reading, kept because the LiDAR correction compares against it
+        #: the newest RAW gyro reading, and the running integral of it with the times at which
+        #: each sample landed. The LiDAR correction needs the angle the gyro turned through
+        #: over the SAME window the scan match covers -- see correct_lidar_yaw_rate.
         self._last_gyro = 0.0
+        self._gyro_angle = 0.0
+        self._gyro_hist = deque(maxlen=64)
 
     # ------------------------------------------------------------------ seeding
     def seed(self, x: float, y: float, yaw: float, sim_time: Optional[float],
@@ -176,6 +181,8 @@ class LocalizationEKF:
         self.last_gnss_t = None
         self.last_lidar_t = None
         self._last_gyro = 0.0
+        self._gyro_angle = 0.0
+        self._gyro_hist.clear()
 
     def forget(self) -> None:
         self.seeded = False
@@ -202,6 +209,13 @@ class LocalizationEKF:
         """
         if not self.seeded:
             return False
+        # The raw gyro, integrated. Trapezoid over the step, so a rate that is changing inside
+        # the step is accounted for rather than held at its newest value.
+        if self.t is not None and math.isfinite(yaw_rate):
+            step_dt = float(sim_time) - self.t
+            if 0.0 < step_dt <= MAX_PREDICT_S:
+                self._gyro_angle += 0.5 * (self._last_gyro + float(yaw_rate)) * step_dt
+                self._gyro_hist.append((float(sim_time), self._gyro_angle))
         self._last_gyro = float(yaw_rate)
         if self.t is None:
             self.t = sim_time
@@ -310,11 +324,22 @@ class LocalizationEKF:
         which way is north and no opinion about it; what it knows is how far the van swung
         between two sweeps a tenth of a second apart.
 
-        Entered as a yaw-RATE measurement:
+        Entered as an ANGLE over the same window the scan match covers:
 
-            measured        delta_yaw / dt
-            model           what the gyro said, less the offset we are estimating
-            H               [0, 0, 0, -1]
+            measured        delta_yaw
+            model           the angle the GYRO turned through over that window,
+                            less the offset we are estimating, times how long it lasted
+            H               [0, 0, 0, -dt]
+
+        WHY THE WINDOW MATTERS, and it does. The first version compared the LiDAR's average
+        rate against the newest single gyro sample. Standing still or cruising that is nearly
+        the same thing; in a turn it is not remotely, because the rate is changing inside the
+        very interval being measured. Scoring found the consequence: on turn-heavy routes the
+        gyro-offset estimate -- a quantity that should creep -- swung between -0.20 and +0.08
+        deg/s and dragged the heading seven degrees with it. At 14.6 deg/s of turn, the gap
+        between the instantaneous sample and the window average is several deg/s against a
+        sigma of 0.6, which is an eight-sigma kick straight into the offset. Comparing angle
+        with angle over the same window removes the whole effect.
 
         so the residual falls on the GYRO OFFSET, which is the thing LiDAR can genuinely see
         and the gyro cannot. Heading itself is then corrected through the yaw-to-offset
@@ -348,11 +373,14 @@ class LocalizationEKF:
         if not (math.isfinite(sigma_rad) and sigma_rad > 0.0):
             self.lidar_rejected += 1
             return False
-        z = _wrap(float(delta_yaw)) / float(dt)
-        H = np.array([[0.0, 0.0, 0.0, -1.0]], dtype=float)
-        sig_rate = float(sigma_rad) / float(dt)          # an angle's worth of doubt, per second
-        Rm = np.array([[sig_rate ** 2]], dtype=float)
-        innov = z - (self._last_gyro - float(self.x[3]))
+        gyro_angle = self._gyro_angle_over(float(sim_time) - float(dt), float(sim_time))
+        if gyro_angle is None:
+            self.lidar_rejected += 1
+            return False
+        z = _wrap(float(delta_yaw))
+        H = np.array([[0.0, 0.0, 0.0, -float(dt)]], dtype=float)
+        Rm = np.array([[float(sigma_rad) ** 2]], dtype=float)
+        innov = z - (gyro_angle - float(self.x[3]) * float(dt))
         S = H @ self.P @ H.T + Rm
         try:
             K = self.P @ H.T @ np.linalg.inv(S)
@@ -368,6 +396,39 @@ class LocalizationEKF:
         return True
 
     # ------------------------------------------------------------------ output
+    def _gyro_angle_over(self, t0: float, t1: float) -> Optional[float]:
+        """How far the RAW gyro says the van turned between two instants, interpolated out of
+        the running integral. None when the history does not cover the window, which is the
+        honest answer rather than an extrapolation."""
+        h = self._gyro_hist
+        if len(h) < 2:
+            return None
+        # A few milliseconds of slack at each end: a gyro sample landing on the same simulator
+        # tick as the scan is refused by predict_to as a duplicate, so the history can stop a
+        # hair short of the window without anything being wrong. More than that is a real gap
+        # and the answer is None rather than an extrapolation.
+        slack = 5e-3
+        if t0 < h[0][0] - slack or t1 > h[-1][0] + slack:
+            return None
+        t0 = min(max(t0, h[0][0]), h[-1][0])
+        t1 = min(max(t1, h[0][0]), h[-1][0])
+
+        def at(t):
+            lo, hi = 0, len(h) - 1
+            while lo < hi:                       # the history is short; a plain walk is fine
+                mid = (lo + hi) // 2
+                if h[mid][0] < t:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            if lo == 0:
+                return h[0][1]
+            a, b = h[lo - 1], h[lo]
+            span = b[0] - a[0]
+            f = 0.0 if span <= 0 else (t - a[0]) / span
+            return a[1] + (b[1] - a[1]) * f
+        return at(t1) - at(t0)
+
     def pose(self) -> Optional[Pose]:
         if not self.seeded:
             return None

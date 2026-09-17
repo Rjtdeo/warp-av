@@ -383,8 +383,9 @@ def test_a_nonsense_rotation_is_refused():
 def test_the_rotation_innovation_is_wrapped():
     """A measurement that crosses the wrap must be two degrees, not three hundred and fifty."""
     f = ekf(speed=6.0)
-    f.predict_to(100.05, 0.0)
-    ok = f.correct_lidar_yaw_rate(math.radians(359.0), 0.1, 100.1, math.radians(0.06))
+    for i in range(6):                             # the gyro history the window needs
+        f.predict_to(100.0 + 0.05 * (i + 1), 0.0)
+    ok = f.correct_lidar_yaw_rate(math.radians(359.0), 0.1, 100.3, math.radians(0.06))
     assert ok
     assert abs(math.degrees(f.gyro_bias_rad_s)) < 30.0, "wrapped to -1 deg, not +359"
 
@@ -489,3 +490,36 @@ def test_muting_lidar_odometry_does_not_blind_the_van():
     src = inspect.getsource(mod.WarpAV._run_lidar_odometry)
     assert "lidar_odometry_muted" in src, "the mute is applied where measurements are queued"
     assert "lidar_enabled" not in src, "and never by switching the sensor off"
+
+
+def test_a_turn_inside_the_window_does_not_look_like_a_gyro_offset():
+    """The bug that made L6's first scoring run worse than the phase before it.
+
+    Comparing the LiDAR's average rate against the newest single gyro sample is fine at a
+    constant rate and badly wrong while the rate is changing -- which is exactly what a turn
+    is. The offset estimate swung between -0.20 and +0.08 deg/s on turn-heavy routes and
+    dragged the heading seven degrees. Here the gyro accelerates hard through the window and
+    the LiDAR reports the truth; the offset must stay put.
+    """
+    f = ekf(speed=6.0)
+    t = 100.0
+    rate = 0.0
+    for _ in range(200):
+        prev_rate, prev_t = rate, t
+        t += 0.05
+        rate = math.radians(20.0) * math.sin((t - 100.0) * 2.0)      # a rate that never sits still
+        f.predict_to(t, rate)
+        turned = 0.5 * (prev_rate + rate) * (t - prev_t)             # what really happened
+        f.correct_lidar_yaw_rate(turned, t - prev_t, t, math.radians(0.06))
+    assert abs(math.degrees(f.gyro_bias_rad_s)) < 0.02, \
+        "a changing rate must not be read as an offset"
+    assert abs(math.degrees(f.x[2] - 0.0)) < 90.0                     # sanity: it did turn
+
+
+def test_it_refuses_when_the_gyro_never_covered_the_window():
+    """No extrapolating across a hole in the gyro trace."""
+    f = ekf(speed=6.0)
+    f.predict_to(100.05, 0.0)
+    f.predict_to(100.10, 0.0)
+    assert f.correct_lidar_yaw_rate(0.01, 0.1, 140.0, math.radians(0.06)) is False
+    assert f.lidar_rejected >= 1
