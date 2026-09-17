@@ -83,7 +83,10 @@ class RunnerError(RuntimeError):
 
 class Api:
     def __init__(self, base: str):
-        self.base = base.rstrip("/")
+        # On Windows "localhost" resolves to ::1 first; the stack listens on IPv4 only, and the
+        # failed IPv6 attempt cost ~2 s on EVERY call (first V1 run: 0.5 Hz polling, 39 s of
+        # setup per scenario). The number is what the loopback address is for.
+        self.base = base.rstrip("/").replace("//localhost:", "//127.0.0.1:").replace("//localhost/", "//127.0.0.1/")
 
     def get(self, path, **kw):
         r = requests.get(self.base + path, timeout=3, **kw)

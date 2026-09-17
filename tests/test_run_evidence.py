@@ -8,7 +8,7 @@ import pytest
 
 from warp_av.scenario_engine.evidence import box_gap, obb_corners, build_evidence, write_run_summary, V1_FIELDS
 from warp_av.scenario_engine.evaluator import compute_metrics
-from warp_av.scenario_engine.runner import ScenarioRunner, parse_reset_spec
+from warp_av.scenario_engine.runner import ScenarioRunner, parse_reset_spec, Api
 
 
 # ---------------------------------------------------------------- geometry
@@ -160,3 +160,9 @@ def test_parse_reset_spec():
     assert parse_reset_spec("1.5,-2,90") == {"mode": "absolute", "x": 1.5, "y": -2.0, "yaw_deg": 90.0}
     with pytest.raises(ValueError):
         parse_reset_spec("1,2,3,4")
+
+
+def test_api_never_uses_the_name_localhost():
+    # Windows tries ::1 first and pays ~2 s per call when the stack listens on IPv4 only
+    assert Api("http://localhost:5000/").base == "http://127.0.0.1:5000"
+    assert Api("http://192.168.1.102:5000").base == "http://192.168.1.102:5000"
