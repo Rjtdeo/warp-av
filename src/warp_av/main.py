@@ -1999,8 +1999,13 @@ class WarpAV:
                 self._last_yaw_rate = a
                 self.ekf.predict_to(t, a)
             elif kind == "compass":
-                # Read and reported for comparison; NOT fused. See the docstring above.
+                # Fused WEAKLY, as an anchor rather than a heading source. Removing it
+                # altogether was tried first and cost 2.5-3.9 degrees of heading on
+                # turn-heavy routes: LiDAR measures rotation, and a rotation says nothing
+                # about where the angle started. See COMPASS_SIGMA_RAD in the filter.
                 self._last_compass_yaw = bearing_to_yaw(a)
+                self.ekf.predict_to(t, self._last_yaw_rate)
+                self.ekf.correct_compass(self._last_compass_yaw, t)
             elif kind == "gnss":
                 self.ekf.predict_to(t, self._last_yaw_rate)
                 self.ekf.correct_gnss(a, b, t)

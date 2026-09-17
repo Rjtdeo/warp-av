@@ -78,6 +78,23 @@ YAW_NOISE_FLOOR_RAD2_PER_S = 1e-8
 #: tuned until the score looked good.
 GNSS_SIGMA_M = 0.02
 
+#: What the compass is worth as an ABSOLUTE heading anchor, and why it is back.
+#:
+#: L6 first removed it outright. That was wrong, and the scoring said so: heading on
+#: turn-heavy routes came out at 2.5-3.9 degrees mean against L4's 0.35, because nothing was
+#: left holding the absolute angle down. LiDAR measures ROTATION -- how far the van swung --
+#: and a rotation carries no information about where the swing started. GNSS anchors heading
+#: only through the direction of travel, and that coupling is deliberately gated off below
+#: 2 m/s, which is exactly when a van turns. Seed, then drift.
+#:
+#: So the compass is fused again, at a weight that reflects what it actually is: about a
+#: degree of noise with an offset of the same order sitting under it, which is why the sigma
+#: here is wider than the noise alone. It is an ANCHOR, not a heading source -- at this weight
+#: a single reading barely moves the estimate, and what it buys is that the angle cannot walk
+#: away over a route. The floor it puts under heading accuracy is its own offset, and that
+#: floor is measured and reported rather than wished away.
+COMPASS_SIGMA_RAD = math.radians(1.2)
+
 #: What the filter believes about the GYRO's offset before it has seen anything: not much,
 #: to within half a milliradian per second. Comfortably wider than anything the simulated
 #: sensor does, so the filter has room to find a value rather than being handed one. The
@@ -141,6 +158,7 @@ class LocalizationEKF:
         self.gnss_yaw_suppressed = 0
         self.lidar_corrections = 0
         self.lidar_rejected = 0
+        self.compass_corrections = 0
         self.distance_m = 0.0
         self.last_gnss_t = None
         self.last_lidar_t = None
@@ -177,6 +195,7 @@ class LocalizationEKF:
         self.rejected_old = self.rejected_gap = self.gnss_rejected = 0
         self.gnss_yaw_suppressed = 0
         self.lidar_corrections = self.lidar_rejected = 0
+        self.compass_corrections = 0
         self.distance_m = 0.0
         self.last_gnss_t = None
         self.last_lidar_t = None
@@ -396,6 +415,34 @@ class LocalizationEKF:
         return True
 
     # ------------------------------------------------------------------ output
+    def correct_compass(self, yaw_meas: float, sim_time: float,
+                        sigma_rad: Optional[float] = None) -> bool:
+        """The one thing that knows which way is north, fused weakly on purpose.
+
+        This is an ABSOLUTE heading measurement: H touches yaw alone. It is not trusted to say
+        where the van is pointing -- its offset is twice the heading budget -- only to stop the
+        estimate walking away over a route, which is a job nothing else here can do. The offset
+        is deliberately NOT estimated: L4.1 tried that and the offset state absorbed the
+        sideslip instead, making heading worse.
+        """
+        if not self.seeded or not math.isfinite(yaw_meas):
+            return False
+        sig = COMPASS_SIGMA_RAD if sigma_rad is None else float(sigma_rad)
+        H = np.array([[0.0, 0.0, 1.0, 0.0]], dtype=float)
+        Rm = np.array([[sig ** 2]], dtype=float)
+        innov = _wrap(float(yaw_meas) - float(self.x[2]))
+        S = H @ self.P @ H.T + Rm
+        try:
+            K = self.P @ H.T @ np.linalg.inv(S)
+        except np.linalg.LinAlgError:
+            return False
+        self.x = self.x + (K @ np.array([innov], dtype=float))
+        self.x[2] = _wrap(self.x[2])
+        A = np.eye(4) - K @ H
+        self.P = A @ self.P @ A.T + K @ Rm @ K.T
+        self.compass_corrections += 1
+        return True
+
     def _gyro_angle_over(self, t0: float, t1: float) -> Optional[float]:
         """How far the RAW gyro says the van turned between two instants, interpolated out of
         the running integral. None when the history does not cover the window, which is the
@@ -489,6 +536,7 @@ class LocalizationEKF:
                 "rejected_old": self.rejected_old, "rejected_gap": self.rejected_gap,
                 "gnss_rejected": self.gnss_rejected,
                 "lidar_corrections": self.lidar_corrections,
+                "compass_corrections": self.compass_corrections,
                 "lidar_rejected": self.lidar_rejected,
                 "gnss_yaw_suppressed": self.gnss_yaw_suppressed,
                 "lidar_age_s": (round(self.t - self.last_lidar_t, 2)

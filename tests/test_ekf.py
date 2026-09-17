@@ -244,14 +244,62 @@ def test_the_published_state_counts_what_it_refused():
 # replaces it is LiDAR scan matching, which measures how far the van actually swung against
 # the standing world: no north, no offset, nothing to absorb.
 
-def test_the_compass_cannot_reach_this_filter_at_all():
-    """A guard, not a preference. If a heading correction reappears, someone has quietly put
-    the 0.30-degree floor back under the estimate."""
+def test_the_compass_is_an_anchor_not_a_heading_source():
+    """The compass is fused again after L6 first removed it -- but weakly, on purpose.
+
+    Removing it cost 2.5-3.9 degrees of heading on turn-heavy routes, because LiDAR measures
+    ROTATION and a rotation says nothing about where the angle started, while GNSS anchors
+    heading only through the direction of travel and that coupling is gated off below 2 m/s --
+    which is exactly when a van turns. What it must NOT do is dominate: its offset is twice the
+    heading budget, so one reading has to barely move the estimate.
+    """
+    from warp_av.localization.ekf import COMPASS_SIGMA_RAD
+    assert math.degrees(COMPASS_SIGMA_RAD) >= 1.0, \
+        "the weight must reflect the offset under it, not just the noise"
+    # Settle the way the van actually runs -- with GNSS coming in. That matters: the compass
+    # only counts for little once something ELSE has pinned the heading down. Left at the
+    # seed's two degrees of doubt it would dominate, and rightly so, because at that point it
+    # really is the best information available.
+    f = ekf(speed=6.0)
+    t = 100.0
+    for i in range(200):
+        t += 0.05
+        f.set_speed(6.0, False, t)
+        f.predict_to(t, 0.0)
+        if i % 5 == 0:
+            lat, lon = geo.to_latlon(f.x[0], f.x[1])
+            f.correct_gnss(lat, lon, t)
+    assert math.degrees(f.pose().cov.sigma_yaw) < 0.5, "GNSS has pinned the heading first"
+    before = f.x[2]
+    f.correct_compass(math.radians(10.0), t + 0.05)   # a wildly wrong reading
+    moved = abs(math.degrees(f.x[2] - before))
+    assert moved < 0.5, "one compass reading may nudge the heading, never steer it"
+
+
+def test_the_compass_offset_is_not_estimated():
+    """L4.1 tried exactly that. With GNSS course as the only rotation reference, the offset
+    state absorbed the sideslip as well and heading got worse. The fourth state is the GYRO's
+    offset; there is no compass offset state, and this is the guard against one reappearing."""
     f = ekf()
-    assert not hasattr(f, "correct_heading"), "no way to hand this filter a heading"
-    from warp_av.localization import ekf as mod
-    assert not hasattr(mod, "COMPASS_SIGMA_RAD"), "no compass noise model left to use"
-    assert not any("compass" in n.lower() for n in dir(f)), "and nothing named for one"
+    assert f.x.shape == (4,), "four states: x, y, yaw, gyro bias"
+    assert hasattr(f, "gyro_bias_rad_s") and not hasattr(f, "heading_bias_rad")
+
+
+def test_the_compass_does_hold_the_heading_over_a_long_run():
+    """The job it is actually there for: with only rotation measurements the angle wanders,
+    and with the anchor it does not."""
+    def drift(anchor):
+        f = ekf(speed=6.0)
+        t = 100.0
+        for i in range(2000):
+            t += 0.05
+            f.predict_to(t, 5e-4)                  # a small unmodelled offset, integrating up
+            f.correct_lidar_yaw_rate(0.0, 0.05, t, math.radians(0.06))
+            if anchor and i % 4 == 0:
+                f.correct_compass(0.0, t)
+        return abs(math.degrees(f.x[2]))
+    assert drift(False) > drift(True), "the anchor must hold the angle down"
+    assert drift(True) < 0.5
 
 
 def test_lidar_rotation_teaches_it_the_gyro_offset():
