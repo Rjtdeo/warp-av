@@ -110,6 +110,15 @@ class FaultInjector:
         if name == "lidar" and action == "clear":
             sa.lidar_dead_beams = 0
             return True
+        if name == "lidar" and action in ("odometry_off", "odometry_on"):
+            # L6: starve the ESTIMATOR of rotation measurements while the van keeps seeing.
+            #
+            # Disabling the sensor outright is a different fault and already covered by
+            # "disable" -- it blinds perception, the safety supervisor stops the van, and what
+            # you then measure is a parked vehicle rather than an estimator riding a gap. This
+            # cuts only the odometry's path into the filter.
+            self.sys.lidar_odometry_muted = (action == "odometry_off")
+            return True
         if action in ("noise", "latency"):
             # Recorded only: ground-truth perception/localization do not consume raw sensors yet.
             return True

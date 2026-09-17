@@ -142,6 +142,8 @@ class WarpAV:
         self._lidar_odo_t = None
         #: valid LiDAR rotation measurements waiting to be merged into the fusion queue (L6)
         self._lidar_pending = []
+        #: test hook: stop rotation measurements reaching the filter WITHOUT blinding the van
+        self.lidar_odometry_muted = False
         #: what the compass would have said, kept for comparison only -- it is not fused
         self._last_compass_yaw = None
         self._last_yaw_rate = 0.0
@@ -2074,7 +2076,7 @@ class WarpAV:
             # degrading badly above about 15 deg/s while every number inside the fit stayed
             # healthy, so the gate has to be fed from outside it.
             m = self.lidar_odometry.update(pts, float(t), yaw_rate=float(self._last_yaw_rate))
-            if m is not None and m.valid:
+            if m is not None and m.valid and not self.lidar_odometry_muted:
                 self._lidar_pending.append(m)
                 if len(self._lidar_pending) > 32:
                     del self._lidar_pending[:-32]

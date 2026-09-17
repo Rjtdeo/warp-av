@@ -472,3 +472,20 @@ def test_how_long_it_takes_to_see_a_real_gyro_offset():
     sigma = f.gyro_bias_sigma_rad_s
     assert sigma < 5e-4, "three minutes must teach it something"
     assert sigma > 5e-5, "but not enough to resolve a small offset inside one drive"
+
+
+def test_muting_lidar_odometry_does_not_blind_the_van():
+    """The fault hook L6 Part G needs, pinned so it stays a LOCALIZATION fault.
+
+    Cutting the sensor is a different failure: it blinds perception and the safety supervisor
+    stops the van, so the run measures a parked vehicle instead of an estimator riding a gap.
+    The mute must leave the sensor, perception and the odometer all running.
+    """
+    from warp_av.localization.lidar_odometry import LidarOdometry
+    odo = LidarOdometry()
+    assert hasattr(odo, "update"), "the odometer itself is untouched by muting"
+    import inspect
+    from warp_av import main as mod
+    src = inspect.getsource(mod.WarpAV._run_lidar_odometry)
+    assert "lidar_odometry_muted" in src, "the mute is applied where measurements are queued"
+    assert "lidar_enabled" not in src, "and never by switching the sensor off"
