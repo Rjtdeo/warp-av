@@ -140,6 +140,10 @@ class WarpAV:
         # own, before any filter interaction can flatter or hide it.
         self.lidar_odometry = LidarOdometry()
         self._lidar_odo_t = None
+        #: valid LiDAR rotation measurements waiting to be merged into the fusion queue (L6)
+        self._lidar_pending = []
+        #: what the compass would have said, kept for comparison only -- it is not fused
+        self._last_compass_yaw = None
         self._last_yaw_rate = 0.0
 
         print("[Init] Setting up sensors...")
@@ -1956,10 +1960,18 @@ class WarpAV:
     def _step_ekf(self, pose) -> None:
         """Feed the filter every measurement waiting, oldest first (L3).
 
-        The queue holds gyro samples at 20 Hz and GNSS fixes at 10 Hz, each carrying the
-        SIMULATOR's clock. They are sorted before use because a callback can hand one over
-        late; the filter itself refuses anything at or before its own time, so a duplicate or
-        an overtaking sample is dropped and counted rather than integrated backwards.
+        The queue holds gyro samples at 20 Hz, GNSS fixes at 10 Hz and, since L6, LiDAR
+        rotation measurements at about 10 Hz -- each carrying the SIMULATOR's clock. They are
+        sorted together before use because a callback can hand one over late; the filter itself
+        refuses anything at or before its own time, so a duplicate or an overtaking sample is
+        dropped and counted rather than integrated backwards.
+
+        THE COMPASS IS NO LONGER FUSED (L6). It is still read, still converted, and still
+        reported beside the estimate so the two can be compared -- but nothing it says reaches
+        the filter. L4 measured its injected offset as a hard floor under heading accuracy at
+        0.32-0.37 degrees, twice the whole budget, and L4.1 showed that estimating that offset
+        made heading WORSE because the offset state absorbed the sideslip as well. LiDAR
+        supplies the rotation information instead, and it has no offset to absorb anything.
         """
         if not self.ekf.seeded:
             return
@@ -1975,18 +1987,25 @@ class WarpAV:
         batch = []
         while q:
             batch.append(q.popleft())
+        # LiDAR measurements are produced by the main loop rather than a sensor callback, so
+        # they are merged in here and sorted with the rest instead of being applied out of turn.
+        while self._lidar_pending:
+            m = self._lidar_pending.pop(0)
+            batch.append(("lidar", m.sim_time, m, None))
         for kind, t, a, b in sorted(batch, key=lambda m: m[1]):
             if kind == "gyro":
                 self._last_yaw_rate = a
                 self.ekf.predict_to(t, a)
             elif kind == "compass":
-                # Which way the van is FACING, which nothing here had ever used. The compass
-                # is north-referenced; geo.bearing_to_yaw applies the measured 90 degrees.
-                self.ekf.predict_to(t, self._last_yaw_rate)
-                self.ekf.correct_heading(bearing_to_yaw(a), t)
+                # Read and reported for comparison; NOT fused. See the docstring above.
+                self._last_compass_yaw = bearing_to_yaw(a)
             elif kind == "gnss":
                 self.ekf.predict_to(t, self._last_yaw_rate)
                 self.ekf.correct_gnss(a, b, t)
+            elif kind == "lidar":
+                self.ekf.predict_to(t, self._last_yaw_rate)
+                self.ekf.correct_lidar_yaw_rate(a.delta_yaw, a.dt, t,
+                                                a.calibrated_sigma_yaw_rad)
 
     def _ekf_state(self, pose) -> dict:
         """What the fused estimate says, and how wrong it is. Scoring only -- nothing that
@@ -1997,6 +2016,17 @@ class WarpAV:
                 st["error"] = {k: (round(v, 4) if isinstance(v, float) else v)
                                for k, v in self.ekf.error_against(pose).items()}
                 st["noise_profile"] = getattr(self.sensor_adapter, "noise_profile", {}).get("name")
+                # What the compass WOULD have said, reported so the two can be compared.
+                # It is not fused (L6): its injected offset is twice the whole heading budget
+                # and L4.1 showed that estimating the offset made heading worse.
+                if self._last_compass_yaw is not None:
+                    st["compass"] = {
+                        "yaw_deg": round(math.degrees(self._last_compass_yaw), 3),
+                        "err_deg": round(math.degrees(
+                            math.atan2(math.sin(self._last_compass_yaw - pose.yaw),
+                                       math.cos(self._last_compass_yaw - pose.yaw))), 4),
+                        "fused": False,
+                    }
             return st
         except Exception:
             return {"seeded": False, "error": "unavailable"}
@@ -2040,7 +2070,14 @@ class WarpAV:
             if self._lidar_odo_t is not None and t <= self._lidar_odo_t:
                 return
             self._lidar_odo_t = float(t)
-            self.lidar_odometry.update(pts, float(t))
+            # The gyro's own rate, which the turn-rate gate needs. L5 measured the registration
+            # degrading badly above about 15 deg/s while every number inside the fit stayed
+            # healthy, so the gate has to be fed from outside it.
+            m = self.lidar_odometry.update(pts, float(t), yaw_rate=float(self._last_yaw_rate))
+            if m is not None and m.valid:
+                self._lidar_pending.append(m)
+                if len(self._lidar_pending) > 32:
+                    del self._lidar_pending[:-32]
         except Exception:
             pass                      # a shadow measurement may never take the van down
 

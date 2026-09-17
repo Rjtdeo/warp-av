@@ -3,7 +3,7 @@
 Phase L3. Three inputs, three states, one correction. Deliberately the smallest filter that
 can be honest, because a filter nobody can debug is worse than dead reckoning.
 
-    STATE      x, y, yaw, bias     metres, metres, radians, radians
+    STATE      x, y, yaw, gyro_bias    metres, metres, radians, radians/second
     PREDICT    wheel speed + gyro yaw rate, over the ACTUAL time between measurements
     CORRECT    GNSS position, converted to local metres (localization/geo.py)
 
@@ -11,23 +11,29 @@ IT DRIVES NOTHING. Like the dead reckoner beside it, this runs in shadow: it pub
 telemetry so a drive can be scored against CARLA's truth afterwards, and no planner, behaviour
 rule, controller, perception path or traffic-light lookup reads a single number it produces.
 
-WHY THE FOURTH STATE IS THE COMPASS BIAS. L4 scored the three-state filter with the compass
-feeding it and found the heading error had a FLOOR: mean 0.32-0.37 degrees on every run, near
-constant, while the filter claimed 0.157. A constant offset is exactly what averaging cannot
-remove, so no amount of compass data was ever going to get under it. The fourth state is that
-offset, estimated rather than assumed.
+WHY THE FOURTH STATE IS THE GYRO BIAS (L6), AND WHY IT USED TO BE THE COMPASS BIAS.
 
-It is observable only because two different things say something about heading. The compass
-measures yaw + bias -- one equation, two unknowns, and on its own it can never separate them.
-GNSS plus the motion model says where the van actually went, which constrains yaw alone. The
-difference between the two is the bias, and it is learned by DRIVING; parked, it is not
-learned at all, and the filter correctly keeps its prior.
+L4.1 put the COMPASS offset in the state, and it failed instructively. The compass measures
+yaw + offset; GNSS and the motion model say where the van actually WENT, which is its heading
+plus the sideslip angle. Asked to reconcile two things that disagree for two different
+reasons, the offset state absorbed both: it converged on 0.55-0.68 degrees against an injected
+0.30, close to offset-minus-sideslip, and heading got WORSE. There was no third opinion to
+break the tie.
 
-WHY SPEED AND GYRO BIAS ARE STILL NOT STATES. Speed is measured directly and its error is
-small and roughly multiplicative -- L2-GAP put sampled-speed integration within 0.14 % of the
-true path. Gyro bias is the next candidate, and it is deliberately NOT added here: the point
-of this phase is to find out how much of the remaining heading error the compass offset alone
-explains, and two new states at once would make that unanswerable.
+L5 built that third opinion. Registering one LiDAR sweep against the next measures rotation
+against the standing world -- it owes nothing to the compass and nothing to the direction of
+travel -- and it is essentially unbiased: a signed mean of +0.0001 degrees against 0.147 of
+noise, over 3,879 live measurements. THAT is what makes gyro bias observable: the gyro says
+the van turned by omega*dt, the LiDAR says it turned by something else, and the difference
+accumulated over many sweeps is the bias.
+
+So the compass is gone from the fusion entirely -- main.py still computes and reports it for
+comparison, and nothing in here reads it. Its 0.30-degree offset is twice the whole heading
+budget, and L4.1 proved that estimating that offset makes matters worse rather than better.
+What replaces it is a quantity a second, independent instrument can actually pin down.
+
+WHY SPEED IS STILL NOT A STATE. It is measured directly and its error is small and roughly
+multiplicative -- L2-GAP put sampled-speed integration within 0.14 % of the true path.
 
 SIDESLIP IS NOT CORRECTED HERE. L2-GAP measured the van travelling 0.756 degrees off its own
 heading on average and up to 3.151, and that mismatch is the largest single error in the dead
@@ -54,9 +60,12 @@ SPEED_SCALE_SIGMA = 0.01
 #: mean |slip| 0.756 deg, worst 3.151, over 2 deg in a fifth of moving samples. This is the
 #: honest way to carry that -- the model is uncertain sideways, and the filter is told so.
 SLIP_SIGMA_RAD = math.radians(1.0)
-#: Gyro white noise (rad/s/sqrt(Hz)-ish) and bias, matching the noisy_sim sensor profile.
+#: Gyro white noise, matching the noisy_sim sensor profile. The gyro's BIAS used to be a
+#: process-noise term here as well. It is not any more, and must not come back: since L6 the
+#: bias is a STATE with its own uncertainty and its own random walk, so adding it to the yaw
+#: process noise would charge for the same doubt twice -- and would put the injected value
+#: back inside the filter, which is exactly what it must not know.
 GYRO_NOISE_RAD_S = 0.002
-GYRO_BIAS_RAD_S = 5e-5
 #: A floor, so a stationary filter still loosens slightly rather than freezing its covariance
 #: and refusing every future correction.
 POS_NOISE_FLOOR_M2_PER_S = 1e-4
@@ -68,26 +77,18 @@ YAW_NOISE_FLOOR_RAD2_PER_S = 1e-8
 #: tuned until the score looked good.
 GNSS_SIGMA_M = 0.02
 
-#: ...and what the compass is believed to be worth. Matches COMPASS_NOISE_DEG in the sensor
-#: profile. It is deliberately NOT told about the compass BIAS: a filter cannot subtract an
-#: offset it does not estimate, so the bias becomes the floor under the heading accuracy.
-#: The compass BIAS is not folded in here -- it is state 3, estimated from the measurements.
-#: Widening R to cover it would only make the filter ignore a sensor that is telling the truth
-#: on average, which is the opposite of what is wanted.
-COMPASS_SIGMA_RAD = math.radians(1.0)
+#: What the filter believes about the GYRO's offset before it has seen anything: not much,
+#: to within half a milliradian per second. Comfortably wider than anything the simulated
+#: sensor does, so the filter has room to find a value rather than being handed one. The
+#: injected figure is deliberately not written down anywhere in this module, and a test
+#: asserts it does not appear.
+GYRO_BIAS_SIGMA0_RAD_S = 5e-4
 
-#: What the filter believes about the compass offset BEFORE it has seen anything: nothing, to
-#: within a couple of degrees. Deliberately not the injected value -- the filter is not told
-#: the answer, it is given room to find one. Equal to the seed's yaw uncertainty on purpose,
-#: so the first compass reading splits its innovation evenly between heading and offset rather
-#: than the prior quietly deciding which of the two is to blame.
-BIAS_SIGMA0_RAD = math.radians(2.0)
-
-#: How fast the offset is allowed to move, as a random walk, per square-root second. A real
-#: magnetometer offset wanders with temperature and surroundings over minutes, not frames.
-#: At this rate an unobserved offset loosens by about 0.2 degrees over 100 seconds: enough to
-#: track a slow drift, far too slow to absorb a single bad reading.
-BIAS_RW_SIGMA_RAD_PER_SQRT_S = math.radians(0.02)
+#: How fast that offset may wander, as a random walk per square-root second. A MEMS gyro's
+#: bias drifts with temperature over minutes, not frames. At this rate an unobserved bias
+#: loosens by 1e-5 rad/s over 100 seconds -- enough to follow a slow drift, far too slow to
+#: absorb a single bad sweep.
+GYRO_BIAS_RW_RAD_S_PER_SQRT_S = 1e-6
 
 #: Below this speed a GNSS fix may move x and y but MUST NOT rotate the heading.
 #:
@@ -123,7 +124,7 @@ class LocalizationEKF:
     def __init__(self, geo: Optional[GeoFrame] = None, gnss_sigma_m: float = GNSS_SIGMA_M):
         self.geo = geo or DEFAULT_GEO
         self.gnss_sigma_m = float(gnss_sigma_m)
-        self.x = np.zeros(4, dtype=float)          # [x, y, yaw, compass bias]
+        self.x = np.zeros(4, dtype=float)          # [x, y, yaw, gyro bias rad/s]
         self.P = np.zeros((4, 4), dtype=float)
         self.seeded = False
         self.t = None                              # the filter's own clock, in SIM time
@@ -136,10 +137,14 @@ class LocalizationEKF:
         self.rejected_old = 0
         self.rejected_gap = 0
         self.gnss_rejected = 0
-        self.heading_corrections = 0
         self.gnss_yaw_suppressed = 0
+        self.lidar_corrections = 0
+        self.lidar_rejected = 0
         self.distance_m = 0.0
         self.last_gnss_t = None
+        self.last_lidar_t = None
+        #: the newest RAW gyro reading, kept because the LiDAR correction compares against it
+        self._last_gyro = 0.0
 
     # ------------------------------------------------------------------ seeding
     def seed(self, x: float, y: float, yaw: float, sim_time: Optional[float],
@@ -152,12 +157,12 @@ class LocalizationEKF:
         rather than zero -- a filter that begins certain refuses the corrections that would
         have told it otherwise.
         """
-        # The compass offset starts at ZERO and unknown-to-within-BIAS_SIGMA0. It is never
+        # The gyro offset starts at ZERO and unknown to within GYRO_BIAS_SIGMA0. It is never
         # seeded from truth, and nothing here knows what the simulated offset is.
         self.x = np.array([float(x), float(y), _wrap(float(yaw)), 0.0], dtype=float)
         self.P = np.diag([pos_sigma_m ** 2, pos_sigma_m ** 2,
                           math.radians(yaw_sigma_deg) ** 2,
-                          BIAS_SIGMA0_RAD ** 2]).astype(float)
+                          GYRO_BIAS_SIGMA0_RAD_S ** 2]).astype(float)
         self.seeded = True
         self.t = sim_time
         self.speed = 0.0
@@ -165,9 +170,12 @@ class LocalizationEKF:
         self.speed_t = sim_time
         self.predicts = self.corrections = 0
         self.rejected_old = self.rejected_gap = self.gnss_rejected = 0
-        self.heading_corrections = self.gnss_yaw_suppressed = 0
+        self.gnss_yaw_suppressed = 0
+        self.lidar_corrections = self.lidar_rejected = 0
         self.distance_m = 0.0
         self.last_gnss_t = None
+        self.last_lidar_t = None
+        self._last_gyro = 0.0
 
     def forget(self) -> None:
         self.seeded = False
@@ -182,13 +190,19 @@ class LocalizationEKF:
             self.speed_t = float(sim_time)
 
     def predict_to(self, sim_time: float, yaw_rate: float) -> bool:
-        """Carry the estimate forward to `sim_time`, turning at `yaw_rate` rad/s.
+        """Carry the estimate forward to `sim_time`, turning at the gyro's `yaw_rate` rad/s.
+
+        `yaw_rate` is the RAW reading. The filter's own estimate of the gyro's offset is
+        subtracted here, which is the only place that state does any work:
+
+            turn actually taken  =  what the gyro said  -  what we think it is out by
 
         Returns False when the step was refused, which is not a failure -- it is the filter
         declining to invent motion it cannot know about.
         """
         if not self.seeded:
             return False
+        self._last_gyro = float(yaw_rate)
         if self.t is None:
             self.t = sim_time
             return False
@@ -203,22 +217,27 @@ class LocalizationEKF:
 
         v = -self.speed if self.reverse else self.speed
         yaw = self.x[2]
-        yaw_mid = _wrap(yaw + 0.5 * yaw_rate * dt)
+        rate = float(yaw_rate) - float(self.x[3])          # the gyro, less its estimated offset
+        yaw_mid = _wrap(yaw + 0.5 * rate * dt)
         step = v * dt
         c, s = math.cos(yaw_mid), math.sin(yaw_mid)
 
         # --- state ---
         self.x[0] += step * c
         self.x[1] += step * s
-        self.x[2] = _wrap(yaw + yaw_rate * dt)
+        self.x[2] = _wrap(yaw + rate * dt)
         self.distance_m += abs(step)
 
         # --- jacobian of that motion with respect to the state ---
-        # The compass offset does not move the van, so its row and column are inert here --
-        # it changes only through the random walk below and through compass corrections.
-        F = np.array([[1.0, 0.0, -step * s, 0.0],
-                      [0.0, 1.0, step * c, 0.0],
-                      [0.0, 0.0, 1.0, 0.0],
+        # Unlike the compass offset it replaced, the gyro offset DOES move the van: every
+        # degree per second of it is a degree per second the heading is carried the wrong way,
+        # and the position follows the heading. So its column is not inert.
+        #   d(yaw)/d(bias) = -dt        the offset is subtracted from the rate
+        #   d(x)/d(bias)   = +step*s*dt/2 , d(y)/d(bias) = -step*c*dt/2
+        #                               through the midpoint heading used for the step
+        F = np.array([[1.0, 0.0, -step * s, 0.5 * dt * step * s],
+                      [0.0, 1.0, step * c, -0.5 * dt * step * c],
+                      [0.0, 0.0, 1.0, -dt],
                       [0.0, 0.0, 0.0, 1.0]], dtype=float)
 
         # --- process noise, built in the frame the van is MOVING in, then rotated ---
@@ -228,12 +247,11 @@ class LocalizationEKF:
         cross = (abs(step) * SLIP_SIGMA_RAD) ** 2 + POS_NOISE_FLOOR_M2_PER_S * dt
         R = np.array([[c, -s], [s, c]], dtype=float)
         Qpos = R @ np.diag([along, cross]) @ R.T
-        qyaw = (GYRO_NOISE_RAD_S ** 2) * dt + (GYRO_BIAS_RAD_S * dt) ** 2 \
-            + YAW_NOISE_FLOOR_RAD2_PER_S * dt
+        qyaw = (GYRO_NOISE_RAD_S ** 2) * dt + YAW_NOISE_FLOOR_RAD2_PER_S * dt
         Q = np.zeros((4, 4), dtype=float)
         Q[:2, :2] = Qpos
         Q[2, 2] = qyaw
-        Q[3, 3] = (BIAS_RW_SIGMA_RAD_PER_SQRT_S ** 2) * dt
+        Q[3, 3] = (GYRO_BIAS_RW_RAD_S_PER_SQRT_S ** 2) * dt
 
         self.P = F @ self.P @ F.T + Q
         self.t = sim_time
@@ -284,44 +302,69 @@ class LocalizationEKF:
         self.last_gnss_t = sim_time
         return True
 
-    def correct_heading(self, yaw_meas: float, sim_time: float,
-                        sigma_rad: Optional[float] = None) -> bool:
-        """Tell the filter which way the van is FACING.
+    def correct_lidar_yaw_rate(self, delta_yaw: float, dt: float, sim_time: float,
+                               sigma_rad: float) -> bool:
+        """How fast the van REALLY turned, measured against the standing world.
 
-        This is what makes yaw observable instead of inferred. Without it the only evidence
-        about heading is the direction the van appears to be travelling, which is no evidence
-        at all when it is barely moving -- and which is also wrong by the sideslip angle when
-        it is.
+        LiDAR scan matching is used as a RELATIVE rotation, never as a heading. It has no idea
+        which way is north and no opinion about it; what it knows is how far the van swung
+        between two sweeps a tenth of a second apart.
 
-        `yaw_meas` is already in the stack's frame: the caller converts the compass with
-        geo.bearing_to_yaw, which encodes the measured compass = yaw + 90 degrees. The
-        innovation is WRAPPED before use, so a measurement at +179 and a state at -179 are two
-        degrees apart rather than three hundred and fifty eight.
+        Entered as a yaw-RATE measurement:
 
-        The measurement model is    compass = yaw + bias + noise,   so H touches both heading
-        states. That single row cannot tell them apart by itself -- it constrains their SUM.
-        What separates them is everything else the filter knows: GNSS and the motion model
-        pin yaw, and whatever is left over in the compass residual is the offset.
+            measured        delta_yaw / dt
+            model           what the gyro said, less the offset we are estimating
+            H               [0, 0, 0, -1]
+
+        so the residual falls on the GYRO OFFSET, which is the thing LiDAR can genuinely see
+        and the gyro cannot. Heading itself is then corrected through the yaw-to-offset
+        correlation the prediction has been building all along: every step has carried yaw
+        forward using (gyro - offset), so the two are coupled, and pinning one moves the other.
+
+        WHY A RATE, AND NOT A HEADING INCREMENT ON THE STATE. The obvious alternative is to
+        keep the previous yaw in the state and measure the difference directly (stochastic
+        cloning). It was not chosen, and the reason is arithmetic rather than taste. Such an
+        update lowers the heading variance only when the measurement is sharper than the
+        prediction it is correcting, and over one sweep it is not: LiDAR's calibrated sigma of
+        0.06 degrees is 1.1e-6 rad^2, while the gyro accumulates 4e-7 rad^2 over the same tenth
+        of a second. Over ONE interval the gyro is the better instrument by roughly a factor of
+        three. What the gyro cannot do is audit itself over a long run, and that -- not
+        short-term sharpness -- is what LiDAR is here for.
+
+        A consequence worth stating plainly: this can never shrink the ABSOLUTE heading
+        uncertainty, because a relative measurement carries no information about where the
+        heading started. It slows the growth. Bounding absolute heading is GNSS's job.
+
+        `sigma_rad` is the CALIBRATED uncertainty from the measurement
+        (lidar_odometry.calibrated_sigma_yaw_rad), not the registration's own optimistic one.
+        The caller is responsible for having refused a measurement that failed its gates; this
+        method assumes it is being handed something the odometer was willing to stand behind.
         """
         if not self.seeded:
             return False
-        if not math.isfinite(yaw_meas):
+        if not (math.isfinite(delta_yaw) and math.isfinite(dt) and dt > 1e-6):
+            self.lidar_rejected += 1
             return False
-        sig = COMPASS_SIGMA_RAD if sigma_rad is None else float(sigma_rad)
-        H = np.array([[0.0, 0.0, 1.0, 1.0]], dtype=float)
-        Rm = np.array([[sig ** 2]], dtype=float)
-        innov = _wrap(float(yaw_meas) - (float(self.x[2]) + float(self.x[3])))
+        if not (math.isfinite(sigma_rad) and sigma_rad > 0.0):
+            self.lidar_rejected += 1
+            return False
+        z = _wrap(float(delta_yaw)) / float(dt)
+        H = np.array([[0.0, 0.0, 0.0, -1.0]], dtype=float)
+        sig_rate = float(sigma_rad) / float(dt)          # an angle's worth of doubt, per second
+        Rm = np.array([[sig_rate ** 2]], dtype=float)
+        innov = z - (self._last_gyro - float(self.x[3]))
         S = H @ self.P @ H.T + Rm
         try:
             K = self.P @ H.T @ np.linalg.inv(S)
         except np.linalg.LinAlgError:
+            self.lidar_rejected += 1
             return False
         self.x = self.x + (K @ np.array([innov], dtype=float))
         self.x[2] = _wrap(self.x[2])
-        self.x[3] = _wrap(self.x[3])
         A = np.eye(4) - K @ H
         self.P = A @ self.P @ A.T + K @ Rm @ K.T
-        self.heading_corrections += 1
+        self.lidar_corrections += 1
+        self.last_lidar_t = sim_time
         return True
 
     # ------------------------------------------------------------------ output
@@ -334,14 +377,14 @@ class LocalizationEKF:
                     cov=self.covariance(), sim_time=self.t)
 
     @property
-    def heading_bias_rad(self) -> float:
-        """The compass offset the filter has worked out for itself, in radians."""
+    def gyro_bias_rad_s(self) -> float:
+        """The gyro offset the filter has worked out for itself, in radians per second."""
         return float(self.x[3])
 
     @property
-    def bias_sigma_rad(self) -> float:
-        """How sure it is of that, one standard deviation. Starts at BIAS_SIGMA0_RAD and only
-        comes down by driving -- parked, there is nothing to separate offset from heading."""
+    def gyro_bias_sigma_rad_s(self) -> float:
+        """How sure it is of that. Starts at GYRO_BIAS_SIGMA0_RAD_S and comes down only when
+        LiDAR is agreeing or disagreeing with the gyro -- without it, nothing observes this."""
         v = float(self.P[3, 3])
         return math.sqrt(v) if v > 0 else float("nan")
 
@@ -376,15 +419,18 @@ class LocalizationEKF:
         return {"seeded": True, "x": round(float(self.x[0]), 3), "y": round(float(self.x[1]), 3),
                 "yaw_deg": round(math.degrees(float(self.x[2])), 3),
                 # The fourth state and how sure it is. Nothing told the filter this number.
-                "heading_bias_deg": round(math.degrees(float(self.x[3])), 4),
-                "sigma_bias_deg": round(math.degrees(self.bias_sigma_rad), 4),
+                "gyro_bias_deg_s": round(math.degrees(self.gyro_bias_rad_s), 5),
+                "sigma_gyro_bias_deg_s": round(math.degrees(self.gyro_bias_sigma_rad_s), 5),
                 "sigma_x_m": round(cov.sigma_x, 4), "sigma_y_m": round(cov.sigma_y, 4),
                 "sigma_yaw_deg": round(math.degrees(cov.sigma_yaw), 4),
                 "distance_m": round(self.distance_m, 2),
                 "predicts": self.predicts, "corrections": self.corrections,
                 "rejected_old": self.rejected_old, "rejected_gap": self.rejected_gap,
                 "gnss_rejected": self.gnss_rejected,
-                "heading_corrections": self.heading_corrections,
+                "lidar_corrections": self.lidar_corrections,
+                "lidar_rejected": self.lidar_rejected,
                 "gnss_yaw_suppressed": self.gnss_yaw_suppressed,
+                "lidar_age_s": (round(self.t - self.last_lidar_t, 2)
+                                if (self.t is not None and self.last_lidar_t is not None) else None),
                 "gnss_age_s": (round(self.t - self.last_gnss_t, 2)
                                if (self.t is not None and self.last_gnss_t is not None) else None)}

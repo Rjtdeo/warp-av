@@ -172,6 +172,53 @@ MIN_YAW_INFORMATION = 0.05
 #: Longer than this between sweeps and the pair is not worth registering.
 MAX_DT_S = 0.5
 
+# ---- the turn-rate gate (L6) -------------------------------------------------------------
+#: Above this measured yaw rate the answer is not trusted at all.
+#:
+#: L5 scored 3,879 live measurements against CARLA truth and found the error climbing with how
+#: fast the van was turning, while NONE of the registration's own numbers noticed:
+#:
+#:      |yaw rate|      n     mean       p95      max
+#:      0 - 1 deg/s   3199   0.0430   0.1130   1.3250
+#:      1 - 5         442    0.0945   0.2765   0.7732
+#:      5 - 15        194    0.1920   0.5182   1.7401
+#:      15 - 30        41    0.3215   0.7301   0.8605
+#:      >= 30           3    2.4359   6.4640   6.4640
+#:
+#: Correlation of |error| with yaw rate was +0.78; with rmse +0.12, with inlier ratio +0.05,
+#: with fitness -0.23. The fit looks healthy from the inside and is wrong.
+#:
+#: HONESTY NOTE, because this matters for how much the gate should be trusted: the MECHANISM
+#: is NOT PROVEN. Driving the real sweep, the real de-skew and a noisy_sim gyro round a
+#: synthetic street reproduced none of it -- not at 60 deg/s (0.008 deg of error), and not with
+#: twelve degrees of sideslip the de-skew knew nothing about (0.043 deg). Whatever breaks on
+#: the real map at full steering lock is not rotation rate on its own. The gate is drawn from
+#: the live correlation, not from a mechanism anyone here can demonstrate, and it is set where
+#: the brief asked rather than where any curve says it must go.
+#:
+#: The measured rate comes from the GYRO, never from CARLA.
+MAX_YAW_RATE_DEG_S = 15.0
+
+# ---- calibrated uncertainty (L6) ---------------------------------------------------------
+#: The registration's own covariance is optimistic by about this much. L5 measured a claimed
+#: sigma of 0.0237 deg against an actual mean error of 0.0611 -- a ratio of 2.57 -- with only
+#: 32 % of measurements inside one sigma where a healthy filter would see 68 %. Rounded up
+#: rather than fitted, because the point is not to make the percentages pretty.
+COV_SCALE = 3.0
+#: ...and a floor that grows with the turn rate, because the raw covariance does not know about
+#: that effect at all. The two numbers are solved, not guessed: two sigma must cover the p95
+#: L5 measured in EVERY band, which is what test_the_calibration_covers_what_L5_actually_
+#: measured asserts. The first attempt used 0.020 per deg/s and that test caught it failing at
+#: 3 deg/s (2 sigma 0.240 against a measured p95 of 0.277).
+#:
+#:      rate      measured p95     2 sigma here     margin
+#:      0.5             0.113            0.150       1.33x
+#:      3.0             0.277            0.300       1.08x
+#:      10.0            0.518            0.720       1.39x
+#:      22.0            0.730            1.440       1.97x
+SIGMA_FLOOR_DEG = 0.06
+SIGMA_PER_DEG_S = 0.030
+
 
 @dataclass
 class LidarOdometryMeasurement:
@@ -191,15 +238,31 @@ class LidarOdometryMeasurement:
     yaw_information: float = 0.0     # how much shape there was to pin the rotation
     valid: bool = False
     reason: str = "NOT_RUN"
-    #: 3x3 over (dx, dy, dyaw) in m^2, m^2, rad^2. None when the fit was refused.
+    #: the gyro's yaw rate over this interval, rad/s. The gate input, and the thing the
+    #: calibrated uncertainty below grows with.
+    yaw_rate: float = 0.0
+    #: 3x3 over (dx, dy, dyaw) in m^2, m^2, rad^2, straight out of the fit. None when refused.
     cov: Optional[np.ndarray] = field(default=None, repr=False)
 
     @property
     def sigma_yaw_rad(self) -> float:
+        """What the fit itself claims. Optimistic -- use `calibrated_sigma_yaw_rad`."""
         if self.cov is None:
             return float("nan")
         v = float(self.cov[2, 2])
         return math.sqrt(v) if v > 0 else float("nan")
+
+    @property
+    def calibrated_sigma_yaw_rad(self) -> float:
+        """What a filter should actually believe: the raw figure scaled, held above a floor
+        that grows with the turn rate. Both numbers come from the L5 scoring run -- see
+        COV_SCALE and SIGMA_FLOOR_DEG. This is the one fusion may use."""
+        raw = self.sigma_yaw_rad
+        rate = abs(math.degrees(self.yaw_rate))
+        floor = math.radians(SIGMA_FLOOR_DEG + SIGMA_PER_DEG_S * rate)
+        if not math.isfinite(raw):
+            return floor
+        return max(COV_SCALE * raw, floor)
 
     @property
     def delta_yaw_deg(self) -> float:
@@ -216,6 +279,8 @@ class LidarOdometryMeasurement:
                 "yaw_information": round(self.yaw_information, 4),
                 "sigma_yaw_deg": (round(math.degrees(self.sigma_yaw_rad), 4)
                                   if self.cov is not None else None),
+                "sigma_cal_deg": round(math.degrees(self.calibrated_sigma_yaw_rad), 4),
+                "yaw_rate_deg_s": round(math.degrees(self.yaw_rate), 3),
                 "valid": self.valid, "reason": self.reason}
 
 
@@ -443,20 +508,29 @@ class LidarOdometry:
         self.refusals[why] = self.refusals.get(why, 0) + 1
         return m
 
-    def update(self, points: np.ndarray, sim_time: float) -> Optional[LidarOdometryMeasurement]:
-        """One sweep in. None until there is a previous sweep to register against."""
+    def update(self, points: np.ndarray, sim_time: float,
+               yaw_rate: float = 0.0) -> Optional[LidarOdometryMeasurement]:
+        """One sweep in. None until there is a previous sweep to register against.
+
+        `yaw_rate` is the GYRO's reading in rad/s over this interval -- a sensor, never CARLA.
+        Above MAX_YAW_RATE_DEG_S the measurement is refused outright; below it, it still widens
+        the uncertainty the measurement carries.
+        """
         cur = prepare(points)
         prev, prev_t = self._prev, self._prev_t
         self._prev, self._prev_t = cur, float(sim_time)
         if prev is None or prev_t is None:
             return None
         dt = float(sim_time) - prev_t
-        m = LidarOdometryMeasurement(sim_time=float(sim_time), dt=dt)
+        m = LidarOdometryMeasurement(sim_time=float(sim_time), dt=dt,
+                                     yaw_rate=float(yaw_rate) if math.isfinite(yaw_rate) else 0.0)
         self.attempts += 1
         self.last = m
         self.recent.append(m)
         if not (0.0 < dt <= MAX_DT_S):
             return self._refuse(m, "BAD_DT")
+        if abs(math.degrees(m.yaw_rate)) > MAX_YAW_RATE_DEG_S:
+            return self._refuse(m, "HIGH_YAW_RATE")
         if cur.shape[0] < MIN_POINTS or prev.shape[0] < MIN_POINTS:
             return self._refuse(m, "TOO_FEW_POINTS")
         # register the NEWER sweep onto the OLDER one: the result is then the motion of the

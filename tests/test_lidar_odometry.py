@@ -120,11 +120,16 @@ def test_it_takes_no_pose_no_transform_and_no_truth():
         assert banned not in src, "%s must not appear in the odometry" % banned
 
 
-def test_update_only_needs_points_and_a_timestamp():
-    """The signature IS the contract: no pose argument exists to pass one through."""
+def test_update_takes_points_a_clock_and_one_sensor_reading():
+    """The signature IS the contract: there is nowhere to pass a pose through.
+
+    `yaw_rate` is the gyro's own reading, which the van has on a real vehicle and which the
+    turn-rate gate needs. Everything else is points and a clock. The check is an allow-list
+    rather than a name-count, so adding a `pose=` or `transform=` argument fails here.
+    """
     import inspect
     sig = inspect.signature(LidarOdometry.update)
-    assert list(sig.parameters) == ["self", "points", "sim_time"]
+    assert set(sig.parameters) == {"self", "points", "sim_time", "yaw_rate"}
 
 
 # ---- moving traffic must not drag it ------------------------------------------------------
@@ -303,3 +308,65 @@ def test_it_works_with_no_scipy_at_all():
         assert m.delta_yaw_deg == pytest.approx(2.0, abs=0.05)
     finally:
         mod.cKDTree = saved
+
+
+# ---- L6: the turn-rate gate and the calibrated uncertainty --------------------------------
+
+def test_a_hard_turn_is_refused_on_the_gyro_reading_alone():
+    """L5 found the error climbing with turn rate while the fit's own numbers stayed healthy.
+    Nothing inside the registration can see it, so the gate is fed from the gyro."""
+    w = town()
+    odo = LidarOdometry()
+    odo.update(w, 100.0, yaw_rate=math.radians(20.0))
+    m = odo.update(move(w, dyaw=math.radians(2.0)), 100.1, yaw_rate=math.radians(20.0))
+    assert not m.valid and m.reason == "HIGH_YAW_RATE"
+
+
+def test_a_normal_turn_is_still_accepted():
+    w = town()
+    odo = LidarOdometry()
+    odo.update(w, 100.0, yaw_rate=math.radians(8.0))
+    m = odo.update(move(w, dyaw=math.radians(0.8)), 100.1, yaw_rate=math.radians(8.0))
+    assert m.valid, m.reason
+
+
+def test_the_gate_reads_the_gyro_not_the_answer():
+    """Gating on the fit's OWN rotation would let a wrong answer clear itself: a registration
+    that badly under-reads a hard turn would report a small rotation and pass."""
+    w = town()
+    odo = LidarOdometry()
+    odo.update(w, 100.0, yaw_rate=math.radians(25.0))
+    m = odo.update(w.copy(), 100.1, yaw_rate=math.radians(25.0))   # fit says zero rotation
+    assert abs(m.delta_yaw_deg) < 0.01, "the fit itself sees no rotation"
+    assert not m.valid and m.reason == "HIGH_YAW_RATE", "and is refused anyway"
+
+
+def test_the_calibrated_uncertainty_is_never_smaller_than_the_raw_one():
+    w = town()
+    odo, m = run_pair(w, move(w, dyaw=math.radians(1.0)))
+    assert m.valid
+    assert m.calibrated_sigma_yaw_rad >= m.sigma_yaw_rad
+    assert m.calibrated_sigma_yaw_rad >= math.radians(0.06), "the standstill floor applies"
+
+
+def test_the_uncertainty_grows_with_the_turn_rate():
+    """The raw covariance knows nothing about turn rate; the calibrated one must."""
+    w = town()
+    odo = LidarOdometry()
+    odo.update(w, 100.0, yaw_rate=0.0)
+    slow = odo.update(move(w, dyaw=math.radians(0.2)), 100.1, yaw_rate=math.radians(1.0))
+    odo2 = LidarOdometry()
+    odo2.update(w, 100.0, yaw_rate=math.radians(10.0))
+    fast = odo2.update(move(w, dyaw=math.radians(1.0)), 100.1, yaw_rate=math.radians(10.0))
+    assert slow.valid and fast.valid
+    assert fast.calibrated_sigma_yaw_rad > 2.0 * slow.calibrated_sigma_yaw_rad
+
+
+def test_the_calibration_covers_what_L5_actually_measured():
+    """A guard on the constants themselves. L5's measured p95 by band must sit inside two
+    calibrated sigmas, or the calibration is decoration."""
+    from warp_av.localization.lidar_odometry import SIGMA_FLOOR_DEG, SIGMA_PER_DEG_S
+    for rate, p95 in ((0.5, 0.1130), (3.0, 0.2765), (10.0, 0.5182), (22.0, 0.7301)):
+        two_sigma = 2.0 * (SIGMA_FLOOR_DEG + SIGMA_PER_DEG_S * rate)
+        assert two_sigma >= p95, "at %g deg/s: 2 sigma %.3f < measured p95 %.3f" % (
+            rate, two_sigma, p95)
