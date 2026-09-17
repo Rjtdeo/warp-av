@@ -222,6 +222,10 @@ class PlannerDecision:
     route_points_used: int = 0
     #: set when the swept-body check decided it, rather than the centre-line bands
     used_footprint: bool = False
+    #: V1.7: an EARLY SAFETY SLOW for a stationary vehicle at the lane edge that the van's own
+    #: heading was carrying it into, held until the car is passed or safely clear. Rule 18
+    #: treats it as required (the ease-off keeps its hands off).
+    edge_hold: bool = False
     #: a parked vehicle the van is passing slowly instead of stopping for (fix 2)
     passing_id: Optional[int] = None
     passing_lateral_m: Optional[float] = None

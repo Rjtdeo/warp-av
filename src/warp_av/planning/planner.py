@@ -31,6 +31,9 @@ DEFAULT_OBSTACLE_RADIUS_M = {"vehicle": 0.9, "pedestrian": 0.4, "obstacle": 0.5,
 BAY_AHEAD_OF_SPOT_M = 3.6
 
 FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary objects this far ahead
+# V1.7: the early safety slow for a lane-edge parked vehicle (see filter_to_route_corridor)
+EDGE_HOLD_MATCH_M = 2.0     # the held car is whatever stationary vehicle is within this of where it was
+EDGE_HOLD_GRACE_S = 1.0     # a held car not seen for this long is let go
 # ...and never further off the line than this. The swept body exists to catch what the
 # centre-line bands miss: "a parked car 1.6 m off the line still blocks, a planter at 1.9 m
 # no longer does, a body 2.4 m off the line on the outside of a bend is caught". So 2.4 m is
@@ -1817,6 +1820,31 @@ class RoutePlanner:
         # its nose pointing across the next lane keeps ignoring that lane
         # (test_tilted_van_ignores_vehicle_off_route).
         off_route = footprint is not None and ego_lat > corridor_halfwidth_m
+        # V1.7 (WAV-0888): EARLY SAFETY SLOW for a parked vehicle the van's own heading is
+        # carrying it into. The rules below judge by the route line; on a bend the van can be
+        # 0.7-0.9 m outside it, heading outward at a car parked on the lane edge 13 m ahead,
+        # and nothing looked along that heading until the van was a corridor width off the
+        # line (WAV-0888: clear to a true gap of 0.76 m, at rest 0.26 m from the car). V1.6
+        # asked the question but only as a comfort slow that vanished with each steering
+        # tick. Now: the same body sweep along the heading (the controller's intended path,
+        # else straight ahead) ACTIVATES a hold on that car by its position; the hold keeps
+        # the car in the slow zone, marked edge_hold so rule 18 makes the slow REQUIRED,
+        # until the car is passed, gone, or clear of the body by a second safety margin.
+        # Never a block: the off-route nose line, the scrape rule and the free-space map
+        # keep the hard stops. Stationary vehicles only, inside the corridor, not where the
+        # route sweep already decides, not next to a junction.
+        heading_reach_m = FOOTPRINT_STATIONARY_REACH_M
+        heading_line = None
+        if footprint is not None:
+            heading_line = _polyline(intended_path) if intended_path else []
+            if len(heading_line) < 2:
+                heading_line = [(ego_x, ego_y),
+                                (ego_x + cos_y * (heading_reach_m + 2.0 * footprint.half_length),
+                                 ego_y + sin_y * (heading_reach_m + 2.0 * footprint.half_length))]
+        hold = getattr(self, "_edge_hold", None)      # {"x", "y", "last"}: the car being held
+        hold_matched = False
+        edge_slow = False
+        now_t = time.time()
         nose_reach_m = danger_m + footprint.swept_half_length if off_route else 0.0
         nose_line = None
         if off_route:
@@ -1958,6 +1986,42 @@ class RoutePlanner:
                         closest_lat = round(lat, 2)
                     blocked = True
                     _note_block(BLOCKED_SWEPT_PATH, obj, dist, lat)
+            # V1.7: the early safety slow (see the block before the loop)
+            if (heading_line is not None and not off_route and not sweep_decides and stationary
+                    and not near_junction
+                    and getattr(getattr(obj, "object_type", None), "value", None) == "vehicle"
+                    and -1.0 < obj.x <= heading_reach_m):
+                box_h = obstacle_box_for(obj, ego_yaw)
+                where_h = (wx, wy)
+                if box_h is not None:
+                    where_h = (wx + cos_y * box_h.dx - sin_y * box_h.dy,
+                               wy + sin_y * box_h.dx + cos_y * box_h.dy)
+                radius_h = obstacle_radius_m(obj)
+                risk_now = sweep_conflict(heading_line, (ego_x, ego_y), footprint, where_h,
+                                          obstacle_radius=radius_h, horizon_m=heading_reach_m,
+                                          obstacle_box=box_h) is not None
+                held_car = hold is not None and math.hypot(wx - hold["x"], wy - hold["y"]) <= EDGE_HOLD_MATCH_M
+                keep = False
+                if held_car:
+                    hold_matched = True
+                    # release only when the car is clear of the body by a SECOND safety margin
+                    roomy = replace(footprint, safety_margin=2.0 * footprint.safety_margin)
+                    keep = sweep_conflict(heading_line, (ego_x, ego_y), roomy, where_h,
+                                          obstacle_radius=radius_h, horizon_m=heading_reach_m,
+                                          obstacle_box=box_h) is not None
+                if risk_now or keep:
+                    hold = {"x": wx, "y": wy, "last": now_t}
+                    hold_matched = True
+                    found = True
+                    dist = max(0.0, float(obj.x))
+                    if dist < closest:
+                        closest = dist
+                        closest_type = obj.object_type
+                        closest_speed = obj.speed
+                        closest_lat = round(lat, 2)
+                    edge_slow = True
+                elif held_car:
+                    hold = None                      # safely clear of it: released
             if lat > lat_limit:
                 continue
             if want_detail:
@@ -2103,6 +2167,14 @@ class RoutePlanner:
         if passing_obj is not None and not blocked:
             decision.passing_id = int(getattr(passing_obj[0], "id", 0) or 0) or None
             decision.passing_lateral_m = passing_obj[2]
+        # V1.7: a held car that no tick matched this time (passed behind the nose, or lost by
+        # perception) is let go after a short grace, so one missed frame does not release it.
+        if hold is not None and not hold_matched and now_t - hold.get("last", 0.0) > EDGE_HOLD_GRACE_S:
+            hold = None
+        self._edge_hold = hold
+        if edge_slow and not blocked:
+            decision.edge_hold = True
+            decision.used_footprint = True
         self.last_decision = decision
         return decision
 

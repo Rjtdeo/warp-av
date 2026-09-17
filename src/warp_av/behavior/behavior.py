@@ -691,7 +691,8 @@ class BehaviorSystem:
         # than the distance the van needs to reach slow_speed from its present speed it may
         # not (V1.5, WAV-0615).
         speed_now = float(getattr(now.pose, "speed", 0.0) or 0.0)
-        required = seen < distance_to_slow(speed_now, self.slow_speed)
+        required = (seen < distance_to_slow(speed_now, self.slow_speed)
+                    or bool(getattr(now.path, "edge_hold", False)))   # V1.7: a held lane-edge car
         return self._decide(
             DrivingBehavior.FOLLOWING_ROUTE,
             f"Object detected at {seen:.1f}m — slowing to {self.slow_speed:.1f} m/s",

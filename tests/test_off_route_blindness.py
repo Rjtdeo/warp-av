@@ -106,7 +106,11 @@ def test_tilted_van_on_route_still_ignores_the_car_its_nose_points_at():
     ego = (10.0, 0.0, math.radians(50))
     out = run(straight_route(), ego, [obj_ahead(5.0)])
     assert out.path_blocked is False
-    assert out.closest_obstacle_distance == 999.0
+    # V1.7 (WAV-0888): a stationary VEHICLE the nose points at may now be held in the slow zone
+    # (level SLOW at its real distance, a required slow) -- still never a stop. Before, it was
+    # ignored outright (closest 999): that is how a van 0.8 m outside its line on the
+    # north-east bend came to rest 0.26 m from a parked car with the planner saying clear.
+    assert out.closest_obstacle_distance in (999.0, 5.0)
 
 
 def test_off_route_van_in_a_junction_does_not_block_on_cross_traffic():
