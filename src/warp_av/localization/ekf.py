@@ -45,6 +45,7 @@ to show whether that is enough. If it is not, the evidence will say so.
 from __future__ import annotations
 
 import math
+import os
 from collections import deque
 from typing import Optional
 
@@ -112,10 +113,30 @@ GNSS_BIAS_M = 0.01
 #: only throw away a sensor that is right on average.
 COMPASS_SIGMA_RAD = math.radians(1.0)
 
-#: What the filter believes about the compass offset before it has seen anything: nothing, to
-#: within a couple of degrees. Deliberately NOT the injected value -- a test asserts that value
-#: appears nowhere in this module.
+#: What the filter believes about the compass offset before it has seen anything -- WHEN the
+#: state is switched on at all, which by default it is not.
+#:
+#: L7 added this state and measured it doing harm. On live routes it settled between -3.15 and
+#: +1.20 degrees against an injected +0.30, differing run to run, and heading came out 2.4x
+#: worse than without it (0.77 degrees mean against 0.63). The cause is not tuning. The compass
+#: measures yaw + offset; GNSS measures yaw + sideslip; that is two equations in three
+#: unknowns. LiDAR constrains how yaw CHANGES, not where it is, so it supplies no third -- and
+#: the estimate lands on offset-minus-sideslip whether LiDAR is feeding it or not, to four
+#: decimal places.
+#:
+#: The state is kept, switched off, so the experiment can be re-run rather than re-argued.
+#: WARP_EKF_COMPASS_BIAS=1 turns it on. Off, its prior and its process noise are both zero, so
+#: it cannot move and the filter behaves exactly as four states.
 COMPASS_BIAS_SIGMA0_RAD = math.radians(2.0)
+
+
+def compass_bias_enabled(env=None) -> bool:
+    """Whether to ESTIMATE the compass offset. Off by default -- see above for the measurement
+    that decided it, and tests/test_ekf.py for the proof that it cannot be separated from the
+    sideslip with the instruments this van carries."""
+    env = os.environ if env is None else env
+    return str(env.get("WARP_EKF_COMPASS_BIAS", "0")).strip().lower() in ("1", "on", "true", "yes")
+
 
 #: How fast that offset may wander. A magnetometer's offset moves with temperature and with
 #: what is parked next to it, over minutes rather than frames. At this rate an unobserved
@@ -166,8 +187,11 @@ def _wrap(a: float) -> float:
 class LocalizationEKF:
     """x, y, yaw -- carried by the wheels and the gyro, held in place by GNSS."""
 
-    def __init__(self, geo: Optional[GeoFrame] = None, gnss_sigma_m: float = GNSS_SIGMA_M):
+    def __init__(self, geo: Optional[GeoFrame] = None, gnss_sigma_m: float = GNSS_SIGMA_M,
+                 estimate_compass_bias: Optional[bool] = None):
         self.geo = geo or DEFAULT_GEO
+        self.estimate_compass_bias = (compass_bias_enabled() if estimate_compass_bias is None
+                                      else bool(estimate_compass_bias))
         self.gnss_sigma_m = float(gnss_sigma_m)
         # [x, y, yaw, gyro bias rad/s, compass bias rad]
         self.x = np.zeros(5, dtype=float)
@@ -220,7 +244,8 @@ class LocalizationEKF:
         self.P = np.diag([pos_sigma_m ** 2, pos_sigma_m ** 2,
                           math.radians(yaw_sigma_deg) ** 2,
                           GYRO_BIAS_SIGMA0_RAD_S ** 2,
-                          COMPASS_BIAS_SIGMA0_RAD ** 2]).astype(float)
+                          (COMPASS_BIAS_SIGMA0_RAD ** 2
+                           if self.estimate_compass_bias else 0.0)]).astype(float)
         self.seeded = True
         self.t = sim_time
         self.speed = 0.0
@@ -325,7 +350,8 @@ class LocalizationEKF:
         Q[:2, :2] = Qpos
         Q[2, 2] = qyaw
         Q[3, 3] = (GYRO_BIAS_RW_RAD_S_PER_SQRT_S ** 2) * dt
-        Q[4, 4] = (COMPASS_BIAS_RW_RAD_PER_SQRT_S ** 2) * dt
+        Q[4, 4] = ((COMPASS_BIAS_RW_RAD_PER_SQRT_S ** 2) * dt
+                   if self.estimate_compass_bias else 0.0)
 
         self.P = F @ self.P @ F.T + Q
         self.t = sim_time

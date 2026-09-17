@@ -58,8 +58,18 @@ def test_the_compass_is_ninety_degrees_off_the_yaw():
 
 # ---- the filter ---------------------------------------------------------------------------
 
+#: Whether the next ekf() should ESTIMATE the compass offset. Off is the shipped behaviour;
+#: the handful of tests that measured the state failing switch it on for themselves.
+_CB = {"on": False}
+
+
+def _compass_bias_on():
+    _CB["on"] = True
+
+
 def ekf(x=0.0, y=0.0, yaw=0.0, t=100.0, speed=0.0):
-    f = LocalizationEKF()
+    f = LocalizationEKF(estimate_compass_bias=_CB["on"])
+    _CB["on"] = False                              # one test, one switch: never leaks onwards
     f.seed(x, y, yaw, t)
     f.set_speed(speed, False, t)
     return f
@@ -278,6 +288,7 @@ def test_the_compass_is_an_anchor_not_a_heading_source():
 
 def test_the_compass_offset_starts_at_zero_and_unknown():
     """It is estimated again in L7, but never handed the answer."""
+    _compass_bias_on()
     from warp_av.localization.ekf import COMPASS_BIAS_SIGMA0_RAD
     f = ekf()
     assert f.x.shape == (5,), "x, y, yaw, gyro bias, compass bias"
@@ -317,6 +328,7 @@ def test_lidar_keeps_the_compass_offset_from_swallowing_the_sideslip():
     Separating these needs an independent ABSOLUTE heading -- a second GNSS antenna, or
     matching the LiDAR against a map -- not another state.
     """
+    _compass_bias_on()
     offset = math.radians(0.30)
     slip = math.radians(0.75)                      # L2-GAP measured 0.756 on this van
     f = ekf(speed=8.0)
@@ -367,6 +379,7 @@ def test_lidar_makes_no_difference_to_that_at_all():
 def test_with_no_sideslip_it_finds_the_offset_exactly():
     """The other half of the proof: the estimator is not broken. Take the sideslip away and it
     recovers the injected offset precisely. What defeats it is the ambiguity, not the maths."""
+    _compass_bias_on()
     offset = math.radians(0.30)
     f = ekf(speed=8.0)
     t, x = 100.0, 0.0
@@ -389,6 +402,7 @@ def test_the_two_offsets_do_not_trade_error_with_each_other():
     """A gyro offset and a compass offset can look alike over a short window: both push the
     heading one way. They are separable because one acts on the RATE and the other on the
     ANGLE, and this checks the filter keeps them apart rather than swapping error between."""
+    _compass_bias_on()
     gyro_off = 5e-4
     comp_off = math.radians(0.30)
     f = ekf(speed=8.0)
@@ -406,6 +420,7 @@ def test_the_two_offsets_do_not_trade_error_with_each_other():
 
 
 def test_the_compass_offset_cannot_jump_in_one_reading():
+    _compass_bias_on()
     f = ekf(speed=8.0)
     t = 100.0
     for i in range(400):
@@ -754,3 +769,20 @@ def test_standing_still_age_costs_nothing():
     for i in range(20):
         f.predict_to(100.0 + 0.05 * (i + 1), 0.0)
     assert f.covariance(now=102.0).sigma_x == pytest.approx(f.covariance().sigma_x)
+
+
+def test_the_compass_offset_state_is_off_unless_asked_for():
+    """The shipped filter behaves as four states. L7 measured the fifth doing harm -- settling
+    between -3.15 and +1.20 degrees against an injected +0.30 and costing 2.4x the heading
+    error -- so it is kept switchable for re-measurement, not switched on."""
+    from warp_av.localization.ekf import compass_bias_enabled
+    assert compass_bias_enabled({}) is False, "default off"
+    assert compass_bias_enabled({"WARP_EKF_COMPASS_BIAS": "1"}) is True
+    f = ekf(speed=8.0)
+    t = 100.0
+    for i in range(400):
+        t += 0.05
+        f.predict_to(t, 0.0)
+        f.correct_compass(math.radians(5.0), t)    # a wildly offset compass
+    assert f.compass_bias_rad == 0.0, "with the state off, the offset cannot move at all"
+    assert f.P[4, 4] == 0.0
