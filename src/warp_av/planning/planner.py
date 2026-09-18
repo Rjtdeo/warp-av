@@ -34,6 +34,14 @@ FOOTPRINT_STATIONARY_REACH_M = 12.0   # sweep decides hard-blocks for stationary
 # V1.7: the early safety slow for a lane-edge parked vehicle (see filter_to_route_corridor)
 EDGE_HOLD_MATCH_M = 2.0     # the held car is whatever stationary vehicle is within this of where it was
 EDGE_HOLD_GRACE_S = 1.0     # a held car not seen for this long is let go
+# P-B05: the early slow is a tier of its own, not the block test on another path. A stationary
+# vehicle whose box comes within this of the van's body along its intended path is not to be
+# passed at cruise: the van asks for the pass speed until it is past or clear by this plus the
+# block margin. The value is what the intended path was measured to swing from one tick to the
+# next at 5.6-7.4 m/s on the recorded bend approaches (0.45-1.36 m; 0.05-0.15 m at 4.8 m/s): at
+# cruise the van cannot promise its path to better than about a metre. The hard block keeps its
+# own 0.30 m margin and its own rules.
+EDGE_SLOW_CLEARANCE_M = 1.0
 # ...and never further off the line than this. The swept body exists to catch what the
 # centre-line bands miss: "a parked car 1.6 m off the line still blocks, a planter at 1.9 m
 # no longer does, a body 2.4 m off the line on the outside of a bend is caught". So 2.4 m is
@@ -1986,8 +1994,15 @@ class RoutePlanner:
                         closest_lat = round(lat, 2)
                     blocked = True
                     _note_block(BLOCKED_SWEPT_PATH, obj, dist, lat)
-            # V1.7: the early safety slow (see the block before the loop)
-            if (heading_line is not None and not off_route and not sweep_decides and stationary
+            # V1.7: the early safety slow (see the block before the loop). P-B05: it looks at
+            # every stationary vehicle in reach, inside the route-sweep band too -- the band
+            # decides the BLOCK, not the slow (a car 2.4 m off the line with the van 0.6 m off
+            # the line toward it was answered "clear" while on a collision course) -- and it
+            # asks for EDGE_SLOW_CLEARANCE_M of room, not the block margin: with a correctly
+            # measured car passed at about a metre the block margin could only fire when the
+            # block would (all five V3B bend approaches: reported box 0.3-1.0 m clear, true
+            # car 0.9-1.0 m clear, nothing required until a block at 1.2-1.7 m).
+            if (heading_line is not None and not off_route and stationary
                     and not near_junction
                     and getattr(getattr(obj, "object_type", None), "value", None) == "vehicle"
                     and -1.0 < obj.x <= heading_reach_m):
@@ -1997,15 +2012,16 @@ class RoutePlanner:
                     where_h = (wx + cos_y * box_h.dx - sin_y * box_h.dy,
                                wy + sin_y * box_h.dx + cos_y * box_h.dy)
                 radius_h = obstacle_radius_m(obj)
-                risk_now = sweep_conflict(heading_line, (ego_x, ego_y), footprint, where_h,
+                slow_body = replace(footprint, safety_margin=EDGE_SLOW_CLEARANCE_M)
+                risk_now = sweep_conflict(heading_line, (ego_x, ego_y), slow_body, where_h,
                                           obstacle_radius=radius_h, horizon_m=heading_reach_m,
                                           obstacle_box=box_h) is not None
                 held_car = hold is not None and math.hypot(wx - hold["x"], wy - hold["y"]) <= EDGE_HOLD_MATCH_M
                 keep = False
                 if held_car:
                     hold_matched = True
-                    # release only when the car is clear of the body by a SECOND safety margin
-                    roomy = replace(footprint, safety_margin=2.0 * footprint.safety_margin)
+                    # release only when the car is clear by the slow clearance plus the block margin
+                    roomy = replace(footprint, safety_margin=EDGE_SLOW_CLEARANCE_M + footprint.safety_margin)
                     keep = sweep_conflict(heading_line, (ego_x, ego_y), roomy, where_h,
                                           obstacle_radius=radius_h, horizon_m=heading_reach_m,
                                           obstacle_box=box_h) is not None

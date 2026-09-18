@@ -71,7 +71,13 @@ def test_case_a_wav0888_lane_edge_car_is_a_required_slow_and_survives_a_steering
 def test_case_b_a_safely_separated_shoulder_car_stays_clear():
     pl = planner()
     on_line = (10.0, 0.0, 0.0)                      # on the line, pointing along it
+    # P-B05 (2026-09-17): the car at 2.9 m -- 0.96 m body to body from a van on its line -- is no
+    # longer "safely separated" at cruise: the early slow is a tier of its own now, asking for
+    # EDGE_SLOW_CLEARANCE_M (1.0 m) along the intended path, not the 0.30 m block margin. That car
+    # is a required slow; a car a metre further out (3.9 m, about 2 m body to body) stays clear.
     out = decide(pl, on_line, [car_seen_from(on_line)])
+    assert out.level == PATH_SLOW and out.edge_hold is True and out.blocked is False
+    out = decide(planner(), on_line, [car_seen_from(on_line, wy=3.9)])
     assert out.level == PATH_CLEAR and out.edge_hold is False and out.closest_distance_m == 999.0
     # a moving vehicle and a far one are left to the existing rules
     moving = car_seen_from((10.0, 0.8, math.radians(12.0)))
@@ -84,9 +90,11 @@ def test_case_c_the_hold_releases_once_the_car_is_passed_or_safely_clear():
     pl = planner()
     outward = (10.0, 0.8, math.radians(12.0))
     assert decide(pl, outward, [car_seen_from(outward)]).edge_hold is True
-    # the van has steered well back onto its line and is passing wide: safely clear, but a
-    # single clear tick is not enough (the intended path swings with every steering tick)...
-    wide = (14.0, -0.6, 0.0)
+    # the van has steered well back onto its line and is passing wide: safely clear (P-B05: clear
+    # of the body by the slow clearance plus the block margin, 1.30 m, so 1.4 m left of the line
+    # here), but a single clear tick is not enough (the intended path swings with every steering
+    # tick)...
+    wide = (14.0, -1.4, 0.0)
     out = decide(pl, wide, [car_seen_from(wide)])
     assert out.edge_hold is True and out.level == PATH_SLOW
     # ...once it has been clear for the grace period, it is released

@@ -200,12 +200,19 @@ def _approach(van, obj_fn, van_yaw_deg=8.0):
     return c
 
 
-def test_step10_the_remembered_line_hides_the_car_from_the_hold_and_the_body_does_not(van):
+def test_step10_the_remembered_line_is_a_required_slow_too_under_the_pb05_tier(van):
+    """V3B (2026-09-17) recorded this case as "the line hides the car from the hold": under the V1.7
+    rule (the block margin, 0.30 m) the line's box cleared the body and nothing was required. P-B05
+    made the early slow a tier of its own (EDGE_SLOW_CLEARANCE_M, 1.0 m along the intended path), so
+    a stationary vehicle track this close asks for the pass speed whatever its remembered shape. The
+    body case below still stands; what P-B01 fixed is the geometry the block and the pass are
+    judged by, not whether this slow happens."""
     from warp_av.planning.instrumentation import PATH_SLOW
     from warp_av.behavior.transitions import OBJECT_AHEAD_SLOW
     before = _approach(van, recorded_line_report)
-    print("Step 10 BEFORE (line):", {k: before[k] for k in ("planner_level", "edge_hold", "why", "safety_required", "brake")})
-    assert before["edge_hold"] is False and before["safety_required"] is False and before["brake"] == 0.0, before
+    print("Step 10 (line, P-B05 tier):", {k: before[k] for k in ("planner_level", "edge_hold", "why", "safety_required", "brake")})
+    assert before["planner_level"] == PATH_SLOW and before["edge_hold"] is True, before
+    assert before["why"] == OBJECT_AHEAD_SLOW and before["safety_required"] is True and before["brake"] > 0.0, before
 
 
 def test_step10_the_body_the_tracker_now_reports_fires_the_hold_at_9m(van):
