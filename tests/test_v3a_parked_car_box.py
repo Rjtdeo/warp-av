@@ -1,6 +1,6 @@
 """V3A / P-B02: the tracker's remembered box for a parked car (tracking.best_box).
 
-Recorded live (WAV-0001, run v18_after, 2026-09-17): a Mercedes 4.72 x 1.90 m parked on the
+Recorded live (WAV-0001, run v18_after, 2026-09-17): a Mercedes 4.67 x 2.00 m parked on the
 shoulder was reported as 4.50 x 2.56 m, heading 12 deg off, for 82.6 s -- one frame in which the
 car's cluster took in a chip of the kerb beyond it (fixture rc1_merc_C5, forced merge: 4.5 x
 2.6-2.7 m, centre 0.6 m over) was confirmed by the normal views (agreement ignored width) and,

@@ -2,7 +2,7 @@
 the V2A harness (tests/test_v2a_end_to_end.py): the same WarpAV, built by its own __init__,
 the same stubbed outside world, the recorded numbers as input.
 
-  RC-1  a shoulder-parked car whose fitted box came out 2.56 m wide (truth 1.90 m) blocked
+  RC-1  a shoulder-parked car whose fitted box came out 2.56 m wide (truth 2.00 m) blocked
         the van on the swept path (V1.8 clear-road run, WAV-0001, t+60.1 s: "VEHICLE blocking
         path at 1.7 m", 0.86 m of real clearance).
   RC-4  "a go-around never ends" (13 of 56 V1 runs "ACTIVE_PASS" for minutes).
@@ -63,12 +63,13 @@ def recorded_mercedes_fit_made_consistent():
 
 
 def true_mercedes():
-    """CARLA's Mercedes as it really stood: centre 2.57 m ahead, 2.98 m to the right,
-    4.72 x 1.90 m, 4.3 deg off the van's heading -- 0.86 m from the van's body."""
+    """CARLA's Mercedes as it really stood (world.get_environment_objects, V3A): centre 2.57 m
+    ahead, 2.98 m to the right, 4.67 x 2.00 m, 5.7 deg off the van's heading -- 0.8 m from
+    the van's body."""
     return DetectedObject(object_type=ObjectType.VEHICLE, x=2.57, y=2.98, distance=3.94, id=5573,
-                          stationary=True, speed=0.0, length_m=4.72, width_m=1.90, height_m=1.45,
-                          yaw_deg=4.3, box_dx=0.0, box_dy=0.0,
-                          box_length_m=4.72, box_width_m=1.90, box_yaw_deg=4.3,
+                          stationary=True, speed=0.0, length_m=4.67, width_m=2.00, height_m=1.45,
+                          yaw_deg=-5.7, box_dx=0.0, box_dy=0.0,
+                          box_length_m=4.67, box_width_m=2.00, box_yaw_deg=-5.7,
                           motion_class="static", size_uncertain=False, confidence=0.93)
 
 
