@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from test_v3a_parked_car_box import sighting, reported, run, track, widths_of, normal_view, merged_view, DT  # noqa
+from test_v2a_end_to_end import van  # noqa: F401  (the real WarpAV, outside world stubbed)
 from warp_av.perception.tracking import _degenerate, DEGENERATE_WIDTH_FRACTION, DEGENERATE_MIN_GAP_M, BOX_AGREE_NEEDED
 
 CAR = (26.0, 2.8)        # where the Mustang sat on the approach: ahead and to the right
@@ -153,3 +154,65 @@ def test_case_g_two_close_cars_keep_their_ids_through_the_far_to_near_transition
     assert len(ids) == 2 and all(sorted(s) == ids for s in snaps[3:]), "the same two tracks throughout"
     by_y = sorted((track(tracker, tid) for tid in ids), key=lambda tr: tr.wy)
     assert by_y[0].wy < 0 < by_y[1].wy
+
+
+# ================================================================ Step 10: the lane-edge hold downstream (V2A harness)
+
+def _mustang_at_9m(van_yaw_deg, lat=2.85, ahead=9.4):
+    yaw = math.radians(van_yaw_deg)
+    return ahead * math.cos(yaw) + lat * math.sin(yaw), -ahead * math.sin(yaw) + lat * math.cos(yaw)
+
+
+def recorded_line_report(x, y):
+    """The planner-facing Mustang recorded at 9.4 m (v18_after WAV-0888, t+49.7): the remembered
+    line 1.30 x 0.04 @ 74.4 deg, fitted centre (+0.18, +0.15) from the centroid, while the
+    track's spread was already 2.00 x 1.22."""
+    from warp_av.perception.perception import DetectedObject, ObjectType
+    return DetectedObject(object_type=ObjectType.VEHICLE, x=x, y=y, distance=math.hypot(x, y), id=3310, stationary=True,
+                          speed=0.0, length_m=2.00, width_m=1.22, height_m=1.15, yaw_deg=-13.0, box_dx=0.18, box_dy=0.15,
+                          box_length_m=1.30, box_width_m=0.04, box_yaw_deg=74.4, motion_class="dynamic",
+                          size_uncertain=True, confidence=0.86)
+
+
+def body_report(x, y):
+    """What the fixed tracker reports at the same moment: the median-length sighting's own box,
+    2.00 x 1.22 at its centroid, along the object's axis."""
+    from warp_av.perception.perception import DetectedObject, ObjectType
+    return DetectedObject(object_type=ObjectType.VEHICLE, x=x, y=y, distance=math.hypot(x, y), id=3310, stationary=True,
+                          speed=0.0, length_m=2.00, width_m=1.22, height_m=1.15, yaw_deg=-13.0, box_dx=0.0, box_dy=0.0,
+                          box_length_m=2.00, box_width_m=1.22, box_yaw_deg=-13.0, motion_class="dynamic",
+                          size_uncertain=True, confidence=0.86)
+
+
+def _approach(van, obj_fn, van_yaw_deg=8.0):
+    from test_v2a_end_to_end import start_mission, place, see, chain
+    start_mission(van)
+    yaw = math.radians(van_yaw_deg)                  # the live drift: the nose a few degrees toward the shoulder
+    place(van, x=0.0, y=0.0, yaw=yaw, speed=6.4)
+    see(van)
+    van.tick()                                       # a cruise tick: the intended path from this pose
+    ox, oy = _mustang_at_9m(van_yaw_deg)
+    place(van, x=0.0, y=0.0, yaw=yaw, speed=6.4)
+    see(van, [obj_fn(ox, oy)])
+    van.tick()
+    c = chain(van)
+    c["edge_hold"] = bool(getattr(van._path, "edge_hold", False))
+    return c
+
+
+def test_step10_the_remembered_line_hides_the_car_from_the_hold_and_the_body_does_not(van):
+    from warp_av.planning.instrumentation import PATH_SLOW
+    from warp_av.behavior.transitions import OBJECT_AHEAD_SLOW
+    before = _approach(van, recorded_line_report)
+    print("Step 10 BEFORE (line):", {k: before[k] for k in ("planner_level", "edge_hold", "why", "safety_required", "brake")})
+    assert before["edge_hold"] is False and before["safety_required"] is False and before["brake"] == 0.0, before
+
+
+def test_step10_the_body_the_tracker_now_reports_fires_the_hold_at_9m(van):
+    from warp_av.planning.instrumentation import PATH_SLOW
+    from warp_av.behavior.transitions import OBJECT_AHEAD_SLOW
+    after = _approach(van, body_report)
+    print("Step 10 AFTER (body):", {k: after[k] for k in ("planner_level", "edge_hold", "why", "safety_required", "brake")})
+    assert after["planner_level"] == PATH_SLOW and after["edge_hold"] is True, after
+    assert after["why"] == OBJECT_AHEAD_SLOW and after["safety_required"] is True, after
+    assert after["brake"] == pytest.approx(0.6) and after["throttle"] == 0.0, after
