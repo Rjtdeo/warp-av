@@ -48,13 +48,19 @@ def published_object(o, pose):
                           box_width_m=o.get("box_width_m", 0.0), box_yaw_deg=o.get("box_yaw_deg", 0.0))
 
 
-def replay(key, speed_aware):
+def replay(key, speed_aware, start_at=None, preheld=False):
     """The recorded approach through the real corridor filter, tick after tick, with the reach as recorded (12 m) or
-    as the tick now hands it in. Returns one record per tick."""
+    as the tick now hands it in. `start_at` begins part-way; `preheld` starts with the hold already on the Mustang,
+    as the live stack had it at that tick. Returns one record per tick."""
+    import time as _time
     fx = FIX[key]; fp = VehicleFootprint(*fx["footprint"]); route = route_of(fx["route_fixture"].split(":")[1])
     rp = planner(); rp._edge_hold = None
+    if preheld:
+        m = fx["mustang_truth"]; rp._edge_hold = {"x": m["x"], "y": m["y"], "last": _time.time(), "clear_since": None}
     out = []
     for tk in fx["ticks"]:
+        if start_at is not None and tk["t"] < start_at:
+            continue
         pose = (tk["pose"][0], tk["pose"][1], math.radians(tk["pose"][2]))
         objs = [published_object(tk["mustang"], pose)] if tk["mustang"] else []
         p = PerceptionOutput(objects=objs); p.path_blocked = False; p.closest_obstacle_distance = 999.0
@@ -196,3 +202,43 @@ def test_step12_earlier_eligibility_is_an_earlier_required_slow_and_an_earlier_b
             assert st["edge_hold"] and st["edge_reach_m"] >= 16.0, st
             assert c["planner_level"] == "slow" and c["safety_required"] and c["raw_mps"] <= 2.5, c
             assert c["brake"] > 0.3 and c["throttle"] == 0.0, c
+
+
+# ---------------------------------------------------------------- the hold must not let go when the reach shrinks with the speed
+def test_the_live_flicker_a_held_car_stays_held_while_the_van_sheds_speed():
+    """reach_after/WAV-0001 (the first live batch on the speed-aware reach): held at 15.6 m and 6.2 m/s with the
+    car's centroid 12.9 m out; the brake took the van to 1.9 m/s in a tick, the reach fell to 12.4, the centroid was
+    12.5 -- outside the gate -- and the hold dropped for two ticks (throttle 1.0), then came back at 12 m. Replayed
+    from that tick with the hold on, as the stack had it: a car already held is judged by the sweep alone."""
+    rec = {r["t"]: r["recorded"] for r in FIX["flicker_WAV-0001_after"]["ticks"]}
+    assert rec[46.5]["edge_hold"] and rec[46.5]["edge_reach_m"] == 15.6                  # held at speed
+    assert not rec[46.7]["edge_hold"] and rec[46.7]["edge_reach_m"] == 12.4               # dropped as the reach shrank
+    assert not rec[46.9]["edge_hold"] and rec[46.9]["throttle"] == 1.0                    # the throttle back on
+    assert rec[47.1]["edge_hold"] and rec[47.1]["edge_reach_m"] == 12.0                   # held again inside 12 m
+    seq = replay("flicker_WAV-0001_after", speed_aware=True, start_at=46.7, preheld=True)
+    assert all(r["hold"] for r in seq), [(r["t"], r["speed"], r["reach"], round(r["cx"], 1), r["hold"]) for r in seq]
+    assert seq[0]["reach"] < seq[0]["cx"] and seq[0]["level"] == PATH_SLOW, seq[0]        # the very tick that dropped live
+
+
+def test_a_held_car_beyond_a_shrunken_reach_is_still_released_only_by_its_own_clearance():
+    """Hysteresis is not a latch: the held car outside the gate is still asked the roomy sweep, and a car that
+    is clear by the slow clearance plus the block margin for a grace is let go as before."""
+    import time as _time
+    ego = (0.0, 0.0, 0.0)
+    pl = planner(); pl._edge_hold = None
+    car = car_beside(ego, 14.5, 2.3)
+    p = PerceptionOutput(objects=[car]); p.path_blocked = False; p.closest_obstacle_distance = 999.0
+    d1 = pl.filter_to_route_corridor(p, straight(), *ego, danger_m=8.0, footprint=FOOT, edge_reach_m=reach_for(7.0))
+    assert d1.edge_hold
+    # the van has shed its speed: reach back to 12 m, the car still 14.5 m out -- held
+    d2 = pl.filter_to_route_corridor(p, straight(), *ego, danger_m=8.0, footprint=FOOT, edge_reach_m=reach_for(2.0))
+    assert d2.edge_hold and d2.edge_reach_m == 12.0, (d2.level, d2.reason)
+    # now the car is well clear of the roomy body (moved out to 4.2 m): released once the grace has passed
+    clear_car = car_beside(ego, 14.5, 4.2)
+    p2 = PerceptionOutput(objects=[clear_car]); p2.path_blocked = False; p2.closest_obstacle_distance = 999.0
+    pl.filter_to_route_corridor(p2, straight(), *ego, danger_m=8.0, footprint=FOOT, edge_reach_m=reach_for(2.0))
+    hold = pl._edge_hold
+    assert hold is not None and hold.get("clear_since") is not None                      # counting the grace
+    hold["clear_since"] -= 2.0                                                            # the grace has passed
+    d4 = pl.filter_to_route_corridor(p2, straight(), *ego, danger_m=8.0, footprint=FOOT, edge_reach_m=reach_for(2.0))
+    assert not d4.edge_hold and pl._edge_hold is None, (d4.level, pl._edge_hold)

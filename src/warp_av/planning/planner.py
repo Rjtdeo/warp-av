@@ -2016,10 +2016,18 @@ class RoutePlanner:
             # measured car passed at about a metre the block margin could only fire when the
             # block would (all five V3B bend approaches: reported box 0.3-1.0 m clear, true
             # car 0.9-1.0 m clear, nothing required until a block at 1.2-1.7 m).
+            # A car already held stays in view whatever the reach says: the reach shrinks with the
+            # speed the hold itself takes away (live, reach_after/WAV-0001: held at 15.6 m and
+            # 6.2 m/s, next tick 1.9 m/s, reach 12.4, the car's centroid 12.5 m out -- dropped,
+            # the throttle back to 1.0 for two ticks, then held again at 12 m). The hold's own
+            # release -- clear by the roomy body for a grace -- is the only way out.
+            held_by_place = (hold is not None
+                             and math.hypot(wx - hold["x"], wy - hold["y"]) <= EDGE_HOLD_MATCH_M)
             if (heading_line is not None and not off_route and stationary
                     and not near_junction
                     and getattr(getattr(obj, "object_type", None), "value", None) == "vehicle"
-                    and -1.0 < obj.x <= heading_reach_m):
+                    and (-1.0 < obj.x <= heading_reach_m or (held_by_place and obj.x > -1.0))):
+                reach_h = heading_reach_m if not held_by_place else max(heading_reach_m, float(obj.x))
                 box_h = obstacle_box_for(obj, ego_yaw)
                 where_h = (wx, wy)
                 if box_h is not None:
@@ -2028,16 +2036,16 @@ class RoutePlanner:
                 radius_h = obstacle_radius_m(obj)
                 slow_body = replace(footprint, safety_margin=EDGE_SLOW_CLEARANCE_M)
                 risk_now = sweep_conflict(heading_line, (ego_x, ego_y), slow_body, where_h,
-                                          obstacle_radius=radius_h, horizon_m=heading_reach_m,
+                                          obstacle_radius=radius_h, horizon_m=reach_h,
                                           obstacle_box=box_h) is not None
-                held_car = hold is not None and math.hypot(wx - hold["x"], wy - hold["y"]) <= EDGE_HOLD_MATCH_M
+                held_car = held_by_place
                 keep = False
                 if held_car:
                     hold_matched = True
                     # release only when the car is clear by the slow clearance plus the block margin
                     roomy = replace(footprint, safety_margin=EDGE_SLOW_CLEARANCE_M + footprint.safety_margin)
                     keep = sweep_conflict(heading_line, (ego_x, ego_y), roomy, where_h,
-                                          obstacle_radius=radius_h, horizon_m=heading_reach_m,
+                                          obstacle_radius=radius_h, horizon_m=reach_h,
                                           obstacle_box=box_h) is not None
                 # the intended path swings with every steering tick; a moment of "clear" is
                 # not the car gone, so the release waits until it has been clear for a grace
