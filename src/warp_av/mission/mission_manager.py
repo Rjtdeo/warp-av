@@ -54,6 +54,12 @@ class Mission:
     events: List[MissionEvent] = field(default_factory=list)
     distance_traveled: float = 0.0
     reason_ended: str = ""
+    # Mission endpoint (2026-09-18): where the van will really stop when the pin is not a
+    # stopping place, said at the start; and where it did stop, against the pin, at the end.
+    stop_note: str = ""
+    stopped_x: Optional[float] = None
+    stopped_y: Optional[float] = None
+    from_destination_m: Optional[float] = None
 
 
 class MissionManager:
@@ -93,11 +99,24 @@ class MissionManager:
             self.current_mission.state = MissionState.EXECUTING
             self.log_event("executing", "Route planned, execution started")
 
-    def complete_mission(self, reason: str = "Arrived at destination"):
+    def set_stop_note(self, note: str):
+        """What was decided at the start about where the van will really stop (mission endpoint)."""
+        if self.current_mission:
+            self.current_mission.stop_note = note or ""
+            if note:
+                self.log_event("stop_note", note)
+
+    def complete_mission(self, reason: str = "Arrived at destination", stopped_at=None,
+                         from_destination_m: Optional[float] = None):
         if self.current_mission:
             self.current_mission.state = MissionState.COMPLETED
             self.current_mission.end_time = time.time()
             self.current_mission.reason_ended = reason
+            if stopped_at is not None:
+                self.current_mission.stopped_x = round(float(stopped_at[0]), 2)
+                self.current_mission.stopped_y = round(float(stopped_at[1]), 2)
+            if from_destination_m is not None:
+                self.current_mission.from_destination_m = round(float(from_destination_m), 2)
             self.log_event("completed", reason)
             self.mission_history.append(self.current_mission)
             print(f"[Mission] {self.current_mission.mission_id} COMPLETED: {reason}")
@@ -153,7 +172,8 @@ class MissionManager:
                 "destination": {"x": m.destination_x, "y": m.destination_y},
                 "duration_sec": time.time() - m.start_time,
                 "event_count": len(m.events),
-                "reason_ended": m.reason_ended
+                "reason_ended": m.reason_ended,
+                "stop_note": m.stop_note,
             }
         return {"mission_id": None, "state": "idle"}
 
@@ -167,6 +187,9 @@ class MissionManager:
                 "duration_sec": m.end_time - m.start_time if m.end_time else 0,
                 "event_count": len(m.events),
                 "reason_ended": m.reason_ended,
+                "stop_note": m.stop_note,
+                "stopped_at": ({"x": m.stopped_x, "y": m.stopped_y} if m.stopped_x is not None else None),
+                "from_destination_m": m.from_destination_m,
             }
             for m in self.mission_history
         ]

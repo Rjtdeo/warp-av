@@ -394,6 +394,9 @@ class WarpAV:
         self._pass_base = None          # the road before the way round was drawn, while a pass is active
         self._pass_shift, self._pass_lane_ok, self._pass_lane_why = 0.0, None, None
         self._pass_from, self._pass_out_m = None, None   # where the pass was accepted; where its ramp out ends
+        self._destination_judged = None   # mission endpoint: the pin as a place to stop (planner.judge_destination)
+        self._stop_note = None            # ...and what was said about where the van will really stop
+        self._spot_is_fallback = False    # the pull-over found nothing: the pin itself, unchecked
         self._overtake_retry_at = 0.0
 
         self._running = False
@@ -423,6 +426,19 @@ class WarpAV:
         return (gap - self.behavior.front_offset_m, sign.kind,
                 (sign.road_id, sign.lane_id, round(sign.x, 1), round(sign.y, 1)))
 
+    def _refuse_mission(self, why):
+        """A mission that cannot be run as asked ends here, before the van moves, with the reason
+        on the record (mission endpoint, 2026-09-18). The van stays where it is."""
+        self.mission_manager.fail_mission(why)
+        self._route = None
+        self._parking_spot = None
+        self._parking_note = None
+        try:
+            self.logger.log_event("mission_refused", why)
+        except Exception:
+            pass
+        print(f"[Mission] refused: {why}")
+
     def _dress_route_for_parking(self):
         """Bend the end of the route to a parking spot, and remember the route it was drawn on.
 
@@ -446,6 +462,7 @@ class WarpAV:
             self._parking_wait_since = None
             self._tried_the_last_resort = False
             chosen = self._choose_spot()
+            self._spot_is_fallback = chosen is None      # the pin itself, unchecked (mission endpoint)
             if chosen is not None:
                 self._route.waypoints, self._parking_spot = chosen
             else:
@@ -457,6 +474,7 @@ class WarpAV:
                                       "note": "no workable spot near the pin"}
         except Exception as e:
             print(f"[Mission] pull-over computation failed ({e}) — parking on the lane")
+            self._spot_is_fallback = True
             self._parking_spot = None
             self._lidar_rescan_done = False
             self._lidar_rescan_tries = 0
@@ -923,6 +941,25 @@ class WarpAV:
             dest_x, dest_y, pose.x, pose.y
         )
 
+        # Mission endpoint (2026-09-18): what the pin IS, as a place to stop, before anything is
+        # planned to it. A pin nowhere near the road is refused here; a pin inside a junction
+        # is planned to as before, and the mission says from its first tick where the van will
+        # really stop (see below, once the pull-over has chosen). Without a map: no judgement.
+        judged = None
+        try:
+            judged = self.planner.judge_destination(dest_x, dest_y)
+        except Exception as e:
+            print(f"[Mission] could not judge the destination ({e})")
+        self._destination_judged = judged
+        self._stop_note = None
+        if judged and judged["off_road_m"] > self.planner.PARK_MAX_PULLBACK_M:
+            self._refuse_mission(
+                f"the destination ({dest_x:.1f}, {dest_y:.1f}) is {judged['off_road_m']:.0f} m from the "
+                f"nearest road (({judged['x']}, {judged['y']}), road {judged['road_id']}), further than "
+                f"the {self.planner.PARK_MAX_PULLBACK_M:.0f} m a stop may ever be moved from a pin: "
+                f"nowhere the van can arrive")
+            return False
+
         # ----------------------------------------------------
         # Use the route already previewed on the dashboard
         # when it matches this destination.
@@ -986,6 +1023,26 @@ class WarpAV:
 
         self._dress_route_for_parking()
 
+        if judged and judged.get("in_junction"):
+            sp = self._parking_spot or {}
+            if getattr(self, "_spot_is_fallback", True) or not sp:
+                # nothing within the window: today's answer would be a stop INSIDE the junction
+                self._refuse_mission(
+                    f"the destination ({dest_x:.1f}, {dest_y:.1f}) lies inside a junction (road "
+                    f"{judged['road_id']}) and no place to stop was found within "
+                    f"{self.planner.PARK_PAST_PIN_M:.0f} m past it or "
+                    f"{self.planner.PARK_MAX_PULLBACK_M:.0f} m before it")
+                return False
+            past, back = float(sp.get("past_pin_m") or 0.0), float(sp.get("moved_back_m") or 0.0)
+            what = {"bay": "a parking bay", "kerb": "the kerb", "lane": "a stop in the lane",
+                    "slot": "a parking slot"}.get(sp.get("kind"), str(sp.get("kind")))
+            self._stop_note = (
+                f"the destination lies inside a junction (road {judged['road_id']}); the nearest "
+                f"place the van may stop is {what} "
+                + (f"{past:.0f} m past it" if past >= back else f"{back:.0f} m before it"))
+            self.mission_manager.set_stop_note(self._stop_note)
+            print(f"[Mission] {self._stop_note}")
+
         # Start logging
         self.logger.start_mission_log(mission.mission_id)
         # L2: dead reckoning starts from a known pose, because that is what dead reckoning
@@ -1003,6 +1060,8 @@ class WarpAV:
         except Exception:
             pass
         self.logger.log_event("mission_started", f"Destination: ({dest_x}, {dest_y})")
+        if getattr(self, "_stop_note", None):
+            self.logger.log_event("destination_note", self._stop_note)
         if getattr(self, "_parking_note", None):
             self.logger.log_event("parking_spot", self._parking_note)
             self._note_move(SPOT_CHOSEN, self._parking_note)
@@ -1674,7 +1733,18 @@ class WarpAV:
         # 8. Check mission completion
         if behavior_output.behavior == DrivingBehavior.MISSION_COMPLETE:
             self.vehicle_adapter.disengage_autonomy()
-            self.mission_manager.complete_mission()
+            # Mission endpoint (2026-09-18): where the van really stopped, against what was
+            # asked. The reason says so when the pin was not a stopping place; the record
+            # carries the distance either way.
+            m = self.mission_manager.current_mission
+            from_dest = (math.hypot(pose.x - m.destination_x, pose.y - m.destination_y)
+                         if m is not None else None)
+            note = getattr(self, "_stop_note", None)
+            reason = "Arrived at destination"
+            if note and from_dest is not None:
+                reason = f"Stopped {from_dest:.0f} m from the destination: {note}"
+            self.mission_manager.complete_mission(reason, stopped_at=(pose.x, pose.y),
+                                                  from_destination_m=from_dest)
             # The estimate belonged to THAT mission. Keeping it alive would publish a stale
             # guess beside a van that has since been moved, which is exactly what made the
             # first L2 scoring run look like a 176 m error when the arithmetic was fine.
@@ -1712,6 +1782,10 @@ class WarpAV:
                                  + (pose.y - slot["y"]) * math.cos(slot["yaw"]))
                         flank = slot["kerb_offset_m"] - right - half_wid
                         detail += f" | kerb {flank:.2f} m ({'OK' if flank <= 0.46 else 'too far'}, US rule <= 0.46 m)"
+            if from_dest is not None:
+                detail += f" | {from_dest:.1f} m from the requested destination"
+                if note:
+                    detail += f" ({note})"
             self.logger.log_event("mission_completed", detail)
             print(f"[Mission] {detail}")
             self.logger.stop_mission_log()

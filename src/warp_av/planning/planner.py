@@ -2501,6 +2501,34 @@ class RoutePlanner:
             left += math.hypot(wps[k + 1].x - wps[k].x, wps[k + 1].y - wps[k].y)
         return left
 
+    def judge_destination(self, x, y):
+        """The requested destination as a PLACE TO STOP (mission endpoint, 2026-09-18): the nearest
+        driving-lane point, how far off the road the pin lies, and whether that point is inside a
+        junction. {"x", "y", "off_road_m", "in_junction", "road_id", "lane_id"}; None without a map
+        (the harness) or when the map cannot answer -- the mission then runs as it always did.
+
+        Nothing here moves the stop: the pull-over search decides that, by its own rules. This
+        only lets a mission SAY what it is doing with a pin that is not a stopping place, and
+        refuse one that is nowhere near the road. Live (WAV-0888, every batch) a pin inside
+        junction 675 was planned to like any other, the nearest stop the rules allow was 78 m on,
+        and the mission ended there as "Arrived at destination"; a pin at (9000, 9000) (RC-6) was
+        routed to the road nearest it, 12.6 km away, and driven toward."""
+        cmap = getattr(self, "carla_map", None)
+        if cmap is None:
+            return None
+        try:
+            wp = cmap.get_waypoint(carla.Location(x=float(x), y=float(y), z=0.3),
+                                   project_to_road=True, lane_type=carla.LaneType.Driving)
+        except Exception:
+            return None
+        if wp is None:
+            return None
+        loc = wp.transform.location
+        return {"x": round(float(loc.x), 2), "y": round(float(loc.y), 2),
+                "off_road_m": round(math.hypot(float(loc.x) - float(x), float(loc.y) - float(y)), 2),
+                "in_junction": bool(getattr(wp, "is_junction", False)),
+                "road_id": getattr(wp, "road_id", None), "lane_id": getattr(wp, "lane_id", None)}
+
     def distance_to_destination(self, route: Route, current_x, current_y) -> float:
         """How far to the end of the route: by road, or in a straight line, whichever is more.
 

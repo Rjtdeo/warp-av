@@ -1,0 +1,2732 @@
+{
+"WAV-0888__2": {
+"pin": [
+109.43,
+64.22
+],
+"start": [
+-18.0,
+140.6
+],
+"plan_route_points": 89,
+"route": [
+{
+"x": -18.58,
+"y": 140.6,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -16.58,
+"y": 140.61,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -14.58,
+"y": 140.62,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -12.58,
+"y": 140.63,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -10.58,
+"y": 140.65,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -8.58,
+"y": 140.66,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -6.58,
+"y": 140.67,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -4.58,
+"y": 140.68,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -2.58,
+"y": 140.7,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -0.21,
+"y": 140.71,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": -0.21,
+"y": 140.71,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 1.78,
+"y": 140.72,
+"yaw": 0.007,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 3.76,
+"y": 140.74,
+"yaw": 0.011,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 5.74,
+"y": 140.77,
+"yaw": 0.015,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 7.72,
+"y": 140.8,
+"yaw": 0.019,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 9.71,
+"y": 140.84,
+"yaw": 0.0206,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 11.73,
+"y": 140.88,
+"yaw": 0.0178,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 13.75,
+"y": 140.91,
+"yaw": 0.0138,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 15.77,
+"y": 140.94,
+"yaw": 0.0098,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 19.33,
+"y": 140.96,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 19.33,
+"y": 140.96,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 21.33,
+"y": 140.97,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 23.33,
+"y": 140.98,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 25.33,
+"y": 140.99,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 27.33,
+"y": 141.0,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 29.33,
+"y": 141.02,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 31.33,
+"y": 141.03,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 33.33,
+"y": 141.04,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 35.33,
+"y": 141.05,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 37.33,
+"y": 141.06,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 39.33,
+"y": 141.07,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 41.33,
+"y": 141.08,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 43.33,
+"y": 141.09,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 45.33,
+"y": 141.11,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 47.33,
+"y": 141.12,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 49.33,
+"y": 141.13,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 51.33,
+"y": 141.14,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 53.33,
+"y": 141.15,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 55.33,
+"y": 141.16,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 57.33,
+"y": 141.17,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 59.33,
+"y": 141.18,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 61.33,
+"y": 141.19,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 63.33,
+"y": 141.21,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 65.43,
+"y": 141.21,
+"yaw": -0.0131,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 67.72,
+"y": 141.12,
+"yaw": -0.0683,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 69.99,
+"y": 140.9,
+"yaw": -0.1234,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 72.26,
+"y": 140.55,
+"yaw": -0.1785,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 74.5,
+"y": 140.09,
+"yaw": -0.2336,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 76.71,
+"y": 139.49,
+"yaw": -0.2887,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 78.88,
+"y": 138.78,
+"yaw": -0.3439,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 81.02,
+"y": 137.95,
+"yaw": -0.399,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 83.1,
+"y": 137.0,
+"yaw": -0.4541,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 85.13,
+"y": 135.94,
+"yaw": -0.5092,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 87.1,
+"y": 134.77,
+"yaw": -0.5643,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 89.0,
+"y": 133.5,
+"yaw": -0.6195,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 90.82,
+"y": 132.12,
+"yaw": -0.6746,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 92.57,
+"y": 130.64,
+"yaw": -0.7297,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 94.23,
+"y": 129.07,
+"yaw": -0.7848,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 95.81,
+"y": 127.4,
+"yaw": -0.8399,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 97.28,
+"y": 125.67,
+"yaw": -0.8918,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 98.64,
+"y": 123.92,
+"yaw": -0.9329,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 99.92,
+"y": 122.11,
+"yaw": -0.974,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 101.13,
+"y": 120.26,
+"yaw": -1.0151,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 102.25,
+"y": 118.35,
+"yaw": -1.0562,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 103.31,
+"y": 116.4,
+"yaw": -1.0973,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 104.28,
+"y": 114.41,
+"yaw": -1.1384,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 105.16,
+"y": 112.38,
+"yaw": -1.1795,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 105.96,
+"y": 110.31,
+"yaw": -1.2205,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 106.68,
+"y": 108.22,
+"yaw": -1.2616,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 107.31,
+"y": 106.09,
+"yaw": -1.3027,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 107.86,
+"y": 103.94,
+"yaw": -1.3438,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.31,
+"y": 101.77,
+"yaw": -1.3849,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.67,
+"y": 99.59,
+"yaw": -1.426,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.95,
+"y": 97.39,
+"yaw": -1.4671,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.13,
+"y": 95.18,
+"yaw": -1.5082,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.23,
+"y": 92.97,
+"yaw": -1.5493,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.25,
+"y": 90.89,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.26,
+"y": 88.89,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.27,
+"y": 86.89,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.3,
+"y": 82.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.3,
+"y": 82.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.31,
+"y": 80.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.33,
+"y": 78.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.34,
+"y": 76.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.35,
+"y": 74.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.37,
+"y": 72.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.38,
+"y": 70.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.4,
+"y": 68.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.41,
+"y": 66.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.42,
+"y": 64.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.44,
+"y": 62.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.45,
+"y": 60.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.46,
+"y": 58.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.48,
+"y": 56.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.49,
+"y": 54.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.51,
+"y": 52.96,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.52,
+"y": 50.96,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.53,
+"y": 48.96,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.55,
+"y": 46.96,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.56,
+"y": 44.96,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.57,
+"y": 42.96,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.59,
+"y": 40.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.6,
+"y": 38.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.61,
+"y": 36.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.63,
+"y": 34.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.64,
+"y": 32.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.66,
+"y": 30.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.67,
+"y": 28.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.68,
+"y": 26.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.7,
+"y": 24.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.71,
+"y": 22.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.72,
+"y": 20.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.74,
+"y": 18.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.75,
+"y": 16.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.76,
+"y": 14.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.78,
+"y": 12.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.79,
+"y": 10.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.81,
+"y": 8.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.82,
+"y": 6.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.83,
+"y": 4.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.85,
+"y": 2.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.86,
+"y": 0.96,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.87,
+"y": -1.04,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.89,
+"y": -3.04,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.9,
+"y": -5.04,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 3,
+"lane_id": -2
+},
+{
+"x": 109.91,
+"y": -7.04,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 3,
+"lane_id": -2
+},
+{
+"x": 109.93,
+"y": -9.04,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 3,
+"lane_id": -2
+},
+{
+"x": 109.94,
+"y": -11.05,
+"yaw": -1.5658,
+"is_junction": false,
+"road_id": 0,
+"lane_id": -2
+}
+],
+"note": "the route the stack drove in rejoin_after2/WAV-0888__2 (runner meta.route); the first 89 points are plan_route's own (replay_spot.py on the rig), the rest the extension past the pin as cut to the chosen spot"
+},
+"WAV-0001": {
+"pin": [
+109.25,
+90.22
+],
+"start": [
+-18.0,
+140.6
+],
+"plan_route_points": 76,
+"route": [
+{
+"x": -18.58,
+"y": 140.6,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -16.58,
+"y": 140.61,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -14.58,
+"y": 140.62,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -12.58,
+"y": 140.63,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -10.58,
+"y": 140.65,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -8.58,
+"y": 140.66,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -6.58,
+"y": 140.67,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -4.58,
+"y": 140.68,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -2.58,
+"y": 140.7,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -0.21,
+"y": 140.71,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": -0.21,
+"y": 140.71,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 1.78,
+"y": 140.72,
+"yaw": 0.007,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 3.76,
+"y": 140.74,
+"yaw": 0.011,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 5.74,
+"y": 140.77,
+"yaw": 0.015,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 7.72,
+"y": 140.8,
+"yaw": 0.019,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 9.71,
+"y": 140.84,
+"yaw": 0.0206,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 11.73,
+"y": 140.88,
+"yaw": 0.0178,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 13.75,
+"y": 140.91,
+"yaw": 0.0138,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 15.77,
+"y": 140.94,
+"yaw": 0.0098,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 19.33,
+"y": 140.96,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 19.33,
+"y": 140.96,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 21.33,
+"y": 140.97,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 23.33,
+"y": 140.98,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 25.33,
+"y": 140.99,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 27.33,
+"y": 141.0,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 29.33,
+"y": 141.02,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 31.33,
+"y": 141.03,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 33.33,
+"y": 141.04,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 35.33,
+"y": 141.05,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 37.33,
+"y": 141.06,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 39.33,
+"y": 141.07,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 41.33,
+"y": 141.08,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 43.33,
+"y": 141.09,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 45.33,
+"y": 141.11,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 47.33,
+"y": 141.12,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 49.33,
+"y": 141.13,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 51.33,
+"y": 141.14,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 53.33,
+"y": 141.15,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 55.33,
+"y": 141.16,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 57.33,
+"y": 141.17,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 59.33,
+"y": 141.18,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 61.33,
+"y": 141.19,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 63.33,
+"y": 141.21,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 65.43,
+"y": 141.21,
+"yaw": -0.0131,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 67.72,
+"y": 141.12,
+"yaw": -0.0683,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 69.99,
+"y": 140.9,
+"yaw": -0.1234,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 72.26,
+"y": 140.55,
+"yaw": -0.1785,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 74.5,
+"y": 140.09,
+"yaw": -0.2336,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 76.71,
+"y": 139.49,
+"yaw": -0.2887,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 78.88,
+"y": 138.78,
+"yaw": -0.3439,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 81.02,
+"y": 137.95,
+"yaw": -0.399,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 83.1,
+"y": 137.0,
+"yaw": -0.4541,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 85.13,
+"y": 135.94,
+"yaw": -0.5092,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 87.1,
+"y": 134.77,
+"yaw": -0.5643,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 89.0,
+"y": 133.5,
+"yaw": -0.6195,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 90.82,
+"y": 132.12,
+"yaw": -0.6746,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 92.57,
+"y": 130.64,
+"yaw": -0.7297,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 94.23,
+"y": 129.07,
+"yaw": -0.7848,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 95.81,
+"y": 127.4,
+"yaw": -0.8399,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 97.28,
+"y": 125.67,
+"yaw": -0.8918,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 98.64,
+"y": 123.92,
+"yaw": -0.9329,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 99.92,
+"y": 122.11,
+"yaw": -0.974,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 101.13,
+"y": 120.26,
+"yaw": -1.0151,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 102.25,
+"y": 118.35,
+"yaw": -1.0562,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 103.31,
+"y": 116.4,
+"yaw": -1.0973,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 104.28,
+"y": 114.41,
+"yaw": -1.1384,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 105.16,
+"y": 112.38,
+"yaw": -1.1795,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 105.96,
+"y": 110.31,
+"yaw": -1.2205,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 106.68,
+"y": 108.22,
+"yaw": -1.2616,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 107.31,
+"y": 106.09,
+"yaw": -1.3027,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 107.86,
+"y": 103.94,
+"yaw": -1.3438,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.31,
+"y": 101.77,
+"yaw": -1.3849,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.67,
+"y": 99.59,
+"yaw": -1.426,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.95,
+"y": 97.39,
+"yaw": -1.4671,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.13,
+"y": 95.18,
+"yaw": -1.5082,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.23,
+"y": 92.97,
+"yaw": -1.5493,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+}
+],
+"note": "the route the stack drove in rejoin_after2/WAV-0001 (runner meta.route); the first 76 points are plan_route's own (replay_spot.py on the rig), the rest the extension past the pin as cut to the chosen spot"
+},
+"WAV-V15-BEND5": {
+"pin": [
+109.59,
+40.23
+],
+"start": [
+-18.0,
+140.6
+],
+"plan_route_points": 102,
+"route": [
+{
+"x": -18.58,
+"y": 140.6,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -16.58,
+"y": 140.61,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -14.58,
+"y": 140.62,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -12.58,
+"y": 140.63,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -10.58,
+"y": 140.65,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -8.58,
+"y": 140.66,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -6.58,
+"y": 140.67,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -4.58,
+"y": 140.68,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -2.58,
+"y": 140.7,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 4,
+"lane_id": 2
+},
+{
+"x": -0.21,
+"y": 140.71,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": -0.21,
+"y": 140.71,
+"yaw": 0.0061,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 1.78,
+"y": 140.72,
+"yaw": 0.007,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 3.76,
+"y": 140.74,
+"yaw": 0.011,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 5.74,
+"y": 140.77,
+"yaw": 0.015,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 7.72,
+"y": 140.8,
+"yaw": 0.019,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 9.71,
+"y": 140.84,
+"yaw": 0.0206,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 11.73,
+"y": 140.88,
+"yaw": 0.0178,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 13.75,
+"y": 140.91,
+"yaw": 0.0138,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 15.77,
+"y": 140.94,
+"yaw": 0.0098,
+"is_junction": false,
+"road_id": 8,
+"lane_id": -2
+},
+{
+"x": 19.33,
+"y": 140.96,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 19.33,
+"y": 140.96,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 21.33,
+"y": 140.97,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 23.33,
+"y": 140.98,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 25.33,
+"y": 140.99,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 27.33,
+"y": 141.0,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 29.33,
+"y": 141.02,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 31.33,
+"y": 141.03,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 33.33,
+"y": 141.04,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 35.33,
+"y": 141.05,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 37.33,
+"y": 141.06,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 39.33,
+"y": 141.07,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 41.33,
+"y": 141.08,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 43.33,
+"y": 141.09,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 45.33,
+"y": 141.11,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 47.33,
+"y": 141.12,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 49.33,
+"y": 141.13,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 51.33,
+"y": 141.14,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 53.33,
+"y": 141.15,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 55.33,
+"y": 141.16,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 57.33,
+"y": 141.17,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 59.33,
+"y": 141.18,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 61.33,
+"y": 141.19,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 63.33,
+"y": 141.21,
+"yaw": 0.0056,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 65.43,
+"y": 141.21,
+"yaw": -0.0131,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 67.72,
+"y": 141.12,
+"yaw": -0.0683,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 69.99,
+"y": 140.9,
+"yaw": -0.1234,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 72.26,
+"y": 140.55,
+"yaw": -0.1785,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 74.5,
+"y": 140.09,
+"yaw": -0.2336,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 76.71,
+"y": 139.49,
+"yaw": -0.2887,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 78.88,
+"y": 138.78,
+"yaw": -0.3439,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 81.02,
+"y": 137.95,
+"yaw": -0.399,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 83.1,
+"y": 137.0,
+"yaw": -0.4541,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 85.13,
+"y": 135.94,
+"yaw": -0.5092,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 87.1,
+"y": 134.77,
+"yaw": -0.5643,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 89.0,
+"y": 133.5,
+"yaw": -0.6195,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 90.82,
+"y": 132.12,
+"yaw": -0.6746,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 92.57,
+"y": 130.64,
+"yaw": -0.7297,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 94.23,
+"y": 129.07,
+"yaw": -0.7848,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 95.81,
+"y": 127.4,
+"yaw": -0.8399,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 97.28,
+"y": 125.67,
+"yaw": -0.8918,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 98.64,
+"y": 123.92,
+"yaw": -0.9329,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 99.92,
+"y": 122.11,
+"yaw": -0.974,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 101.13,
+"y": 120.26,
+"yaw": -1.0151,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 102.25,
+"y": 118.35,
+"yaw": -1.0562,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 103.31,
+"y": 116.4,
+"yaw": -1.0973,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 104.28,
+"y": 114.41,
+"yaw": -1.1384,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 105.16,
+"y": 112.38,
+"yaw": -1.1795,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 105.96,
+"y": 110.31,
+"yaw": -1.2205,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 106.68,
+"y": 108.22,
+"yaw": -1.2616,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 107.31,
+"y": 106.09,
+"yaw": -1.3027,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 107.86,
+"y": 103.94,
+"yaw": -1.3438,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.31,
+"y": 101.77,
+"yaw": -1.3849,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.67,
+"y": 99.59,
+"yaw": -1.426,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 108.95,
+"y": 97.39,
+"yaw": -1.4671,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.13,
+"y": 95.18,
+"yaw": -1.5082,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.23,
+"y": 92.97,
+"yaw": -1.5493,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.25,
+"y": 90.89,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.26,
+"y": 88.89,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.27,
+"y": 86.89,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 1,
+"lane_id": -2
+},
+{
+"x": 109.3,
+"y": 82.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.3,
+"y": 82.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.31,
+"y": 80.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.33,
+"y": 78.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.34,
+"y": 76.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.35,
+"y": 74.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.37,
+"y": 72.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.38,
+"y": 70.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.4,
+"y": 68.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.41,
+"y": 66.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.42,
+"y": 64.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.44,
+"y": 62.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.45,
+"y": 60.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.46,
+"y": 58.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.48,
+"y": 56.96,
+"yaw": -7.8472,
+"is_junction": true,
+"road_id": 675,
+"lane_id": -2
+},
+{
+"x": 109.5,
+"y": 53.29,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.5,
+"y": 53.29,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.52,
+"y": 51.29,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.53,
+"y": 49.29,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.54,
+"y": 47.29,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.56,
+"y": 45.29,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 2,
+"lane_id": -2
+},
+{
+"x": 109.58,
+"y": 42.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.58,
+"y": 42.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.59,
+"y": 40.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.61,
+"y": 38.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.62,
+"y": 36.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.63,
+"y": 34.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.65,
+"y": 32.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.66,
+"y": 30.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.67,
+"y": 28.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.69,
+"y": 26.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.7,
+"y": 24.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.71,
+"y": 22.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.73,
+"y": 20.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.74,
+"y": 18.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.76,
+"y": 16.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.77,
+"y": 14.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.78,
+"y": 12.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.8,
+"y": 10.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.81,
+"y": 8.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.82,
+"y": 6.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.84,
+"y": 4.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.85,
+"y": 2.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.86,
+"y": 0.21,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.88,
+"y": -1.79,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.89,
+"y": -3.79,
+"yaw": -1.564,
+"is_junction": true,
+"road_id": 566,
+"lane_id": -2
+},
+{
+"x": 109.91,
+"y": -5.79,
+"yaw": -1.564,
+"is_junction": false,
+"road_id": 3,
+"lane_id": -2
+},
+{
+"x": 110.06,
+"y": -7.79,
+"yaw": 4.714,
+"is_junction": false,
+"road_id": null,
+"lane_id": null
+},
+{
+"x": 110.33,
+"y": -9.8,
+"yaw": 4.714,
+"is_junction": false,
+"road_id": null,
+"lane_id": null
+},
+{
+"x": 110.48,
+"y": -11.81,
+"yaw": 4.714,
+"is_junction": false,
+"road_id": null,
+"lane_id": null
+},
+{
+"x": 110.48,
+"y": -13.82,
+"yaw": 4.714,
+"is_junction": false,
+"road_id": null,
+"lane_id": null
+},
+{
+"x": 110.49,
+"y": -15.83,
+"yaw": 4.714,
+"is_junction": false,
+"road_id": null,
+"lane_id": null
+},
+{
+"x": 110.49,
+"y": -17.84,
+"yaw": 4.714,
+"is_junction": false,
+"road_id": null,
+"lane_id": null
+}
+],
+"note": "the route the stack drove in rejoin_after2/WAV-V15-BEND5 (runner meta.route); the first 102 points are plan_route's own (replay_spot.py on the rig), the rest the extension past the pin as cut to the chosen spot"
+}
+}
