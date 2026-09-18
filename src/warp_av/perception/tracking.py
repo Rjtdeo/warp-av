@@ -554,7 +554,8 @@ class Track:
                  "length_m", "width_m", "height_m", "yaw_deg",
                  "_history", "_still", "range_m", "_sizes", "size_uncertain",
                  "cls_source", "_unnamed", "motion", "yaw_world_deg", "box_off",
-                 "box_len", "box_wid", "box_yaw_world_deg", "best_box", "_box_views")
+                 "box_len", "box_wid", "box_yaw_world_deg", "best_box", "_box_views",
+                 "_box_history")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -606,6 +607,7 @@ class Track:
         # does not change shape, so the best look stands; it is dropped the moment it moves.
         self.best_box = None
         self._box_views = []       # the recent fitted views of it, for choosing best_box
+        self._box_history = []     # ...and a longer memory of them, for keeping it (V3A)
 
     # ---- what the rest of the stack reads -------------------------------------------
     @property
@@ -855,12 +857,23 @@ BOX_AGREE_NEEDED = 3                # this many sightings, itself included
 BOX_AGREE_HEADING_DEG = 5.0
 BOX_AGREE_CENTRE_M = 0.5
 BOX_AGREE_LENGTH_M = 0.6
+#: ...and the same WIDTH. Width was the one dimension left out, and it is the one a merge
+#: changes most: a parked car's cluster that took in a chip of the kerb beyond it fits 2.6 m
+#: wide instead of 1.4, the same length and heading, its centre 0.6 m over -- so the normal
+#: views confirmed it, it was the largest, and it stood as the car for the rest of the mission
+#: (V3A, 2026-09-17: WAV-0001, 82.6 s, "VEHICLE blocking path at 1.7 m" beside 0.86 m of room).
+BOX_AGREE_WIDTH_M = 0.4
+#: How long the best look stands once nothing agrees with it any more: it is let go when none
+#: of this many latest views (about ten seconds live) still agree with it, not before -- the
+#: view alongside a parked car hides its far side for the whole length of a pass, and that is
+#: exactly when the fuller look from behind must stand (test_a_still_thing_keeps_its_best_look).
+BOX_SUPPORT_KEPT = 60
 
 
 def _agree(a, b) -> bool:
     turn = abs((a[5] - b[5] + 90.0) % 180.0 - 90.0)
     return (turn <= BOX_AGREE_HEADING_DEG and math.hypot(a[1] - b[1], a[2] - b[2]) <= BOX_AGREE_CENTRE_M
-            and abs(a[3] - b[3]) <= BOX_AGREE_LENGTH_M)
+            and abs(a[3] - b[3]) <= BOX_AGREE_LENGTH_M and abs(a[4] - b[4]) <= BOX_AGREE_WIDTH_M)
 
 
 def _note_best_box(tr: "Track", o: dict) -> None:
@@ -869,6 +882,7 @@ def _note_best_box(tr: "Track", o: dict) -> None:
     if not getattr(tr, "stationary", False):
         tr.best_box = None
         tr._box_views = []
+        tr._box_history = []
         return
     blen, bwid = float(o.get("box_len", 0.0) or 0.0), float(o.get("box_wid", 0.0) or 0.0)
     if blen <= 0.0 or "box_wx" not in o or o.get("box_yaw_world_deg") is None:
@@ -878,8 +892,19 @@ def _note_best_box(tr: "Track", o: dict) -> None:
     tr._box_views.append(view)
     if len(tr._box_views) > BOX_VIEWS_KEPT:
         tr._box_views.pop(0)
+    tr._box_history.append(view)
+    if len(tr._box_history) > BOX_SUPPORT_KEPT:
+        tr._box_history.pop(0)
     confirmed = [v for v in tr._box_views
                  if sum(1 for w in tr._box_views if _agree(v, w)) >= BOX_AGREE_NEEDED]
+    # The best look stands only while the views still bear it out (V3A). It used to stand for
+    # ever: once a merged view had been confirmed, no later view could replace it, because
+    # every honest one was smaller. Support is counted over the long memory, so a stretch of
+    # odd or partial sightings changes nothing, and a look nothing has agreed with for
+    # BOX_SUPPORT_KEPT sightings is let go.
+    if tr.best_box is not None and \
+            sum(1 for w in tr._box_history if _agree(tr.best_box, w)) < BOX_AGREE_NEEDED:
+        tr.best_box = None
     if confirmed:
         best = max(confirmed, key=lambda v: v[0])
         if tr.best_box is None or best[0] > tr.best_box[0]:
