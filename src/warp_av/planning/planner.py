@@ -1754,7 +1754,7 @@ class RoutePlanner:
     def filter_to_route_corridor(self, perception, route: Route, ego_x, ego_y, ego_yaw,
                                  corridor_halfwidth_m=1.75, block_halfwidth_m=1.40,
                                  danger_m=8.0, max_ahead_m=50.0, footprint=None,
-                                 intended_path=None):
+                                 intended_path=None, edge_reach_m=None):
         """
         Recompute perception's "in my path" verdict against the ROUTE CORRIDOR
         instead of a straight box along the vehicle's nose.
@@ -1841,7 +1841,21 @@ class RoutePlanner:
         # Never a block: the off-route nose line, the scrape rule and the free-space map
         # keep the hard stops. Stationary vehicles only, inside the corridor, not where the
         # route sweep already decides, not next to a junction.
+        # P-B05 follow-up (2026-09-18): how far ahead the early slow looks. It was the block
+        # sweep's 12 m stationary reach, fixed whatever the speed -- and the hold exists to reach
+        # the slow speed before the body is within EDGE_SLOW_CLEARANCE_M of the car, which takes
+        # 0.4 s + v^2 / 6 of road in the stack's own model (behavior.distance_to_slow). Recorded
+        # at 6.5-7 m/s (endpoint_after, rejoin_after2 WAV-0888 / WAV-0001): the gate opened with
+        # 5-7 m of free run where 8.5-10.7 m were needed, the brake stepped to 0.6 and the van
+        # stopped dead. The caller hands in that distance plus the van's own length as
+        # `edge_reach_m`; the 12 m stays as the floor, so below ~5.3 m/s nothing here changes.
+        # The BLOCK sweep keeps its own reach.
         heading_reach_m = FOOTPRINT_STATIONARY_REACH_M
+        if edge_reach_m is not None:
+            try:
+                heading_reach_m = max(FOOTPRINT_STATIONARY_REACH_M, float(edge_reach_m))
+            except (TypeError, ValueError):
+                heading_reach_m = FOOTPRINT_STATIONARY_REACH_M
         heading_line = None
         if footprint is not None:
             heading_line = _polyline(intended_path) if intended_path else []
@@ -2196,6 +2210,7 @@ class RoutePlanner:
         if hold is not None and not hold_matched and now_t - hold.get("last", 0.0) > EDGE_HOLD_GRACE_S:
             hold = None
         self._edge_hold = hold
+        decision.edge_reach_m = round(heading_reach_m, 1)     # how far the early slow looked this tick
         if edge_slow and not blocked:
             decision.edge_hold = True
             decision.used_footprint = True

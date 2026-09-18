@@ -226,6 +226,7 @@ class PlannerDecision:
     #: heading was carrying it into, held until the car is passed or safely clear. Rule 18
     #: treats it as required (the ease-off keeps its hands off).
     edge_hold: bool = False
+    edge_reach_m: Optional[float] = None    # P-B05 follow-up: the early slow's reach this tick (12 m, or further at speed)
     #: a parked vehicle the van is passing slowly instead of stopping for (fix 2)
     passing_id: Optional[int] = None
     passing_lateral_m: Optional[float] = None
@@ -299,6 +300,7 @@ class PlannerDecision:
                "route_points_used": self.route_points_used,
                "used_footprint": self.used_footprint,
                "edge_hold": self.edge_hold,
+               "edge_reach_m": self.edge_reach_m,
                "passing_id": self.passing_id,
                "passing_lateral_m": (None if self.passing_lateral_m is None
                                      else round(self.passing_lateral_m, 2))}

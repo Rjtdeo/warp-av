@@ -46,7 +46,7 @@ from .localization.ekf import LocalizationEKF
 from .localization.lidar_odometry import LidarOdometry
 from .localization.geo import bearing_to_yaw
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
-                               EASE_OFF_MPS)
+                               EASE_OFF_MPS, distance_to_slow)
 from .planning.footprint import _polyline, _project
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker, obstacle_radius_m,
                               nothing_is_standing_there, pass_refused, pass_options,
@@ -1225,11 +1225,21 @@ class WarpAV:
                         self._static_vehicle_objects(pose)
                 except Exception:
                     pass
+            # P-B05 follow-up (2026-09-18): the early slow looks as far as the slow itself needs
+            # -- the road a comfortable required slow takes from this speed (the behaviour's own
+            # distance_to_slow, the same model rule 18 uses) plus the van's length -- and never
+            # less than the 12 m it always looked. Below about 5.3 m/s that is still 12 m.
+            fp_now = self.footprint_blocking.active_footprint()
+            edge_reach = None
+            if fp_now is not None:
+                edge_reach = (distance_to_slow(float(pose.speed or 0.0), float(self.behavior.slow_speed))
+                              + 2.0 * float(fp_now.half_length))
             self._path = self.planner.filter_to_route_corridor(
                 perception, self._route, pose.x, pose.y, pose.yaw,
                 danger_m=getattr(self.perception, "danger_distance", 8.0),
                 footprint=self.footprint_blocking.active_footprint(),
                 intended_path=(self._trajectory.xy() if self._trajectory is not None else None),
+                edge_reach_m=edge_reach,
             )
             # ...and the laser's own ground as a second opinion on it, both ways round
             try:

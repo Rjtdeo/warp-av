@@ -412,16 +412,19 @@ def test_case_6_a_safety_required_slow_down_is_not_eased_off(van):
     assert c["safety_required"] is True, c
     assert c["eased_mps"] == pytest.approx(2.0), c                       # NOT eased to 7.65
     assert c["throttle"] == 0.0 and c["brake"] == pytest.approx(0.6), c  # service brake, at once
-    # the control: a car 13 m out is a comfort slow-down, and that one IS eased
+    # the control: a car 17 m out is a comfort slow-down, and that one IS eased. (It was 13 m
+    # until the P-B05 follow-up of 2026-09-18: the early lane-edge slow now looks as far as
+    # the slow needs at this speed -- distance_to_slow(6.65) 9.4 m plus the van's 5.9 m --
+    # so a parked car inside 15.3 m is held and REQUIRED at 6.65 m/s; 17 m is still comfort.)
     place(van, x=2.0, speed=6.65)
     see(van)
     van.tick()                                                           # back to cruise: memory 8.0
     assert chain(van)["eased_mps"] == pytest.approx(8.0)
-    see(van, [parked_car(13.0)])
+    see(van, [parked_car(17.0)])
     van.tick()
     c = chain(van)
     assert c["planner_level"] == PATH_SLOW and c["rule"] == "object_ahead", c
-    assert c["raw_mps"] == pytest.approx(2.0) and 13.0 > distance_to_slow(6.65, 2.0), c
+    assert c["raw_mps"] == pytest.approx(2.0) and 17.0 > distance_to_slow(6.65, 2.0), c
     assert c["safety_required"] is False, c
     assert c["eased_mps"] == pytest.approx(8.0 - 0.35), c
     assert c["throttle"] > 0.0 and c["brake"] == 0.0, c                  # the V1 failure mode, by design

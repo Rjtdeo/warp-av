@@ -1,0 +1,2792 @@
+{
+"high_speed_WAV-0888": {
+"run": "endpoint_after/WAV-0888",
+"route_fixture": "endpoint/recorded_routes.json:WAV-0888__2",
+"footprint": [
+2.958,
+0.994,
+0.3
+],
+"mustang_truth": {
+"x": 106.3,
+"y": 117.49,
+"yaw_deg": -60.0,
+"length": 4.72,
+"width": 1.89
+},
+"ticks": [
+{
+"t": 43.6,
+"pose": [
+87.72,
+134.23,
+-31.6
+],
+"speed": 6.517,
+"gap_truth_m": 17.72,
+"intended": [
+[
+86.89,
+134.76
+],
+[
+88.58,
+133.71
+],
+[
+90.22,
+132.55
+],
+[
+91.79,
+131.31
+],
+[
+93.28,
+129.99
+],
+[
+94.71,
+128.59
+],
+[
+96.07,
+127.12
+],
+[
+97.36,
+125.59
+],
+[
+98.59,
+124.01
+],
+[
+99.75,
+122.38
+],
+[
+100.85,
+120.71
+],
+[
+101.88,
+119.0
+],
+[
+102.85,
+117.25
+],
+[
+103.32,
+116.37
+]
+],
+"mustang": {
+"age_s": 0.09,
+"box_dx": -0.61,
+"box_dy": 0.84,
+"box_length_m": 1.71,
+"box_width_m": 0.44,
+"box_yaw_deg": 73.4,
+"clearance_radius_m": 1.2,
+"confidence": 0.72,
+"distance": 24.1,
+"ego_x": 23.71,
+"ego_y": -4.27,
+"height_m": 0.78,
+"id": 956,
+"length_m": 1.83,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 0.2,
+"x": 105.68,
+"y": 118.18,
+"yaw_deg": -52.9
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": true,
+"brake": 0.0
+}
+},
+{
+"t": 43.8,
+"pose": [
+89.33,
+133.15,
+-33.8
+],
+"speed": 6.597,
+"gap_truth_m": 16.74,
+"intended": [
+[
+87.72,
+134.23
+],
+[
+89.39,
+133.14
+],
+[
+90.99,
+131.95
+],
+[
+92.53,
+130.67
+],
+[
+93.99,
+129.3
+],
+[
+95.39,
+127.87
+],
+[
+96.71,
+126.37
+],
+[
+97.97,
+124.81
+],
+[
+99.16,
+123.21
+],
+[
+100.29,
+121.56
+],
+[
+101.36,
+119.87
+],
+[
+102.37,
+118.14
+],
+[
+103.31,
+116.38
+],
+[
+103.76,
+115.48
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": -0.4,
+"box_dy": 0.77,
+"box_length_m": 1.71,
+"box_width_m": 0.44,
+"box_yaw_deg": 75.6,
+"clearance_radius_m": 1.22,
+"confidence": 0.72,
+"distance": 21.9,
+"ego_x": 21.67,
+"ego_y": -3.32,
+"height_m": 0.86,
+"id": 956,
+"length_m": 2.32,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 0.78,
+"x": 105.5,
+"y": 118.35,
+"yaw_deg": -50.7
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": true,
+"brake": 0.0
+}
+},
+{
+"t": 44.0,
+"pose": [
+89.95,
+132.7,
+-34.8
+],
+"speed": 6.693,
+"gap_truth_m": 15.15,
+"intended": [
+[
+89.33,
+133.15
+],
+[
+90.95,
+131.98
+],
+[
+92.49,
+130.71
+],
+[
+93.96,
+129.36
+],
+[
+95.36,
+127.92
+],
+[
+96.68,
+126.42
+],
+[
+97.94,
+124.87
+],
+[
+99.13,
+123.26
+],
+[
+100.26,
+121.61
+],
+[
+101.33,
+119.92
+],
+[
+102.34,
+118.19
+],
+[
+103.28,
+116.43
+],
+[
+104.16,
+114.63
+],
+[
+104.57,
+113.73
+]
+],
+"mustang": {
+"age_s": 0.09,
+"box_dx": -0.38,
+"box_dy": 0.79,
+"box_length_m": 1.71,
+"box_width_m": 0.44,
+"box_yaw_deg": 77.1,
+"clearance_radius_m": 1.48,
+"confidence": 0.72,
+"distance": 20.7,
+"ego_x": 20.51,
+"ego_y": -2.73,
+"height_m": 0.92,
+"id": 956,
+"length_m": 2.72,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.15,
+"x": 105.25,
+"y": 118.76,
+"yaw_deg": -37.4
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": true,
+"brake": 0.0
+}
+},
+{
+"t": 44.2,
+"pose": [
+90.93,
+131.95,
+-36.6
+],
+"speed": 6.866,
+"gap_truth_m": 13.68,
+"intended": [
+[
+89.95,
+132.7
+],
+[
+91.55,
+131.51
+],
+[
+93.08,
+130.21
+],
+[
+94.52,
+128.83
+],
+[
+95.89,
+127.37
+],
+[
+97.19,
+125.85
+],
+[
+98.42,
+124.28
+],
+[
+99.59,
+122.65
+],
+[
+100.69,
+120.98
+],
+[
+101.74,
+119.28
+],
+[
+102.71,
+117.53
+],
+[
+103.63,
+115.75
+],
+[
+104.48,
+113.94
+],
+[
+104.88,
+113.03
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": 0.11,
+"box_dy": -0.28,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -40.2,
+"clearance_radius_m": 1.57,
+"confidence": 0.72,
+"distance": 20.1,
+"ego_x": 19.93,
+"ego_y": -2.33,
+"height_m": 0.96,
+"id": 956,
+"length_m": 2.92,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.15,
+"x": 105.56,
+"y": 118.22,
+"yaw_deg": -48.6
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 44.4,
+"pose": [
+92.47,
+130.65,
+-40.1
+],
+"speed": 6.929,
+"gap_truth_m": 12.53,
+"intended": [
+[
+90.93,
+131.95
+],
+[
+92.5,
+130.71
+],
+[
+93.97,
+129.36
+],
+[
+95.37,
+127.93
+],
+[
+96.7,
+126.43
+],
+[
+97.95,
+124.87
+],
+[
+99.14,
+123.26
+],
+[
+100.27,
+121.61
+],
+[
+101.33,
+119.92
+],
+[
+102.34,
+118.19
+],
+[
+103.28,
+116.43
+],
+[
+104.16,
+114.63
+],
+[
+104.97,
+112.8
+],
+[
+105.35,
+111.88
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": 0.33,
+"box_dy": -0.55,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -36.7,
+"clearance_radius_m": 1.59,
+"confidence": 0.72,
+"distance": 17.8,
+"ego_x": 17.81,
+"ego_y": -0.81,
+"height_m": 1.03,
+"id": 956,
+"length_m": 2.92,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.25,
+"x": 105.58,
+"y": 118.56,
+"yaw_deg": -45.1
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": true,
+"brake": 0.0
+}
+},
+{
+"t": 44.6,
+"pose": [
+93.36,
+129.82,
+-42.2
+],
+"speed": 6.932,
+"gap_truth_m": 11.04,
+"intended": [
+[
+92.47,
+130.65
+],
+[
+93.96,
+129.31
+],
+[
+95.37,
+127.89
+],
+[
+96.7,
+126.4
+],
+[
+97.96,
+124.85
+],
+[
+99.16,
+123.25
+],
+[
+100.29,
+121.59
+],
+[
+101.35,
+119.9
+],
+[
+102.36,
+118.17
+],
+[
+103.3,
+116.41
+],
+[
+104.17,
+114.61
+],
+[
+104.98,
+112.78
+],
+[
+105.73,
+110.93
+],
+[
+106.07,
+109.99
+]
+],
+"mustang": {
+"age_s": 0.09,
+"box_dx": 0.38,
+"box_dy": -0.58,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -34.5,
+"clearance_radius_m": 1.54,
+"confidence": 0.72,
+"distance": 16.5,
+"ego_x": 16.55,
+"ego_y": -0.06,
+"height_m": 1.06,
+"id": 956,
+"length_m": 2.8,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.31,
+"x": 105.57,
+"y": 118.66,
+"yaw_deg": -34.5
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 44.8,
+"pose": [
+94.02,
+129.17,
+-43.5
+],
+"speed": 7.027,
+"gap_truth_m": 9.42,
+"intended": [
+[
+93.36,
+129.82
+],
+[
+94.8,
+128.44
+],
+[
+96.17,
+126.98
+],
+[
+97.46,
+125.45
+],
+[
+98.68,
+123.87
+],
+[
+99.84,
+122.24
+],
+[
+100.93,
+120.56
+],
+[
+101.96,
+118.85
+],
+[
+102.93,
+117.1
+],
+[
+103.84,
+115.32
+],
+[
+104.67,
+113.5
+],
+[
+105.44,
+111.65
+],
+[
+106.15,
+109.78
+],
+[
+106.47,
+108.84
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": 0.21,
+"box_dy": -0.54,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -33.3,
+"clearance_radius_m": 1.56,
+"confidence": 0.72,
+"distance": 15.8,
+"ego_x": 15.84,
+"ego_y": 0.28,
+"height_m": 1.06,
+"id": 956,
+"length_m": 2.8,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.37,
+"x": 105.7,
+"y": 118.46,
+"yaw_deg": -33.3
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 45.0,
+"pose": [
+95.52,
+127.62,
+-45.8
+],
+"speed": 7.044,
+"gap_truth_m": 8.18,
+"intended": [
+[
+94.02,
+129.17
+],
+[
+95.43,
+127.75
+],
+[
+96.77,
+126.27
+],
+[
+98.04,
+124.72
+],
+[
+99.24,
+123.12
+],
+[
+100.37,
+121.47
+],
+[
+101.43,
+119.78
+],
+[
+102.43,
+118.04
+],
+[
+103.37,
+116.28
+],
+[
+104.24,
+114.48
+],
+[
+105.04,
+112.65
+],
+[
+105.78,
+110.79
+],
+[
+106.45,
+108.9
+],
+[
+106.76,
+107.95
+]
+],
+"mustang": {
+"age_s": 0.09,
+"box_dx": 0.36,
+"box_dy": -0.41,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -30.7,
+"clearance_radius_m": 1.67,
+"confidence": 0.77,
+"distance": 13.2,
+"ego_x": 13.18,
+"ego_y": 0.86,
+"height_m": 1.06,
+"id": 956,
+"length_m": 3.01,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.45,
+"x": 105.33,
+"y": 118.79,
+"yaw_deg": -30.7
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": true,
+"brake": 0.0
+}
+},
+{
+"t": 45.2,
+"pose": [
+96.28,
+126.8,
+-46.8
+],
+"speed": 6.971,
+"gap_truth_m": 6.7,
+"intended": [
+[
+95.52,
+127.62
+],
+[
+96.88,
+126.16
+],
+[
+98.16,
+124.63
+],
+[
+99.38,
+123.04
+],
+[
+100.52,
+121.39
+],
+[
+101.59,
+119.71
+],
+[
+102.59,
+117.97
+],
+[
+103.52,
+116.2
+],
+[
+104.38,
+114.4
+],
+[
+105.17,
+112.56
+],
+[
+105.89,
+110.7
+],
+[
+106.55,
+108.81
+],
+[
+107.13,
+106.89
+],
+[
+107.39,
+105.93
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": 0.35,
+"box_dy": -0.46,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -29.7,
+"clearance_radius_m": 1.74,
+"confidence": 0.77,
+"distance": 12.2,
+"ego_x": 12.19,
+"ego_y": 1.16,
+"height_m": 1.06,
+"id": 956,
+"length_m": 3.1,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.57,
+"x": 105.47,
+"y": 118.7,
+"yaw_deg": -38.5
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": true,
+"brake": 0.0
+}
+},
+{
+"t": 45.4,
+"pose": [
+96.92,
+126.06,
+-48.2
+],
+"speed": 6.56,
+"gap_truth_m": 5.35,
+"intended": [
+[
+96.28,
+126.8
+],
+[
+97.61,
+125.31
+],
+[
+98.86,
+123.75
+],
+[
+100.04,
+122.13
+],
+[
+101.14,
+120.46
+],
+[
+102.17,
+118.74
+],
+[
+103.13,
+116.99
+],
+[
+104.01,
+115.2
+],
+[
+104.83,
+113.37
+],
+[
+105.58,
+111.52
+],
+[
+106.26,
+109.64
+],
+[
+106.87,
+107.73
+],
+[
+107.42,
+105.81
+],
+[
+107.66,
+104.84
+]
+],
+"mustang": {
+"age_s": 0.09,
+"box_dx": 0.24,
+"box_dy": -0.34,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -28.0,
+"clearance_radius_m": 1.75,
+"confidence": 0.77,
+"distance": 11.3,
+"ego_x": 11.16,
+"ego_y": 1.44,
+"height_m": 1.07,
+"id": 956,
+"length_m": 3.1,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.62,
+"x": 105.43,
+"y": 118.71,
+"yaw_deg": -36.8
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 11.2,
+"safety": true,
+"brake": 0.6
+}
+},
+{
+"t": 45.6,
+"pose": [
+97.65,
+125.14,
+-50.5
+],
+"speed": 2.571,
+"gap_truth_m": 4.47,
+"intended": [
+[
+96.92,
+126.06
+],
+[
+98.21,
+124.54
+],
+[
+99.43,
+122.96
+],
+[
+100.58,
+121.32
+],
+[
+101.65,
+119.63
+],
+[
+102.65,
+117.9
+],
+[
+103.58,
+116.13
+],
+[
+104.44,
+114.32
+],
+[
+105.23,
+112.48
+],
+[
+105.94,
+110.61
+],
+[
+106.59,
+108.72
+],
+[
+107.17,
+106.81
+],
+[
+107.68,
+104.87
+],
+[
+107.9,
+103.9
+]
+],
+"mustang": {
+"age_s": 0.11,
+"box_dx": -0.01,
+"box_dy": -0.26,
+"box_length_m": 2.97,
+"box_width_m": 1.24,
+"box_yaw_deg": -26.1,
+"clearance_radius_m": 1.75,
+"confidence": 0.77,
+"distance": 10.6,
+"ego_x": 10.45,
+"ego_y": 1.75,
+"height_m": 1.09,
+"id": 956,
+"length_m": 3.1,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.62,
+"x": 105.65,
+"y": 118.19,
+"yaw_deg": -34.9
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 10.5,
+"safety": true,
+"brake": 0.6
+}
+}
+]
+},
+"five_mps_BEND5": {
+"run": "endpoint_after/WAV-V15-BEND5",
+"route_fixture": "endpoint/recorded_routes.json:WAV-V15-BEND5",
+"footprint": [
+2.958,
+0.994,
+0.3
+],
+"mustang_truth": {
+"x": 106.3,
+"y": 117.49,
+"yaw_deg": -60.0,
+"length": 4.72,
+"width": 1.89
+},
+"ticks": [
+{
+"t": 41.4,
+"pose": [
+90.17,
+132.34,
+-35.8
+],
+"speed": 4.663,
+"gap_truth_m": 15.45,
+"intended": [
+[
+88.8,
+133.36
+],
+[
+90.43,
+132.21
+],
+[
+92.01,
+130.98
+],
+[
+93.52,
+129.66
+],
+[
+94.95,
+128.27
+],
+[
+96.32,
+126.81
+],
+[
+97.61,
+125.29
+],
+[
+98.83,
+123.7
+],
+[
+99.99,
+122.07
+],
+[
+101.08,
+120.39
+],
+[
+102.1,
+118.68
+],
+[
+103.06,
+116.92
+],
+[
+103.95,
+115.13
+],
+[
+104.37,
+114.22
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": 0.12,
+"box_dy": -0.25,
+"box_length_m": 2.94,
+"box_width_m": 1.31,
+"box_yaw_deg": -52.2,
+"clearance_radius_m": 1.41,
+"confidence": 0.73,
+"distance": 20.5,
+"ego_x": 20.34,
+"ego_y": -2.18,
+"height_m": 0.93,
+"id": 7190,
+"length_m": 2.5,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.3,
+"x": 105.39,
+"y": 118.67,
+"yaw_deg": -46.3
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 41.6,
+"pose": [
+90.69,
+131.93,
+-36.5
+],
+"speed": 4.668,
+"gap_truth_m": 14.57,
+"intended": [
+[
+90.17,
+132.34
+],
+[
+91.76,
+131.13
+],
+[
+93.28,
+129.83
+],
+[
+94.74,
+128.46
+],
+[
+96.12,
+127.01
+],
+[
+97.43,
+125.5
+],
+[
+98.67,
+123.93
+],
+[
+99.84,
+122.31
+],
+[
+100.94,
+120.64
+],
+[
+101.97,
+118.93
+],
+[
+102.93,
+117.18
+],
+[
+103.83,
+115.39
+],
+[
+104.67,
+113.57
+],
+[
+105.06,
+112.65
+]
+],
+"mustang": {
+"age_s": 0.11,
+"box_dx": 0.08,
+"box_dy": -0.24,
+"box_length_m": 2.94,
+"box_width_m": 1.31,
+"box_yaw_deg": -51.5,
+"clearance_radius_m": 1.42,
+"confidence": 0.73,
+"distance": 19.8,
+"ego_x": 19.75,
+"ego_y": -1.91,
+"height_m": 0.93,
+"id": 7190,
+"length_m": 2.5,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.37,
+"x": 105.43,
+"y": 118.64,
+"yaw_deg": -45.6
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 41.8,
+"pose": [
+91.38,
+131.37,
+-37.7
+],
+"speed": 4.673,
+"gap_truth_m": 13.68,
+"intended": [
+[
+90.69,
+131.93
+],
+[
+92.27,
+130.7
+],
+[
+93.77,
+129.38
+],
+[
+95.2,
+127.99
+],
+[
+96.56,
+126.52
+],
+[
+97.85,
+124.99
+],
+[
+99.06,
+123.4
+],
+[
+100.21,
+121.76
+],
+[
+101.28,
+120.07
+],
+[
+102.29,
+118.34
+],
+[
+103.24,
+116.58
+],
+[
+104.11,
+114.78
+],
+[
+104.93,
+112.96
+],
+[
+105.31,
+112.03
+]
+],
+"mustang": {
+"age_s": 0.12,
+"box_dx": 0.33,
+"box_dy": -0.11,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -45.6,
+"clearance_radius_m": 1.42,
+"confidence": 0.73,
+"distance": 19.0,
+"ego_x": 18.96,
+"ego_y": -1.56,
+"height_m": 0.93,
+"id": 7190,
+"length_m": 2.5,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.35,
+"x": 105.43,
+"y": 118.56,
+"yaw_deg": -44.4
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 42.0,
+"pose": [
+91.99,
+130.86,
+-38.6
+],
+"speed": 4.68,
+"gap_truth_m": 12.75,
+"intended": [
+[
+91.38,
+131.37
+],
+[
+92.93,
+130.11
+],
+[
+94.41,
+128.77
+],
+[
+95.81,
+127.34
+],
+[
+97.14,
+125.84
+],
+[
+98.39,
+124.28
+],
+[
+99.57,
+122.67
+],
+[
+100.68,
+121.01
+],
+[
+101.73,
+119.31
+],
+[
+102.71,
+117.56
+],
+[
+103.62,
+115.78
+],
+[
+104.47,
+113.97
+],
+[
+105.26,
+112.13
+],
+[
+105.63,
+111.2
+]
+],
+"mustang": {
+"age_s": 0.11,
+"box_dx": 0.32,
+"box_dy": -0.3,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -44.3,
+"clearance_radius_m": 1.38,
+"confidence": 0.73,
+"distance": 18.0,
+"ego_x": 18.0,
+"ego_y": -0.92,
+"height_m": 0.91,
+"id": 7190,
+"length_m": 2.44,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.3,
+"x": 105.47,
+"y": 118.9,
+"yaw_deg": -43.2
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 42.2,
+"pose": [
+92.68,
+130.25,
+-40.0
+],
+"speed": 4.69,
+"gap_truth_m": 11.7,
+"intended": [
+[
+91.99,
+130.86
+],
+[
+93.51,
+129.57
+],
+[
+94.97,
+128.2
+],
+[
+96.35,
+126.75
+],
+[
+97.65,
+125.23
+],
+[
+98.88,
+123.65
+],
+[
+100.04,
+122.02
+],
+[
+101.13,
+120.35
+],
+[
+102.15,
+118.63
+],
+[
+103.1,
+116.87
+],
+[
+103.99,
+115.08
+],
+[
+104.81,
+113.25
+],
+[
+105.56,
+111.4
+],
+[
+105.91,
+110.46
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": -0.03,
+"box_dy": -0.36,
+"box_length_m": 2.94,
+"box_width_m": 1.31,
+"box_yaw_deg": -47.7,
+"clearance_radius_m": 1.42,
+"confidence": 0.83,
+"distance": 17.2,
+"ego_x": 17.16,
+"ego_y": -0.49,
+"height_m": 0.91,
+"id": 7190,
+"length_m": 2.5,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.35,
+"x": 105.52,
+"y": 118.84,
+"yaw_deg": -41.8
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 42.4,
+"pose": [
+93.24,
+129.73,
+-41.2
+],
+"speed": 4.698,
+"gap_truth_m": 10.89,
+"intended": [
+[
+92.68,
+130.25
+],
+[
+94.18,
+128.92
+],
+[
+95.6,
+127.52
+],
+[
+96.95,
+126.04
+],
+[
+98.22,
+124.49
+],
+[
+99.42,
+122.89
+],
+[
+100.54,
+121.24
+],
+[
+101.6,
+119.54
+],
+[
+102.59,
+117.8
+],
+[
+103.51,
+116.03
+],
+[
+104.37,
+114.22
+],
+[
+105.16,
+112.39
+],
+[
+105.89,
+110.52
+],
+[
+106.22,
+109.58
+]
+],
+"mustang": {
+"age_s": 0.12,
+"box_dx": 0.17,
+"box_dy": -0.24,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -41.7,
+"clearance_radius_m": 1.45,
+"confidence": 0.83,
+"distance": 16.5,
+"ego_x": 16.48,
+"ego_y": -0.12,
+"height_m": 0.91,
+"id": 7190,
+"length_m": 2.59,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.29,
+"x": 105.56,
+"y": 118.78,
+"yaw_deg": -57.7
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 42.6,
+"pose": [
+93.9,
+129.09,
+-42.6
+],
+"speed": 4.704,
+"gap_truth_m": 9.99,
+"intended": [
+[
+93.24,
+129.73
+],
+[
+94.71,
+128.37
+],
+[
+96.11,
+126.94
+],
+[
+97.43,
+125.44
+],
+[
+98.68,
+123.87
+],
+[
+99.85,
+122.25
+],
+[
+100.95,
+120.58
+],
+[
+101.98,
+118.87
+],
+[
+102.95,
+117.12
+],
+[
+103.85,
+115.33
+],
+[
+104.68,
+113.51
+],
+[
+105.45,
+111.67
+],
+[
+106.15,
+109.79
+],
+[
+106.47,
+108.85
+]
+],
+"mustang": {
+"age_s": 0.12,
+"box_dx": 0.2,
+"box_dy": -0.17,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -40.4,
+"clearance_radius_m": 1.46,
+"confidence": 0.83,
+"distance": 15.6,
+"ego_x": 15.61,
+"ego_y": 0.2,
+"height_m": 0.91,
+"id": 7190,
+"length_m": 2.59,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.34,
+"x": 105.53,
+"y": 118.66,
+"yaw_deg": -45.8
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 42.8,
+"pose": [
+95.06,
+127.9,
+-44.7
+],
+"speed": 4.708,
+"gap_truth_m": 9.03,
+"intended": [
+[
+93.9,
+129.09
+],
+[
+95.34,
+127.7
+],
+[
+96.71,
+126.23
+],
+[
+98.0,
+124.71
+],
+[
+99.22,
+123.12
+],
+[
+100.36,
+121.49
+],
+[
+101.44,
+119.8
+],
+[
+102.45,
+118.07
+],
+[
+103.38,
+116.3
+],
+[
+104.25,
+114.5
+],
+[
+105.05,
+112.67
+],
+[
+105.79,
+110.81
+],
+[
+106.45,
+108.92
+],
+[
+106.76,
+107.97
+]
+],
+"mustang": {
+"age_s": 0.11,
+"box_dx": 0.05,
+"box_dy": 0.04,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -38.4,
+"clearance_radius_m": 1.53,
+"confidence": 0.83,
+"distance": 14.2,
+"ego_x": 14.17,
+"ego_y": 0.57,
+"height_m": 0.94,
+"id": 7190,
+"length_m": 2.71,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.41,
+"x": 105.53,
+"y": 118.33,
+"yaw_deg": -43.8
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 43.0,
+"pose": [
+95.6,
+127.32,
+-45.7
+],
+"speed": 4.711,
+"gap_truth_m": 8.02,
+"intended": [
+[
+95.06,
+127.9
+],
+[
+96.45,
+126.46
+],
+[
+97.76,
+124.95
+],
+[
+99.0,
+123.38
+],
+[
+100.17,
+121.75
+],
+[
+101.26,
+120.08
+],
+[
+102.29,
+118.36
+],
+[
+103.24,
+116.6
+],
+[
+104.12,
+114.81
+],
+[
+104.94,
+112.98
+],
+[
+105.68,
+111.13
+],
+[
+106.35,
+109.24
+],
+[
+106.96,
+107.34
+],
+[
+107.24,
+106.38
+]
+],
+"mustang": {
+"age_s": 0.12,
+"box_dx": -0.16,
+"box_dy": 0.12,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -37.4,
+"clearance_radius_m": 1.64,
+"confidence": 0.83,
+"distance": 13.5,
+"ego_x": 13.52,
+"ego_y": 0.78,
+"height_m": 1.03,
+"id": 7190,
+"length_m": 2.97,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.41,
+"x": 105.61,
+"y": 118.18,
+"yaw_deg": -47.2
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 43.2,
+"pose": [
+96.1,
+126.75,
+-46.8
+],
+"speed": 4.718,
+"gap_truth_m": 7.04,
+"intended": [
+[
+95.6,
+127.32
+],
+[
+96.97,
+125.85
+],
+[
+98.25,
+124.32
+],
+[
+99.47,
+122.73
+],
+[
+100.61,
+121.09
+],
+[
+101.67,
+119.4
+],
+[
+102.67,
+117.66
+],
+[
+103.59,
+115.89
+],
+[
+104.45,
+114.08
+],
+[
+105.23,
+112.24
+],
+[
+105.95,
+110.37
+],
+[
+106.6,
+108.48
+],
+[
+107.18,
+106.57
+],
+[
+107.44,
+105.6
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": -0.44,
+"box_dy": 0.46,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -36.1,
+"clearance_radius_m": 1.53,
+"confidence": 0.85,
+"distance": 12.9,
+"ego_x": 12.89,
+"ego_y": 0.76,
+"height_m": 1.03,
+"id": 7190,
+"length_m": 2.71,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.41,
+"x": 105.48,
+"y": 117.88,
+"yaw_deg": -41.5
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 43.4,
+"pose": [
+96.68,
+126.08,
+-48.0
+],
+"speed": 4.726,
+"gap_truth_m": 6.07,
+"intended": [
+[
+96.1,
+126.75
+],
+[
+97.44,
+125.26
+],
+[
+98.7,
+123.71
+],
+[
+99.89,
+122.1
+],
+[
+101.0,
+120.44
+],
+[
+102.05,
+118.74
+],
+[
+103.02,
+116.99
+],
+[
+103.92,
+115.2
+],
+[
+104.75,
+113.38
+],
+[
+105.51,
+111.53
+],
+[
+106.2,
+109.66
+],
+[
+106.83,
+107.76
+],
+[
+107.38,
+105.84
+],
+[
+107.63,
+104.87
+]
+],
+"mustang": {
+"age_s": 0.12,
+"box_dx": -0.37,
+"box_dy": 0.37,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -35.2,
+"clearance_radius_m": 1.65,
+"confidence": 0.85,
+"distance": 12.2,
+"ego_x": 12.16,
+"ego_y": 1.05,
+"height_m": 1.13,
+"id": 7190,
+"length_m": 2.97,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.44,
+"x": 105.6,
+"y": 117.74,
+"yaw_deg": -45.1
+},
+"recorded": {
+"edge_hold": false,
+"level": "clear",
+"closest_m": 999.0,
+"safety": false,
+"brake": 0.0
+}
+},
+{
+"t": 43.7,
+"pose": [
+97.16,
+125.5,
+-49.0
+],
+"speed": 4.287,
+"gap_truth_m": 5.08,
+"intended": [
+[
+96.68,
+126.08
+],
+[
+97.98,
+124.57
+],
+[
+99.22,
+122.99
+],
+[
+100.38,
+121.36
+],
+[
+101.47,
+119.69
+],
+[
+102.48,
+117.96
+],
+[
+103.43,
+116.2
+],
+[
+104.3,
+114.4
+],
+[
+105.1,
+112.57
+],
+[
+105.84,
+110.71
+],
+[
+106.5,
+108.82
+],
+[
+107.09,
+106.91
+],
+[
+107.61,
+104.98
+],
+[
+107.84,
+104.01
+]
+],
+"mustang": {
+"age_s": 0.11,
+"box_dx": -0.04,
+"box_dy": 0.22,
+"box_length_m": 2.71,
+"box_width_m": 1.56,
+"box_yaw_deg": -34.0,
+"clearance_radius_m": 1.68,
+"confidence": 0.85,
+"distance": 11.0,
+"ego_x": 10.88,
+"ego_y": 1.47,
+"height_m": 1.17,
+"id": 7190,
+"length_m": 3.01,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.48,
+"x": 105.41,
+"y": 118.26,
+"yaw_deg": -38.9
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 10.9,
+"safety": true,
+"brake": 0.6
+}
+},
+{
+"t": 43.9,
+"pose": [
+97.71,
+124.81,
+-50.2
+],
+"speed": 3.566,
+"gap_truth_m": 4.36,
+"intended": [
+[
+97.16,
+125.5
+],
+[
+98.44,
+123.97
+],
+[
+99.64,
+122.37
+],
+[
+100.78,
+120.73
+],
+[
+101.85,
+119.03
+],
+[
+102.84,
+117.3
+],
+[
+103.76,
+115.52
+],
+[
+104.6,
+113.71
+],
+[
+105.38,
+111.87
+],
+[
+106.09,
+110.0
+],
+[
+106.72,
+108.1
+],
+[
+107.29,
+106.18
+],
+[
+107.78,
+104.24
+],
+[
+108.0,
+103.27
+]
+],
+"mustang": {
+"age_s": 0.1,
+"box_dx": 0.64,
+"box_dy": 0.26,
+"box_length_m": 3.12,
+"box_width_m": 1.75,
+"box_yaw_deg": 170.4,
+"clearance_radius_m": 1.84,
+"confidence": 0.85,
+"distance": 9.9,
+"ego_x": 9.72,
+"ego_y": 1.83,
+"height_m": 1.18,
+"id": 7190,
+"length_m": 3.32,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.6,
+"x": 105.33,
+"y": 118.5,
+"yaw_deg": -37.0
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 9.7,
+"safety": true,
+"brake": 0.6
+}
+},
+{
+"t": 44.1,
+"pose": [
+98.1,
+124.29,
+-51.0
+],
+"speed": 2.648,
+"gap_truth_m": 3.63,
+"intended": [
+[
+97.71,
+124.81
+],
+[
+98.96,
+123.24
+],
+[
+100.14,
+121.63
+],
+[
+101.25,
+119.97
+],
+[
+102.28,
+118.26
+],
+[
+103.25,
+116.5
+],
+[
+104.14,
+114.71
+],
+[
+104.96,
+112.89
+],
+[
+105.7,
+111.03
+],
+[
+106.38,
+109.15
+],
+[
+106.98,
+107.24
+],
+[
+107.52,
+105.32
+],
+[
+107.98,
+103.37
+],
+[
+108.18,
+102.39
+]
+],
+"mustang": {
+"age_s": 0.12,
+"box_dx": 1.29,
+"box_dy": 0.14,
+"box_length_m": 3.92,
+"box_width_m": 1.69,
+"box_yaw_deg": 171.5,
+"clearance_radius_m": 1.94,
+"confidence": 0.85,
+"distance": 9.1,
+"ego_x": 8.83,
+"ego_y": 2.04,
+"height_m": 1.22,
+"id": 7190,
+"length_m": 3.48,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.7,
+"x": 105.25,
+"y": 118.71,
+"yaw_deg": -43.7
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 8.8,
+"safety": true,
+"brake": 0.6
+}
+},
+{
+"t": 44.3,
+"pose": [
+98.95,
+123.15,
+-52.5
+],
+"speed": 2.022,
+"gap_truth_m": 3.16,
+"intended": [
+[
+98.1,
+124.29
+],
+[
+99.33,
+122.71
+],
+[
+100.49,
+121.08
+],
+[
+101.58,
+119.41
+],
+[
+102.6,
+117.68
+],
+[
+103.54,
+115.92
+],
+[
+104.41,
+114.12
+],
+[
+105.21,
+112.29
+],
+[
+105.93,
+110.42
+],
+[
+106.59,
+108.53
+],
+[
+107.17,
+106.62
+],
+[
+107.68,
+104.69
+],
+[
+108.12,
+102.73
+],
+[
+108.31,
+101.75
+]
+],
+"mustang": {
+"age_s": 0.14,
+"box_dx": 1.13,
+"box_dy": 0.1,
+"box_length_m": 4.18,
+"box_width_m": 1.74,
+"box_yaw_deg": 173.5,
+"clearance_radius_m": 2.17,
+"confidence": 0.85,
+"distance": 7.8,
+"ego_x": 7.46,
+"ego_y": 2.28,
+"height_m": 1.26,
+"id": 7190,
+"length_m": 4.0,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.71,
+"x": 105.3,
+"y": 118.61,
+"yaw_deg": -21.9
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 7.5,
+"safety": true,
+"brake": 0.157
+}
+},
+{
+"t": 44.5,
+"pose": [
+98.95,
+123.15,
+-52.5
+],
+"speed": 0.002,
+"gap_truth_m": 3.08,
+"intended": [
+[
+98.95,
+123.15
+],
+[
+100.15,
+121.54
+],
+[
+101.27,
+119.89
+],
+[
+102.32,
+118.19
+],
+[
+103.28,
+116.43
+],
+[
+104.17,
+114.64
+],
+[
+104.98,
+112.81
+],
+[
+105.72,
+110.96
+],
+[
+106.4,
+109.07
+],
+[
+107.0,
+107.17
+],
+[
+107.53,
+105.24
+],
+[
+107.99,
+103.29
+],
+[
+108.38,
+101.33
+],
+[
+108.55,
+100.35
+]
+],
+"mustang": {
+"age_s": 0.14,
+"box_dx": 1.13,
+"box_dy": 0.1,
+"box_length_m": 4.18,
+"box_width_m": 1.74,
+"box_yaw_deg": 173.5,
+"clearance_radius_m": 2.17,
+"confidence": 0.85,
+"distance": 7.8,
+"ego_x": 7.46,
+"ego_y": 2.28,
+"height_m": 1.26,
+"id": 7190,
+"length_m": 4.0,
+"motion_class": "dynamic",
+"motion_why": "named a road user",
+"size_uncertain": true,
+"speed": 0.0,
+"static_rule": "",
+"stationary": true,
+"type": "vehicle",
+"width_m": 1.71,
+"x": 105.3,
+"y": 118.61,
+"yaw_deg": -21.9
+},
+"recorded": {
+"edge_hold": true,
+"level": "slow",
+"closest_m": 7.5,
+"safety": true,
+"brake": 0.157
+}
+}
+]
+}
+}
