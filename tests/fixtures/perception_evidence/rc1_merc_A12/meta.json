@@ -1,0 +1,59 @@
+{
+ "map": "Carla/Maps/Town10HD",
+ "recorded": "2026-09-17 17:28:50",
+ "seconds": 1.2,
+ "van": {
+  "x": 99.59999084472656,
+  "y": 122.39999389648438,
+  "z": -0.022640075534582138,
+  "yaw_deg": -53.59998321533203
+ },
+ "lidar": {
+  "channels": 32,
+  "points_per_second": 150000,
+  "range_m": 50.0,
+  "rotation_hz": 10,
+  "mount": {
+   "x": 0.0,
+   "z": 2.5
+  },
+  "upper_fov": 10.0,
+  "lower_fov": -30.0,
+  "dropoff": "CARLA defaults (dropoff_general_rate 0.45)",
+  "columns": [
+   "x",
+   "y",
+   "z",
+   "intensity",
+   "ring"
+  ],
+  "points_per_rotation": 7659
+ },
+ "labels": {
+  "file": "labels.npz",
+  "columns": [
+   "x",
+   "y",
+   "z",
+   "cos_incidence",
+   "ring",
+   "semantic_tag"
+  ],
+  "note": "labelled LiDAR has no drop-off: answer key only, never pipeline input",
+  "points": 54559
+ },
+ "camera": {
+  "width": 800,
+  "height": 600,
+  "fov": 90,
+  "mount": {
+   "x": 2.0,
+   "z": 1.8,
+   "pitch_deg": -10.0
+  }
+ },
+ "ring_order_ok": true,
+ "deliveries": 18,
+ "points": 97129,
+ "camera_frames": 10
+}
