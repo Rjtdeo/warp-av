@@ -141,7 +141,7 @@ class ScenarioRunner:
         from .carla_world import WorldHelper, ActorController  # carla import isolated here
 
         t_start = time.time()
-        meta = {"collisions": [], "route_xy": [], "trigger_time": None, "first_fault_time": None,
+        meta = {"collisions": [], "route_xy": [], "route": [], "trigger_time": None, "first_fault_time": None,
                 "clear_time": None, "mission_completed": False, "event_log": [], "warnings": [],
                 # V1 evidence
                 "run_id": self.run_id, "git_sha_runner": self.git_sha, "git_dirty": self.git_dirty,
@@ -383,7 +383,7 @@ class ScenarioRunner:
             "meta": {k: meta.get(k) for k in ("run_id", "git_sha_runner", "git_dirty", "seed", "map", "map_expected",
                                               "carla_version", "started_at", "start_xy", "goal_xy", "stack",
                                               "start_check", "ego_reset", "mission_ids", "mission_records",
-                                              "phase_times")},
+                                              "phase_times", "route")},
         }
         self._persist(sid, result, trace)
         self.log(f"  => {result['verdict']}: {result['reason']}")
@@ -466,6 +466,9 @@ class ScenarioRunner:
             route = self.api.get("/api/route")
             xy = [(p["x"], p["y"]) for p in route]
             meta["route_xy"] = xy
+            # P-B05: the route as the planner has it (x, y, yaw, is_junction, road, lane) is saved with
+            # the result, so a planner decision can be replayed from the record afterwards
+            meta["route"] = route
             wh.set_route(xy)
             self.log(f"  route: {len(xy)} waypoints")
         except Exception as e:

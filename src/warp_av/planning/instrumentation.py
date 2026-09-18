@@ -298,6 +298,7 @@ class PlannerDecision:
                "objects_in_corridor": self.objects_in_corridor,
                "route_points_used": self.route_points_used,
                "used_footprint": self.used_footprint,
+               "edge_hold": self.edge_hold,
                "passing_id": self.passing_id,
                "passing_lateral_m": (None if self.passing_lateral_m is None
                                      else round(self.passing_lateral_m, 2))}

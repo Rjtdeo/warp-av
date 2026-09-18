@@ -4571,7 +4571,10 @@ class WarpAV:
         # road_id / lane_id go out too: a traffic light is matched to the route BY LANE, so
         # when the van says it can see no signal ahead this is the only way to tell whether
         # the route simply never travels the lane the light governs.
-        return [{"x": round(w.x, 2), "y": round(w.y, 2),
+        # P-B05: yaw and is_junction go out too, so a recorded run can replay the planner's
+        # decision exactly (the junction flags set where the swept-path rule hands over).
+        return [{"x": round(w.x, 2), "y": round(w.y, 2), "yaw": round(float(w.yaw), 4),
+                 "is_junction": bool(w.is_junction),
                  "road_id": w.road_id, "lane_id": w.lane_id} for w in self._route.waypoints]
 
     def api_set_speed_limit(self, speed_mps):
