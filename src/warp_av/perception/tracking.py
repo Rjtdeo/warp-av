@@ -835,7 +835,8 @@ def _note_size(tr: Track, o: dict) -> None:
     tr.height_m = _median([s[2] for s in tr._sizes])
     # the heading (and box) of the sighting nearest that middle length, so it matches the
     # shape reported
-    _take_shape_from(tr, min(tr._sizes, key=lambda s: abs(s[0] - tr.length_m)))
+    usable = [s for s in tr._sizes if not _degenerate(s[1], tr)] or tr._sizes   # V3B: not a line among bodies
+    _take_shape_from(tr, min(usable, key=lambda s: abs(s[0] - tr.length_m)))
     spread = max(lengths) - min(lengths)
     tr.size_uncertain = bool(spread > expected_size_spread_m(tr.range_m))
 
@@ -868,6 +869,23 @@ BOX_AGREE_WIDTH_M = 0.4
 #: view alongside a parked car hides its far side for the whole length of a pass, and that is
 #: exactly when the fuller look from behind must stand (test_a_still_thing_keeps_its_best_look).
 BOX_SUPPORT_KEPT = 60
+#: A view (or sighting) this much thinner than what the track has lately been measuring is
+#: DEGENERATE: one ring's line off a far car that nearer sightings already show as a body.
+#: Measured live (V3B, 2026-09-17: WAV-0888): a 1.30 x 0.04 m line seen at 27 m stayed the
+#: reported box down to 5.5 m while the track's own median spread grew to 2.53 x 1.49 m --
+#: the line views agreed with each other, nothing wider was confirmed on a fast approach, and
+#: the lane-edge hold fired at 1.6 m instead of 9 m. Relative to the track's own median, so
+#: a thing that IS a line (a kerb, a pole) is never degenerate.
+DEGENERATE_WIDTH_FRACTION = 0.5
+#: ...and the shortfall must be more than one ring's spacing can explain (the LiDAR's own
+#: resolution at range), or a 0.00 m line would be "degenerate" against a 0.05 m one.
+DEGENERATE_MIN_GAP_M = 0.2
+
+
+def _degenerate(width: float, tr: "Track") -> bool:
+    width = float(width or 0.0)
+    median = float(getattr(tr, "width_m", 0.0) or 0.0)
+    return width < DEGENERATE_WIDTH_FRACTION * median and median - width >= DEGENERATE_MIN_GAP_M
 
 
 def _agree(a, b) -> bool:
@@ -896,14 +914,16 @@ def _note_best_box(tr: "Track", o: dict) -> None:
     if len(tr._box_history) > BOX_SUPPORT_KEPT:
         tr._box_history.pop(0)
     confirmed = [v for v in tr._box_views
-                 if sum(1 for w in tr._box_views if _agree(v, w)) >= BOX_AGREE_NEEDED]
+                 if not _degenerate(v[4], tr)
+                 and sum(1 for w in tr._box_views if _agree(v, w)) >= BOX_AGREE_NEEDED]
     # The best look stands only while the views still bear it out (V3A). It used to stand for
     # ever: once a merged view had been confirmed, no later view could replace it, because
     # every honest one was smaller. Support is counted over the long memory, so a stretch of
     # odd or partial sightings changes nothing, and a look nothing has agreed with for
     # BOX_SUPPORT_KEPT sightings is let go.
     if tr.best_box is not None and \
-            sum(1 for w in tr._box_history if _agree(tr.best_box, w)) < BOX_AGREE_NEEDED:
+            (_degenerate(tr.best_box[4], tr)
+             or sum(1 for w in tr._box_history if _agree(tr.best_box, w)) < BOX_AGREE_NEEDED):
         tr.best_box = None
     if confirmed:
         best = max(confirmed, key=lambda v: v[0])
