@@ -2248,7 +2248,7 @@ class RoutePlanner:
 
     def plan_overtake(self, route: Route, ego_x, ego_y, obstacle_along_m,
                       lane_ok=None, shift_m=None, why=None, lane_ok_why=None,
-                      already_over=False):
+                      out_by_m=None):
         """Rewrite the route to move over around something standing ahead and rejoin beyond
         it (straights only: refuses near junctions or in bends). `lane_ok(x, y)` must confirm
         the moved-over position is ground the van may use. Returns the rejoin point
@@ -2259,10 +2259,12 @@ class RoutePlanner:
         one to move right. Which of those the van is allowed is pass_options and the `lane_ok`
         the caller passes -- a whole lane only where it runs our way, never the oncoming one.
 
-        `already_over` (go-around rejoin, 2026-09-18): the van is already at the full shift --
-        a pass being EXTENDED past something standing where its ramp back was going to land --
-        so the rewritten way round starts at the full offset instead of ramping out from the
-        line, holds it to obstacle_along_m + OVERTAKE_PASS_M and ramps back as always.
+        `out_by_m` (go-around rejoin, 2026-09-18): where the ramp out must be complete, in
+        metres along from (ego_x, ego_y); default obstacle_along_m + 1. A pass being EXTENDED
+        past something standing where its ramp back was going to land is planned again from
+        the pose it was ACCEPTED at, with the ramp out pinned where it was then, so the piece
+        of the way round the van is already driving does not move under it: only the plateau
+        lengthens (to obstacle_along_m + OVERTAKE_PASS_M) and the ramp back moves on.
         `why` and `lane_ok_why` are DIAGNOSTIC ONLY and change nothing about the answer
         (2026-09-15). This used to return a bare None for five different reasons, and the
         caller printed all five as one string -- "bend/junction/no lane of ours to use/route
@@ -2292,7 +2294,7 @@ class RoutePlanner:
         # Full offset only PAST the car's centre: the whole approach is ramp,
         # putting ~2.7 m of clearance at its rear corner already (v1 clipped
         # the corner by demanding a full lane change inside 6 m).
-        shift_done = obstacle_along_m + 1.0
+        shift_done = obstacle_along_m + 1.0 if out_by_m is None else max(1.0, float(out_by_m))
         pass_end = obstacle_along_m + self.OVERTAKE_PASS_M
         rejoin = obstacle_along_m + self.OVERTAKE_REJOIN_M
         if arcs[-1] < rejoin + 3.0:           # destination too close — hold
@@ -2318,7 +2320,7 @@ class RoutePlanner:
         for k, i in enumerate(range(ci, n)):
             a = arcs[k] if k < len(arcs) else arcs[-1]
             if a <= shift_done:
-                t = 1.0 if already_over else a / shift_done
+                t = a / shift_done
             elif a <= pass_end:
                 t = 1.0
             elif a <= rejoin:

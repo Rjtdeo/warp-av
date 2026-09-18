@@ -47,7 +47,7 @@ from .localization.lidar_odometry import LidarOdometry
 from .localization.geo import bearing_to_yaw
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
-from .planning.footprint import _project
+from .planning.footprint import _polyline, _project
 from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker, obstacle_radius_m,
                               nothing_is_standing_there, pass_refused, pass_options,
                               what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M,
@@ -393,6 +393,7 @@ class WarpAV:
         self._overtake_point = None     # rejoin Waypoint while a pass is active
         self._pass_base = None          # the road before the way round was drawn, while a pass is active
         self._pass_shift, self._pass_lane_ok, self._pass_lane_why = 0.0, None, None
+        self._pass_from, self._pass_out_m = None, None   # where the pass was accepted; where its ramp out ends
         self._overtake_retry_at = 0.0
 
         self._running = False
@@ -3590,6 +3591,7 @@ class WarpAV:
         # drawn on it (the swap below replaces the very list `road` holds), the shift, the lane test
         self._pass_base = list(road.waypoints)
         self._pass_shift, self._pass_lane_ok, self._pass_lane_why = over_m, lane_ok, lane_why
+        self._pass_from, self._pass_out_m = (pose.x, pose.y), lead_d + 1.0
         way = (f"squeezing past inside our own lane, {abs(over_m):.2f} m over to the "
                f"{'left' if over_m > 0 else 'right'}" if in_lane else
                f"onto the hard shoulder, {abs(over_m):.1f} m over to the right"
@@ -3617,26 +3619,32 @@ class WarpAV:
         print(f"[Overtake] {what} standing at {lead_d:.1f} m — {way}")
 
     def _extend_pass_past(self, pose, perception):
-        """While a pass is being driven: would the van's body, slid along the REST of the way
-        round, touch something standing? Then the ramp back is going to land on it -- the
-        parked row beside the start road, measured properly only now, 20 m closer than when
-        the pass was accepted -- and the pass is extended past it: the way round is planned
-        again from here on the road as it was before the pass, already at the full shift, with
+        """Go-around rejoin (2026-09-18): while a pass is active, look along the REST of the way
+        round -- from here to the rejoin point plus the van's own length -- for anything standing
+        where the ramp back was going to land (WAV-0076: a row of parked cars beside the line,
+        measured only once the van was alongside it, after the pass had been accepted on the
+        thin far looks). If something is there, the way round is planned again on the road as
+        it was before the pass, FROM THE POSE THE PASS WAS ACCEPTED AT with the ramp out pinned
+        where it was then (so the piece the van is already driving does not move under it),
         the blocker distance set to the far end of the thing in the way, the same shift and the
         same lane test, and swapped in only if the same check finds the new tail clear. Up to
         four things in a row are stepped past in one tick. Refused (route too short, no lane of
         ours there, still touched) -> the current plan stands and the van stops as before, no
         worse. Returns a sentence about what was done, or None."""
         base = getattr(self, "_pass_base", None)
-        if not base or self._overtake_point is None or len(base) < 10:
+        start = getattr(self, "_pass_from", None)
+        if not base or start is None or self._overtake_point is None or len(base) < 10:
             return None
         fp = self.footprint_blocking.footprint
         if fp is None:
             return None
-        pts = [(w.x, w.y) for w in base]
-        ego_arc = _project(pose.x, pose.y, pts)[0]
-        rejoin_arc = _project(self._overtake_point.x, self._overtake_point.y, pts)[0] - ego_arc
-        horizon = max(rejoin_arc, 0.0) + 2.0 * fp.half_length + 2.0
+        # the cleaned line, as every other sweep uses it: the road's own waypoints repeat a
+        # point at each road boundary, and a zero-length piece has no direction to project on
+        pts = _polyline(base)
+        start_arc = _project(start[0], start[1], pts)[0]
+        driven = _project(pose.x, pose.y, pts)[0] - start_arc      # how far the van has come since
+        rejoin_arc = _project(self._overtake_point.x, self._overtake_point.y, pts)[0] - start_arc
+        horizon = max(rejoin_arc - driven, 0.0) + 2.0 * fp.half_length + 2.0
         in_way = self.planner.pull_in_blocker(perception, self._route, pose.x, pose.y, pose.yaw,
                                               fp, horizon_m=horizon)
         if in_way is None:
@@ -3645,19 +3653,20 @@ class WarpAV:
         what = getattr(getattr(obj, "object_type", None), "value", "thing")
         for _ in range(4):
             reach = (box.half_length if box is not None else obstacle_radius_m(obj))
-            along = _project(where[0], where[1], pts)[0] - ego_arc + reach
+            # its far end, measured from the acceptance point like the pass itself was
+            along = _project(where[0], where[1], pts)[0] - start_arc + reach
             if along + self.planner.OVERTAKE_REJOIN_M <= rejoin_arc + 0.5:
                 return None                      # the current plan already rejoins beyond it
             trial = Route(waypoints=list(base), total_distance=self._route.total_distance)
             geometry = {}
             rejoin = self.planner.plan_overtake(
-                trial, pose.x, pose.y, along, shift_m=self._pass_shift, lane_ok=self._pass_lane_ok,
-                why=geometry, lane_ok_why=self._pass_lane_why, already_over=True)
+                trial, start[0], start[1], along, shift_m=self._pass_shift, lane_ok=self._pass_lane_ok,
+                why=geometry, lane_ok_why=self._pass_lane_why, out_by_m=self._pass_out_m)
             if rejoin is None:
                 return None                      # the road ahead will not take a longer pass
             again = self.planner.pull_in_blocker(
                 perception, trial, pose.x, pose.y, pose.yaw, fp,
-                horizon_m=along + self.planner.OVERTAKE_REJOIN_M + 8.0)
+                horizon_m=along - driven + self.planner.OVERTAKE_REJOIN_M + 8.0)
             if again is None:
                 self._route.waypoints = trial.waypoints      # one swap, as at acceptance
                 self._overtake_point = rejoin

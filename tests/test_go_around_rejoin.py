@@ -21,7 +21,7 @@ import pytest
 from test_v2a_end_to_end import van, start_mission, place, see, chain  # noqa: F401
 from test_patrol_tight_pass import ROUTE_SEG, route as base_route
 from warp_av.perception.perception import DetectedObject, ObjectType
-from warp_av.planning.footprint import VehicleFootprint, ObstacleBox, sweep_conflict, _project, _point_at_arc
+from warp_av.planning.footprint import VehicleFootprint, ObstacleBox, sweep_conflict, _project, _point_at_arc, _polyline
 from warp_av.planning.planner import RoutePlanner, Route, Waypoint
 
 FOOT = VehicleFootprint(half_length=2.958, half_width=0.994, safety_margin=0.30)
@@ -57,11 +57,11 @@ ROW = {   # centroid when far (a partial, thin look) and when near (the honest b
 }
 
 
-def row_objects(pose, extra_row=()):
+def row_objects(pose, extra_row=(), honest_from_m=15.0):
     out = []
     for name, spec in ROW.items():
         cx, cy = TRUTH[name][:2]
-        look = spec["near"] if math.hypot(cx - pose[0], cy - pose[1]) < 15.0 else spec["far"]
+        look = spec["near"] if math.hypot(cx - pose[0], cy - pose[1]) < honest_from_m else spec["far"]
         out.append(seen(pose, look[0], look[1], look[2], look[3], look[4], oid=spec["oid"]))
     for i, x in enumerate(extra_row):
         near = math.hypot(x - pose[0], 144.0 - pose[1]) < 15.0
@@ -71,7 +71,7 @@ def row_objects(pose, extra_row=()):
 
 
 def advance(wps, pose, step):
-    pts = [(w.x, w.y) for w in wps]
+    pts = _polyline(wps)
     arc = _project(pose[0], pose[1], pts)[0] + step
     x, y, heading = _point_at_arc(arc, pts)
     return (x, y, heading)
@@ -84,24 +84,26 @@ def lane_stubs(monkeypatch, v):
     monkeypatch.setattr(v, "_lane_width", lambda pose, fallback_m=3.5: 3.5)
 
 
-def drive(v, monkeypatch, ticks=220, row=True, extra_row=(), extension=True):
+def drive(v, monkeypatch, ticks=220, row=True, extra_row=(), extension=True, route=None, honest_from_m=15.0):
     """Stand behind the dead car until the gate takes a way round, then drive the rewritten route at 2 m/s until the
     pass completes or the planner stops the van. Returns the tick records."""
     lane_stubs(monkeypatch, v)
     if not extension:
         monkeypatch.setattr(v, "_extend_pass_past", lambda pose, perception: None)
-    start_mission(v, route=base_route(), dest=(49.33, 141.13))
+    start_mission(v, route=route if route is not None else base_route(), dest=(49.33, 141.13))
     pose = ACC_POSE; recs = []; moving = False
     for k in range(ticks):
         place(v, x=pose[0], y=pose[1], yaw=pose[2], speed=1.9 if moving else 0.0)
-        see(v, [stopped_car(pose)] + (row_objects(pose, extra_row) if row else []))
+        hm = honest_from_m(v._overtake_point is not None) if callable(honest_from_m) else honest_from_m
+        see(v, [stopped_car(pose)] + (row_objects(pose, extra_row, hm) if row else []))
         v.tick()
         v.clock.advance(0.25)
         st = v._current_state; c = chain(v); rp = v._overtake_point
         recs.append(dict(t=k * 0.25, x=pose[0], y=pose[1], hd=math.degrees(pose[2]), active=rp is not None,
                          rejoin=(round(rp.x, 2), round(rp.y, 2)) if rp else None, level=st["planner"]["level"],
                          reason=st["planner"]["reason"], gate=((st.get("go_around") or {}).get("gate") or {}).get("reason_code"),
-                         steer=c["steer"], lat=_project(pose[0], pose[1], [(x, y, *_)[0:2] for x, y, *_ in ROUTE_SEG])[1]))
+                         steer=c["steer"], lat=_project(pose[0], pose[1], [(x, y, *_)[0:2] for x, y, *_ in ROUTE_SEG])[1],
+                         way=[(w.x, w.y) for w in v._route.waypoints] if rp is not None and (not recs or recs[-1]["rejoin"] != (round(rp.x, 2), round(rp.y, 2))) else None))
         if rp is not None or (moving and recs[-1]["level"] != "blocked"):
             if st["planner"]["level"] != "blocked":
                 pose = advance(v._route.waypoints, pose, 0.5); moving = True
@@ -158,6 +160,54 @@ def test_case_a_and_c_after_the_fix_the_pass_is_extended_past_the_row_and_comple
     assert max(steer) < 0.9, max(steer)
 
 
+# ---------------------------------------------------------------- Case A on the road the rig actually hands over
+def rig_route():
+    """The road as the rig's global planner hands it over: a waypoint REPEATED at each road boundary
+    (rejoin_after/WAV-0076 meta.route has index 10 (-0.21,140.71) twice and index 20 (19.33,140.96) twice)."""
+    seg = list(ROUTE_SEG)
+    seg = seg[:11] + [seg[10]] + seg[11:21] + [seg[20]] + seg[21:]
+    return Route(waypoints=[Waypoint(x=x, y=y, yaw=yaw, is_junction=j) for x, y, yaw, j in seg])
+
+
+def test_case_a_on_the_road_the_rig_hands_over_with_its_repeated_boundary_points(van, monkeypatch, capsys):
+    """Live (rejoin_after, eefd397) the extension never fired: the check projected onto the raw route,
+    a repeated waypoint is a piece of zero length, and the division by it failed 742 times in the stack
+    log, each swallowed by the tick's guard. The check must work on the road as the rig hands it over."""
+    recs = drive(van, monkeypatch, route=rig_route())
+    out = capsys.readouterr().out
+    assert "extension check failed" not in out, out[-400:]
+    ext = [r for r in recs if r["gate"] == "PASS_EXTENDED"]
+    assert ext, "the extension fires on the rig's route too"
+    assert ext[0]["rejoin"][0] >= 17.73 + 5.57 / 2 + 16.0 - 1.0, ext[0]
+    beside = [r for r in recs if 8.0 <= r["x"] <= 21.0]
+    assert all(r["level"] != "blocked" for r in beside), [r for r in beside if r["level"] == "blocked"][:2]
+    assert not recs[-1]["active"] and abs(recs[-1]["lat"]) < 0.6, recs[-1]
+
+
+def test_the_row_measured_at_acceptance_extends_the_pass_at_once_without_moving_the_ramp_out(van, monkeypatch):
+    """WAV-0076 run 3 (rejoin_after): the pass was accepted on the far looks and the row's body was in the
+    tracker on the very next tick (a 1.86 x 0.80 m box 27 m ahead, 3.0 m off the line), so the extension fires
+    at once, with the van still on the lane centre. The way round it draws must be the accepted one up to
+    the plateau -- no sidestep drawn under a van that has not moved over yet."""
+    recs = drive(van, monkeypatch, honest_from_m=lambda active: 40.0 if active else 15.0)
+    accepted = next(r for r in recs if r["active"])
+    ext = next(r for r in recs if r["gate"] == "PASS_EXTENDED")
+    assert ext["x"] < accepted["x"] + 1.0, (accepted["x"], ext["x"])                      # at once
+    before = accepted["way"]; after = ext["way"]
+    assert before and after
+    old_plateau_end = accepted["rejoin"][0] - 8.0 - 2.5     # the rejoin waypoint sits up to one 2 m step past the rejoin arc
+    same = [(a, b) for a, b in zip(before, after) if a[0] <= old_plateau_end - 0.5]
+    assert len(same) >= 10 and all(abs(a[1] - b[1]) < 1e-9 for a, b in same), [(a, b) for a, b in same if abs(a[1] - b[1]) >= 1e-9][:3]
+    assert ext["rejoin"][0] >= 17.73 + 5.57 / 2 + 16.0 - 1.0, ext
+    # the ramp out the van drives is the accepted one: no kink where the plan was swapped, the nose turns no
+    # faster than a plain 3.6 m ramp out over 12.5 m asks (the ramp back further on is any pass's, not tested here)
+    out = [(a["x"], abs(b["hd"] - a["hd"])) for a, b in zip(recs, recs[1:]) if a["active"] and a["x"] <= old_plateau_end]
+    print(f"at-acceptance extension: swapped at x {ext['x']:.1f}, max heading change per tick on the ramp out "
+          f"{max(t for _, t in out):.1f} deg at x {max(out, key=lambda o: o[1])[0]:.1f}")
+    assert max(t for _, t in out) < 12.0, max(out, key=lambda o: o[1])
+    assert not recs[-1]["active"] and abs(recs[-1]["lat"]) < 0.6, recs[-1]
+
+
 # ---------------------------------------------------------------- Case B / E: a normal pass, nothing beside the line
 def test_case_b_and_e_a_plain_pass_rejoins_at_16_m_and_the_extension_never_speaks(van, monkeypatch):
     recs = drive(van, monkeypatch, row=False)
@@ -177,11 +227,21 @@ def test_case_d_a_rejoin_is_always_ahead_along_the_route_and_extensions_only_mov
         pts = [(x, y) for x, y, *_ in ROUTE_SEG]
         ahead = _project(rejoin.x, rejoin.y, pts)[0] - _project(ACC_POSE[0], ACC_POSE[1], pts)[0]
         assert ahead >= along + 16.0 - 2.0, (along, ahead)
-    # already at the full shift, planned again from mid-pass: the tail starts at the offset, no ramp out
-    trial = base_route(); pose = (7.0, 137.3, 0.0)
-    rejoin = rp.plan_overtake(trial, pose[0], pose[1], 13.5, shift_m=3.6, lane_ok=None, already_over=True)
-    first = next(w for w in trial.waypoints if w.x > pose[0] + 0.5)
-    assert abs(first.y - 137.3) < 0.4 and rejoin.x > pose[0] + 27.0, (first.y, rejoin.x)
+    # planned again from the acceptance pose with the ramp out pinned where it was: the way round is the
+    # same up to the old plateau's end, and only the plateau and the ramp back move on
+    plain = base_route(); rp.plan_overtake(plain, ACC_POSE[0], ACC_POSE[1], 11.5, shift_m=3.6, lane_ok=None)
+    longer = base_route()
+    rejoin = rp.plan_overtake(longer, ACC_POSE[0], ACC_POSE[1], 31.3, shift_m=3.6, lane_ok=None, out_by_m=12.5)
+    pts = [(x, y) for x, y, *_ in ROUTE_SEG]; a0 = _project(ACC_POSE[0], ACC_POSE[1], pts)[0]
+    for a, b in zip(plain.waypoints, longer.waypoints):
+        if _project(a.x, a.y, pts)[0] - a0 <= 11.5 + 8.0:
+            assert abs(a.y - b.y) < 1e-9 and abs(a.x - b.x) < 1e-9, (a, b)
+    assert rejoin.x > plain.waypoints[0].x + 31.3 + 16.0 - 2.0, rejoin.x
+    # ramp out ends 12.5 m on (x 1.5), the plateau runs to 31.3 + 8 m (x 28.3), then the ramp back
+    over = [(r, w) for r, w in zip(base_route().waypoints, longer.waypoints) if 2.0 < w.x < 28.0]
+    assert len(over) >= 10 and all(abs((r.y - w.y) - 3.6) < 0.02 for r, w in over), [(w.x, r.y - w.y) for r, w in over if abs((r.y - w.y) - 3.6) >= 0.02]
+    back = [(r, w) for r, w in zip(base_route().waypoints, longer.waypoints) if 30.0 < w.x < 36.0]
+    assert back and all(0.0 < (r.y - w.y) < 3.6 for r, w in back), [(w.x, r.y - w.y) for r, w in back]
 
 
 # ---------------------------------------------------------------- Case F: a genuinely unsafe rejoin is not forced
