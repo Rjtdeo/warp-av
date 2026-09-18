@@ -2247,7 +2247,8 @@ class RoutePlanner:
     OVERTAKE_REJOIN_M = 16.0     # fully back in lane this far beyond it
 
     def plan_overtake(self, route: Route, ego_x, ego_y, obstacle_along_m,
-                      lane_ok=None, shift_m=None, why=None, lane_ok_why=None):
+                      lane_ok=None, shift_m=None, why=None, lane_ok_why=None,
+                      already_over=False):
         """Rewrite the route to move over around something standing ahead and rejoin beyond
         it (straights only: refuses near junctions or in bends). `lane_ok(x, y)` must confirm
         the moved-over position is ground the van may use. Returns the rejoin point
@@ -2258,6 +2259,10 @@ class RoutePlanner:
         one to move right. Which of those the van is allowed is pass_options and the `lane_ok`
         the caller passes -- a whole lane only where it runs our way, never the oncoming one.
 
+        `already_over` (go-around rejoin, 2026-09-18): the van is already at the full shift --
+        a pass being EXTENDED past something standing where its ramp back was going to land --
+        so the rewritten way round starts at the full offset instead of ramping out from the
+        line, holds it to obstacle_along_m + OVERTAKE_PASS_M and ramps back as always.
         `why` and `lane_ok_why` are DIAGNOSTIC ONLY and change nothing about the answer
         (2026-09-15). This used to return a bare None for five different reasons, and the
         caller printed all five as one string -- "bend/junction/no lane of ours to use/route
@@ -2313,7 +2318,7 @@ class RoutePlanner:
         for k, i in enumerate(range(ci, n)):
             a = arcs[k] if k < len(arcs) else arcs[-1]
             if a <= shift_done:
-                t = a / shift_done
+                t = 1.0 if already_over else a / shift_done
             elif a <= pass_end:
                 t = 1.0
             elif a <= rejoin:

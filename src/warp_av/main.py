@@ -47,7 +47,8 @@ from .localization.lidar_odometry import LidarOdometry
 from .localization.geo import bearing_to_yaw
 from .behavior.behavior import (BehaviorSystem, DrivingBehavior, EASE_OFF_REASONS,
                                EASE_OFF_MPS)
-from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker,
+from .planning.footprint import _project
+from .planning.planner import (RoutePlanner, Route, WaitingIsPointless, overtake_blocker, obstacle_radius_m,
                               nothing_is_standing_there, pass_refused, pass_options,
                               what_the_ground_says, GROUND_LOOK_M, GROUND_KEEP_M,
                               lane_change_blocker, oncoming_conflict, pull_in_side_blocker)
@@ -390,6 +391,8 @@ class WarpAV:
             print(f"[Perception] camera default unavailable ({e}) — staying on ground truth")
         self._blocked_since = None      # when STOPPED_VEHICLE began (overtake timer)
         self._overtake_point = None     # rejoin Waypoint while a pass is active
+        self._pass_base = None          # the road before the way round was drawn, while a pass is active
+        self._pass_shift, self._pass_lane_ok, self._pass_lane_why = 0.0, None, None
         self._overtake_retry_at = 0.0
 
         self._running = False
@@ -888,6 +891,7 @@ class WarpAV:
         saying yes: the go-around would not start, and the laser's own second opinion on the
         ground was switched off for the rest of the stack's life (found live 2026-09-11)."""
         self._overtake_point = None
+        self._pass_base = None
         self._overtake_retry_at = 0.0
         self._reversing = None
         self._after_reverse = None
@@ -1463,11 +1467,25 @@ class WarpAV:
             self._maybe_overtake(pose, perception, behavior_output, junction_ahead)
         except Exception as e:
             print(f"[Overtake] check failed: {e}")
+        # Go-around rejoin (2026-09-18): the way round was planned once, from a standstill 11 m
+        # short of the dead car, its ramp back pinned 8-16 m past that car and checked against
+        # things 20-27 m away that the tracker still reported as far partial boxes. Live it landed
+        # on the parked row (N-Mustang, Patrol): the van drove the ramp to 28.7 deg, stopped with
+        # its nose 0.72 m from the Patrol and stayed there, the pass still active, to the end of
+        # the run. So while a pass is active the rest of the way round is asked the same question
+        # the acceptance asked, and the pass is extended past whatever stands where it was going
+        # to rejoin (_extend_pass_past).
+        if self._overtake_point is not None:
+            try:
+                self._extend_pass_past(pose, perception)
+            except Exception as e:
+                print(f"[Overtake] extension check failed: {e}")
         if self._overtake_point is not None:
             d_rejoin = math.hypot(self._overtake_point.x - pose.x,
                                   self._overtake_point.y - pose.y)
             if d_rejoin < 4.0:
                 self._overtake_point = None
+                self._pass_base = None
                 try:
                     self.logger.log_event("overtake", "pass complete — back in lane")
                 except Exception:
@@ -3568,6 +3586,10 @@ class WarpAV:
                                               now + self.OVERTAKE_RETRY_UNSURE_S)
             return
         over_m, in_lane, on_shoulder, trial, rejoin = taken
+        # what an extension of this pass needs: the road as it was before the way round was
+        # drawn on it (the swap below replaces the very list `road` holds), the shift, the lane test
+        self._pass_base = list(road.waypoints)
+        self._pass_shift, self._pass_lane_ok, self._pass_lane_why = over_m, lane_ok, lane_why
         way = (f"squeezing past inside our own lane, {abs(over_m):.2f} m over to the "
                f"{'left' if over_m > 0 else 'right'}" if in_lane else
                f"onto the hard shoulder, {abs(over_m):.1f} m over to the right"
@@ -3593,6 +3615,65 @@ class WarpAV:
                         f"{what} standing at {lead_d:.1f} m — {way}, rejoining "
                         f"{self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
         print(f"[Overtake] {what} standing at {lead_d:.1f} m — {way}")
+
+    def _extend_pass_past(self, pose, perception):
+        """While a pass is being driven: would the van's body, slid along the REST of the way
+        round, touch something standing? Then the ramp back is going to land on it -- the
+        parked row beside the start road, measured properly only now, 20 m closer than when
+        the pass was accepted -- and the pass is extended past it: the way round is planned
+        again from here on the road as it was before the pass, already at the full shift, with
+        the blocker distance set to the far end of the thing in the way, the same shift and the
+        same lane test, and swapped in only if the same check finds the new tail clear. Up to
+        four things in a row are stepped past in one tick. Refused (route too short, no lane of
+        ours there, still touched) -> the current plan stands and the van stops as before, no
+        worse. Returns a sentence about what was done, or None."""
+        base = getattr(self, "_pass_base", None)
+        if not base or self._overtake_point is None or len(base) < 10:
+            return None
+        fp = self.footprint_blocking.footprint
+        if fp is None:
+            return None
+        pts = [(w.x, w.y) for w in base]
+        ego_arc = _project(pose.x, pose.y, pts)[0]
+        rejoin_arc = _project(self._overtake_point.x, self._overtake_point.y, pts)[0] - ego_arc
+        horizon = max(rejoin_arc, 0.0) + 2.0 * fp.half_length + 2.0
+        in_way = self.planner.pull_in_blocker(perception, self._route, pose.x, pose.y, pose.yaw,
+                                              fp, horizon_m=horizon)
+        if in_way is None:
+            return None
+        obj, dist, hit, where, box = in_way
+        what = getattr(getattr(obj, "object_type", None), "value", "thing")
+        for _ in range(4):
+            reach = (box.half_length if box is not None else obstacle_radius_m(obj))
+            along = _project(where[0], where[1], pts)[0] - ego_arc + reach
+            if along + self.planner.OVERTAKE_REJOIN_M <= rejoin_arc + 0.5:
+                return None                      # the current plan already rejoins beyond it
+            trial = Route(waypoints=list(base), total_distance=self._route.total_distance)
+            geometry = {}
+            rejoin = self.planner.plan_overtake(
+                trial, pose.x, pose.y, along, shift_m=self._pass_shift, lane_ok=self._pass_lane_ok,
+                why=geometry, lane_ok_why=self._pass_lane_why, already_over=True)
+            if rejoin is None:
+                return None                      # the road ahead will not take a longer pass
+            again = self.planner.pull_in_blocker(
+                perception, trial, pose.x, pose.y, pose.yaw, fp,
+                horizon_m=along + self.planner.OVERTAKE_REJOIN_M + 8.0)
+            if again is None:
+                self._route.waypoints = trial.waypoints      # one swap, as at acceptance
+                self._overtake_point = rejoin
+                said = (f"the way round is extended past a {what} standing {dist:.1f} m ahead "
+                        f"where it was going to rejoin, now rejoining "
+                        f"{self.planner.OVERTAKE_REJOIN_M:.0f} m beyond it")
+                try:
+                    self.logger.log_event("overtake", said)
+                except Exception:
+                    pass
+                self._record_go_around(what, dist, gate={"reason_code": "PASS_EXTENDED", "reason": said})
+                print(f"[Overtake] {said}")
+                return said
+            obj, dist, hit, where, box = again
+            what = getattr(getattr(obj, "object_type", None), "value", "thing")
+        return None
 
     def _static_vehicle_objects(self, pose):
         """Nearby static-layer parked cars as pseudo-detections (VEHICLE,
