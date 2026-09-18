@@ -1262,6 +1262,12 @@ class WarpAV:
         transient_sensor_stale = (
             perception_reason.startswith("CAMERA_STALE_")
             or perception_reason.startswith("LIDAR_STALE_")
+            # ...and the supervisor's own age-based verdicts (a reading older than it should
+            # be, not a part that has failed): one 1.17 s tick made a fresh pose read as
+            # "Localization stale (1.2 s)" and paused a mission for an operator (V2B,
+            # 2026-09-17; V1 WAV-0272). The van still stops for it this tick; a fresh
+            # reading next tick lets the same mission continue.
+            or bool(getattr(safety_output, "transient", False))
         )
 
         if (

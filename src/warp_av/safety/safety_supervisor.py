@@ -50,6 +50,11 @@ class SafetyOutput:
     # 0.0 = stop. The behaviour layer honours it (Perception V2 day 8).
     speed_cap_mps: Optional[float] = None
     failed_sensors: List[str] = field(default_factory=list)
+    #: True when the verdict is about the AGE of a reading, not a part that has failed: the
+    #: next tick may find a fresh one. The van still stops on it; the mission is not paused
+    #: for it (V2B, 2026-09-17: one 1.17 s tick read as "Localization stale (1.2 s)" and
+    #: paused a mission whose localization was fine -- V1 WAV-0272).
+    transient: bool = False
 
 
 class SafetySupervisor:
@@ -164,7 +169,7 @@ class SafetySupervisor:
                 state=SafetyState.INTERVENTION,
                 driving_allowed=False,
                 reason=f"Perception data stale ({perception_age:.1f}s) — stopping",
-                checks=checks
+                checks=checks, transient=True,
             )
         checks.append(SafetyCheck("perception", True, "Healthy"))
 
@@ -196,7 +201,7 @@ class SafetySupervisor:
                 state=SafetyState.INTERVENTION,
                 driving_allowed=False,
                 reason=f"Localization stale ({localization_age:.1f}s) — stopping",
-                checks=checks
+                checks=checks, transient=True,
             )
         checks.append(SafetyCheck("localization", True, "Healthy"))
 
