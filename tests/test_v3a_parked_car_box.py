@@ -114,17 +114,20 @@ def test_case_b_consistent_views_give_a_stable_box():
 
 # ================================================================ CASE C: reasonable, then bad, then good
 
-def test_case_c_a_run_of_merged_frames_may_show_but_the_good_views_recover():
+def test_case_c_a_run_of_merged_frames_does_not_show_when_the_track_itself_says_merge():
+    """V3A let three agreeing merged frames show as the best look for up to 63 frames, on the
+    grounds that they were genuinely observed. The Patrol tight-pass record (2026-09-17) showed
+    what that costs: three kerb-bridged 5.7 x 2.7 m frames of a 5.6 x 2.4 m Patrol stood as the
+    look for 13-18 s while the van waited beside a safe 0.84 m pass. A rectangle covering more
+    than 1.3 times the track's own median point spread (tracking.MERGED_AREA_SLACK, the planner's
+    FIT_AREA_SLACK) is a merge: never the look, and let go if it has become one."""
     frames = ([[normal_view(k)] for k in range(4)]
               + [[merged_view()] for _ in range(BOX_AGREE_NEEDED)]         # three: they confirm each other
               + [[normal_view(k)] for k in range(BOX_SUPPORT_KEPT + 6)])
     _, snaps = run(frames)
     tid = next(iter(snaps[-1]))
     widths = widths_of(snaps, tid)
-    bad = [i for i, w in enumerate(widths) if w > 2.0]
-    assert bad, "genuinely observed three times, the wide look is allowed to show"
-    assert min(bad) >= 4 and max(bad) < 4 + BOX_AGREE_NEEDED + BOX_SUPPORT_KEPT, bad   # ...and to go
-    assert len(bad) <= BOX_SUPPORT_KEPT + BOX_AGREE_NEEDED, len(bad)
+    assert all(w <= 2.0 for w in widths[3:]), [i for i, w in enumerate(widths) if w > 2.0]
     assert widths[-1] == pytest.approx(1.42, abs=0.1), widths
     assert all(w <= 1.7 for w in widths[-5:]), widths
 

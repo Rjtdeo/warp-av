@@ -835,7 +835,8 @@ def _note_size(tr: Track, o: dict) -> None:
     tr.height_m = _median([s[2] for s in tr._sizes])
     # the heading (and box) of the sighting nearest that middle length, so it matches the
     # shape reported
-    usable = [s for s in tr._sizes if not _degenerate(s[1], tr)] or tr._sizes   # V3B: not a line among bodies
+    usable = ([s for s in tr._sizes if not _degenerate(s[1], tr) and not _merged(s[6], s[7], tr)]   # V3B: not a line among
+              or [s for s in tr._sizes if not _degenerate(s[1], tr)] or tr._sizes)                    # bodies; nor a merge
     _take_shape_from(tr, min(usable, key=lambda s: abs(s[0] - tr.length_m)))
     spread = max(lengths) - min(lengths)
     tr.size_uncertain = bool(spread > expected_size_spread_m(tr.range_m))
@@ -882,6 +883,31 @@ DEGENERATE_WIDTH_FRACTION = 0.5
 DEGENERATE_MIN_GAP_M = 0.2
 
 
+# Patrol tight-pass (2026-09-17): a rectangle that claims far more ground than the track's own
+# median point spread is a MERGE -- kerb, ground or roof points bridged into the cluster for a
+# frame -- not the thing. The planner already refuses such a box (planner.fit_is_believable,
+# the same 1.3 slack) and falls back to a worse picture, the spread on the centroid at the
+# median heading, which blocked a safe 0.84 m pass beside the Nissan Patrol for 13-18 s: the
+# bridged frames agreed with each other, won the best look on area, and lived until 60 honest
+# views had gone by. So the tracker asks the same question where the look is chosen.
+MERGED_AREA_SLACK = 1.3
+
+
+def _merged(length: float, width: float, tr: "Track") -> bool:
+    """Does this rectangle cover more than MERGED_AREA_SLACK times the track's median point
+    spread? Only once there is a median to ask (SIZE_MIN_FOR_MEDIAN sightings), and only when
+    that median is a body: a track whose median width is a rail's (VEHICLE_MIN_WIDTH_FAR_M) or
+    less is a far line still becoming a body (V3B), and a body arriving over it is growth, not
+    a merge."""
+    if len(getattr(tr, "_sizes", ())) < SIZE_MIN_FOR_MEDIAN:
+        return False
+    ml, mw = float(getattr(tr, "length_m", 0.0) or 0.0), float(getattr(tr, "width_m", 0.0) or 0.0)
+    length, width = float(length or 0.0), float(width or 0.0)
+    if ml <= 0.0 or mw <= VEHICLE_MIN_WIDTH_FAR_M or length <= 0.0 or width <= 0.0:
+        return False
+    return length * width > MERGED_AREA_SLACK * ml * mw
+
+
 def _degenerate(width: float, tr: "Track") -> bool:
     width = float(width or 0.0)
     median = float(getattr(tr, "width_m", 0.0) or 0.0)
@@ -914,7 +940,7 @@ def _note_best_box(tr: "Track", o: dict) -> None:
     if len(tr._box_history) > BOX_SUPPORT_KEPT:
         tr._box_history.pop(0)
     confirmed = [v for v in tr._box_views
-                 if not _degenerate(v[4], tr)
+                 if not _degenerate(v[4], tr) and not _merged(v[3], v[4], tr)
                  and sum(1 for w in tr._box_views if _agree(v, w)) >= BOX_AGREE_NEEDED]
     # The best look stands only while the views still bear it out (V3A). It used to stand for
     # ever: once a merged view had been confirmed, no later view could replace it, because
@@ -922,7 +948,7 @@ def _note_best_box(tr: "Track", o: dict) -> None:
     # odd or partial sightings changes nothing, and a look nothing has agreed with for
     # BOX_SUPPORT_KEPT sightings is let go.
     if tr.best_box is not None and \
-            (_degenerate(tr.best_box[4], tr)
+            (_degenerate(tr.best_box[4], tr) or _merged(tr.best_box[3], tr.best_box[4], tr)
              or sum(1 for w in tr._box_history if _agree(tr.best_box, w)) < BOX_AGREE_NEEDED):
         tr.best_box = None
     if confirmed:

@@ -123,12 +123,21 @@ def test_case_e_the_v3a_merged_frame_is_still_never_the_car():
     assert all(w <= 1.7 for w in widths_of(snaps, tid))
 
 
-def test_case_e2_the_fuller_look_from_behind_still_stands_alongside():
+def test_case_e2_the_fuller_look_from_behind_stands_until_the_track_outvotes_it():
+    """V3B: the fuller look (1.85 wide, seen six times from behind) is not degenerate against the
+    1.30 m side views and was to stand alongside for ever. Patrol tight-pass (2026-09-17): a look
+    that the track's own medians outvote by more than 1.3 in area is let go as a merge would be,
+    since the tracker cannot tell a remembered far side from bridged kerb; the planner floors a
+    vehicle's half-width at 0.90 m in either case, so the pass is judged the same. It stands while
+    the full views hold the median (V3A case D: eight full, three partial) and goes once twenty
+    partial views have made 4.2 x 1.3 the thing."""
     full = [[sighting(8.0, 2.0, 4.60, 1.85, 0.0, off=(0.1, 0.0))] for _ in range(6)]
     partial = [[sighting(8.0, 2.0, 4.20, 1.30, 0.5, off=(0.1, 0.3))] for _ in range(20)]
     _, snaps = run(full + partial)
     tid = next(iter(snaps[-1]))
-    assert snaps[-1][tid][1] == pytest.approx(1.85, abs=0.05)         # 1.85 is not degenerate against 1.3
+    widths = widths_of(snaps, tid)
+    assert widths[8] == pytest.approx(1.85, abs=0.05), widths              # still the thing after two partials
+    assert snaps[-1][tid][1] == pytest.approx(1.30, abs=0.05), widths      # outvoted: the side view it sees
 
 
 # ================================================================ CASE F: genuinely thin things
