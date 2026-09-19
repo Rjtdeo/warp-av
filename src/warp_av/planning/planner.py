@@ -1154,7 +1154,14 @@ class RoutePlanner:
             return True                                         # nothing to redraw
         cmap = getattr(self, "carla_map", None)
         if cmap is not None:
-            for (_p, nx, ny) in (moves[0], moves[len(moves) // 2], moves[-1]):
+            # Is the old lane there all the way to where the van has moved over? Asked of the OLD
+            # LINE between the van and the ramp's end -- not of the points this redraw moves: a
+            # redraw that only slides the ramp on by a metre moves ramp points, and a ramp point
+            # sits between two lanes by design (first live run, 2026-09-18: the deferral held once
+            # at the spawn and was refused on every tick after).
+            ahead = [p_ for p_ in range(1, k_new) if ego_arc < old_arcs[p_] <= new_end_arc]
+            for p_ in sorted({ahead[0], ahead[len(ahead) // 2], ahead[-1]}) if ahead else ():
+                nx, ny = old_line[p_]
                 try:
                     wp = cmap.get_waypoint(carla.Location(x=float(nx), y=float(ny), z=0.3),
                                            project_to_road=True, lane_type=carla.LaneType.Driving)

@@ -177,6 +177,27 @@ def test_case_e_no_deferral_where_the_old_lane_ends_on_the_map(monkeypatch):
     assert p2.defer_lane_change(r2, 20.0, 0.0, start_ahead_m=25.0) is False
 
 
+def test_a_deferral_holds_tick_after_tick_with_a_map_that_only_knows_lane_centres(monkeypatch):
+    """First live run (2026-09-18): the deferral held once at the spawn and was refused on every later tick.
+    The map check sampled the points the redraw moved -- and a redraw that slides the ramp on by a metre
+    moves only ramp points, which sit between the lanes by design. With a map that projects everything to
+    a lane centre, the redraw must keep holding as the van drives on."""
+    import warp_av.planning.planner as PL
+    import types
+    monkeypatch.setattr(PL, "carla", types.SimpleNamespace(Location=lambda x, y, z: types.SimpleNamespace(x=x, y=y, z=z),
+                                                          LaneType=types.SimpleNamespace(Driving="driving")), raising=False)
+    r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120))
+    p = planner(); p.carla_map = _Lane(x_end=200.0)
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) is True
+    first_switch = r.lane_changes[0].index
+    for x in (21.0, 22.0, 24.0, 27.0, 31.0):                      # the van drives on, the lane still busy
+        assert p.defer_lane_change(r, x, 0.0, start_ahead_m=25.0) is True, x
+        assert p.next_lane_change(r, x, 0.0, 0.0, within_m=25.0) is None, x
+    assert r.lane_changes[0].index > first_switch                 # and the switch kept moving on
+    for w in r.waypoints:                                         # every point still on one of the two lanes, or the ramp between
+        assert -0.2 <= w.y <= 3.7
+
+
 def test_a_deferral_on_a_bend_keeps_the_lanes_parallel():
     """A route that turns: the redrawn old-lane stretch must sit one lane-width off the new-lane arc all along."""
     R = 30.0
