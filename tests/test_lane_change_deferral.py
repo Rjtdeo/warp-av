@@ -263,6 +263,14 @@ def test_a_move_over_and_the_route_s_move_back_are_dropped_together(monkeypatch)
     assert r.lane_changes == []
     assert all(abs(w.y) < 1e-6 and w.lane_id == -1 for w in r.waypoints), [(w.x, w.y) for w in r.waypoints if abs(w.y) > 1e-6][:5]
     assert p.next_lane_change(r, 45.0, 0.0, 0.0, within_m=200.0) is None
+    # the move back measured small: on the rig the map's step back at road 10 is a diagonal on a curve and the
+    # smoother records it as +1.45 m, not the lane width (live run gw5_01, 2026-09-18) -- still the pair, by lane id
+    r4 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, back_at=90.0))
+    r4.lane_changes[1].lateral_m = -1.45
+    p4 = planner(); p4.carla_map = _Lane(x_end=300.0)
+    assert p4.defer_lane_change(r4, 20.0, 0.0, start_ahead_m=25.0) == "deferred"
+    assert p4.defer_lane_change(r4, 45.0, 0.0, start_ahead_m=25.0) == "dropped"
+    assert r4.lane_changes == [] and all(abs(w.y) < 0.3 for w in r4.waypoints), [(w.x, round(w.y, 2)) for w in r4.waypoints if abs(w.y) > 0.3][:5]
     # the same way twice (-1 -> -2 -> -3): not a pair
     wps = [Waypoint(x=i * 2.0, y=(7.0 if i * 2.0 >= 90.0 else 3.5 if i * 2.0 >= 40.0 else 0.0), yaw=0.0, road_id=1,
                     lane_id=(-3 if i * 2.0 >= 90.0 else -2 if i * 2.0 >= 40.0 else -1)) for i in range(120)]

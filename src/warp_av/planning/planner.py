@@ -1207,8 +1207,13 @@ class RoutePlanner:
                 want_start_arc = exit_arc + 2.0                 # the ramp begins after the junction
                 want_end_arc = want_start_arc + lc.over_m
         if nxt is not None and want_end_arc > next_ramp_arc - 2.0:
-            # as far as the next change: drop both when it is the move back, else the old wait
-            if abs(nxt.lateral_m + lc.lateral_m) > 0.1 * abs(lc.lateral_m):
+            # as far as the next change: drop both when it is the move BACK -- the other way, into
+            # the lane this move leaves, by lane id (the smoother's measured step is not a lane
+            # width where the map's step is a diagonal on a curve: +1.45 m at road 10, live) --
+            # else the old wait
+            back_to = wps[nxt.index].lane_id if nxt.index < len(wps) else None
+            left = wps[max(lc.index - 1, 0)].lane_id
+            if nxt.lateral_m * lc.lateral_m >= 0.0 or back_to is None or left is None or back_to != left:
                 return False
             return self._drop_lane_change_pair(route, lc, nxt, old_line, old_arcs, normals, ego_arc, blocks, keep_in_step)
         if want_end_arc <= end_arc + 0.5 and not crossed:
