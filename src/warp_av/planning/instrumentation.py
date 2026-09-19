@@ -216,6 +216,10 @@ class PlannerDecision:
     blocker_kind: Optional[str] = None
     blocker_distance_m: Optional[float] = None
     blocker_lateral_m: Optional[float] = None
+    #: junction stopped-body (2026-09-18): the van's BARE body (no margin) would run into the
+    #: blocker's measured rectangle -- a body in the way, not a margin brushed. The ground's
+    #: "seen free" release may lift a margin-only block, never one of these.
+    blocker_touches_body: bool = False
     #: how much was looked at, so a cheap tick and a busy one can be told apart
     objects_considered: int = 0
     objects_in_corridor: int = 0
@@ -295,6 +299,7 @@ class PlannerDecision:
                                       else round(self.blocker_distance_m, 1)),
                "blocker_lateral_m": (None if self.blocker_lateral_m is None
                                      else round(self.blocker_lateral_m, 2)),
+               "blocker_touches_body": bool(self.blocker_touches_body),
                "objects_considered": self.objects_considered,
                "objects_in_corridor": self.objects_in_corridor,
                "route_points_used": self.route_points_used,

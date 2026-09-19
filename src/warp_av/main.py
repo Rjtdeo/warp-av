@@ -4013,6 +4013,14 @@ class WarpAV:
         if not (front <= blocker_m <= front + look):
             self._ground_seen_free = None
             return
+        # Junction stopped-body (2026-09-18, WAV-0386): a measured rectangle the van's BARE body
+        # would run into is not "a body the corridor check drew on empty ground". The ground map
+        # saw a truck's end intruding 0.1 m into the van's line as nought or one cell and read the
+        # strip free at 2.6-4.2 m; it cannot vouch against a body it can barely see. Margin-only
+        # touches (a parked car beside the lane, a box a hand too wide) are still released.
+        if getattr(path, "blocker_touches_body", False):
+            self._ground_seen_free = None
+            return
         if not nothing_is_standing_there(what, path.closest_speed_mps, counts):
             return
         free, _, unseen = counts

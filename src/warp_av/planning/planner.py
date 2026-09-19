@@ -1856,9 +1856,11 @@ class RoutePlanner:
                 heading_reach_m = max(FOOTPRINT_STATIONARY_REACH_M, float(edge_reach_m))
             except (TypeError, ValueError):
                 heading_reach_m = FOOTPRINT_STATIONARY_REACH_M
+        # the path the van is actually steering along, as a polyline (task 3); empty when there is none
+        steer_line = _polyline(intended_path) if intended_path else []
         heading_line = None
         if footprint is not None:
-            heading_line = _polyline(intended_path) if intended_path else []
+            heading_line = list(steer_line)
             if len(heading_line) < 2:
                 heading_line = [(ego_x, ego_y),
                                 (ego_x + cos_y * (heading_reach_m + 2.0 * footprint.half_length),
@@ -1926,11 +1928,13 @@ class RoutePlanner:
         passing_obj = None  # a parked vehicle being passed with care: (obj, along, lat)
         detail = []
 
-        def _note_block(rule, obj_, along_, lat_):
-            """Remember the NEAREST blocker and the rule that caught it."""
+        def _note_block(rule, obj_, along_, lat_, touches_body=False):
+            """Remember the NEAREST blocker and the rule that caught it. touches_body: the van's
+            BARE body (no safety margin) would run into the measured rectangle -- a body in the
+            way, not a margin brushed (junction stopped-body, 2026-09-18)."""
             nonlocal why, blocker
             if blocker is None or max(0.0, along_) < max(0.0, blocker[1]):
-                why, blocker = rule, (obj_, along_, lat_)
+                why, blocker = rule, (obj_, along_, lat_, bool(touches_body))
 
         for obj in perception.objects:
             seen += 1
@@ -1962,7 +1966,8 @@ class RoutePlanner:
             #
             # The object's own size counts, so a lorry whose middle is level with our door
             # but whose nose reaches past our bumper still blocks.
-            nose_gap = (along - front_bumper_m) + reach_toward_us_m(obj)
+            body_reach = reach_toward_us_m(obj)
+            nose_gap = (along - front_bumper_m) + body_reach
             reaches_our_nose = nose_gap > 0.0
             # Planning V2: does the swept body decide this object's hard-block?
             # Only where the path it would sweep is a plain road: the body must reach the
@@ -1970,14 +1975,40 @@ class RoutePlanner:
             # by. See plain_road_m above for what a turn does to it.
             sweep_on_plain_road = (plain_road_m is None
                                    or along + footprint_reach <= plain_road_m)
+            # Junction stopped-body (2026-09-18, WAV-0386 x3: 0.32 m, 1.47 m, then a collision at
+            # 3.2 m/s with a truck lying across a STRAIGHT path through junction 675). Two proxies
+            # kept that truck out of the sweep -- the only rule that reads a body's shape -- and
+            # every centre band then skipped it (its centre 2.5-3.3 m off the line, its end 0.1 m
+            # from it): "it stands in a junction / past the plain road", which stands for "the
+            # ROUTE POLYLINE sweep is not trusted where the route turns" (604837b: a rigid 6.5 m
+            # body swept along a coarse corner reaches 2.7-5.9 m wide), and "its centre is within
+            # 2.6 m of the line", which stands for "its body could reach the swept band".
+            # So: where the route sweep is not trusted, the body is swept along the path the van
+            # is actually steering (the same intended path the early slow uses; a real arc, not a
+            # coarse corner) when there is one -- with none, nothing changes; and a body is a
+            # candidate when its OWN reach brings it within the bound, the sweep deciding exactly.
+            # On a plain road nothing changes: the route sweep, its 2.6 m centre bound (replaying
+            # the 61 sweep records with the body's reach admitted there put the second bend car
+            # and every shoulder prop into the sweep -- 473 new blocks, the P-B05 hold gone).
+            # Vehicles only along the steered path: the class whose body the ground map cannot see
+            # (a truck's side is above it), the class the early slow reads, the class this is for.
+            # Replaying the 61 sweep records with every stationary class admitted added exactly two
+            # single-tick blocks outside WAV-0386, both on 3.5-3.8 m tall canopy "obstacles" the
+            # van drives under at a corner -- a height the 2-D sweep cannot judge.
+            route_sweep_ok = not near_junction and sweep_on_plain_road
+            steered_sweep = (not route_sweep_ok and len(steer_line) >= 2
+                             and getattr(getattr(obj, "object_type", None), "value", None) == "vehicle"
+                             and lat - body_reach <= SWEEP_MAX_LATERAL_M)
             sweep_decides = (footprint is not None and stationary
-                             and not near_junction and sweep_on_plain_road
-                             and lat <= SWEEP_MAX_LATERAL_M)
+                             and ((route_sweep_ok and lat <= SWEEP_MAX_LATERAL_M) or steered_sweep))
+            sweep_line = wps if route_sweep_ok else steer_line
             # Old rules never look beyond 2.20 m from the line. The swept body
             # can reach further in a bend (the outer corner swings wide), so in
             # footprint mode a stationary object is kept for the sweep up to
-            # the van's own reach; the sweep itself decides precisely.
-            lat_limit = (footprint.swept_half_length + 1.0) if sweep_decides else 2.20
+            # the van's own reach; the sweep itself decides precisely. Along the
+            # steered path a body is kept as far out as its own reach allows.
+            lat_limit = ((SWEEP_MAX_LATERAL_M + body_reach) if steered_sweep
+                         else (footprint.swept_half_length + 1.0) if sweep_decides else 2.20)
             if (off_route and stationary and not near_junction and obj.x > -1.0
                     and (plain_road_m is None or obj.x + footprint_reach <= plain_road_m)):
                 # the van's own body, straight ahead from where it really is (see off_route)
@@ -2146,17 +2177,18 @@ class RoutePlanner:
                 # a kerb needs tyre clearance, not the full safety margin (KERB_CLEARANCE_M)
                 body = (replace(footprint, safety_margin=min(footprint.safety_margin, KERB_CLEARANCE_M))
                         if kerb_like(obj) else footprint)
-                hit = sweep_conflict(wps, (ego_x, ego_y), body, where,
+                sweep_horizon = FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length
+                hit = sweep_conflict(sweep_line, (ego_x, ego_y), body, where,
                                      obstacle_radius=radius,
-                                     horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length,
+                                     horizon_m=sweep_horizon,
                                      obstacle_box=box)
                 passing = False
                 if hit is not None and can_pass_with_care(obj):
                     # only the margin in the way? then pass it slowly (PASS_CLEARANCE_M)
                     tight = replace(footprint, safety_margin=min(footprint.safety_margin, PASS_CLEARANCE_M))
-                    passing = sweep_conflict(wps, (ego_x, ego_y), tight, where,
+                    passing = sweep_conflict(sweep_line, (ego_x, ego_y), tight, where,
                                              obstacle_radius=radius,
-                                             horizon_m=FOOTPRINT_STATIONARY_REACH_M + footprint.swept_half_length,
+                                             horizon_m=sweep_horizon,
                                              obstacle_box=box) is None
                 if passing:
                     # seen, and the nearest thing ahead, so the slow zone applies -- not a stop
@@ -2178,7 +2210,13 @@ class RoutePlanner:
                         closest_speed = obj.speed
                         closest_lat = round(lat, 2)
                     blocked = True
-                    _note_block(BLOCKED_SWEPT_PATH, obj, along, lat)
+                    # would the BARE body run into it, or is only the margin brushed? The ground's
+                    # "seen free" release may lift the latter, never the former (main.py).
+                    bare = replace(footprint, safety_margin=0.0)
+                    touches = sweep_conflict(sweep_line, (ego_x, ego_y), bare, where,
+                                             obstacle_radius=radius, horizon_m=sweep_horizon,
+                                             obstacle_box=box) is not None
+                    _note_block(BLOCKED_SWEPT_PATH, obj, along, lat, touches_body=touches)
 
         # The path record (Planning V2 task 2): what was decided, the numbers the behaviour
         # acts on, and the evidence. RETURNED, never written into perception, so perception
@@ -2194,7 +2232,7 @@ class RoutePlanner:
                                    route_points_used=n,
                                    candidates=detail)
         if blocked and blocker is not None:
-            obj_, along_, lat_ = blocker
+            obj_, along_, lat_, touches_ = blocker
             kind = getattr(getattr(obj_, "object_type", None), "value",
                            str(getattr(obj_, "object_type", "")) or None)
             # A person or someone riding is worth its own reason: "the van stopped" and
@@ -2205,6 +2243,7 @@ class RoutePlanner:
             decision.blocker_kind = kind
             decision.blocker_distance_m = max(0.0, along_)
             decision.blocker_lateral_m = lat_
+            decision.blocker_touches_body = bool(touches_)
             decision.used_footprint = (why == BLOCKED_SWEPT_PATH)
         elif blocked:
             # blocked with nothing recorded should be impossible; say so rather than
