@@ -239,6 +239,10 @@ def test_a_deferral_crosses_a_junction_the_map_says_the_old_lane_runs_through(mo
     for w in r.waypoints:
         if w.x < 78.0:
             assert abs(w.y) < 1e-6 and w.lane_id == -1, (w.x, w.y)                   # the old lane, through the junction
+    # the map's junction reaching one waypoint past the route's flags (first live run on b9faaad): still crosses
+    r1 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0))
+    p1 = planner(); p1.carla_map = _Lane(x_end=300.0, junction=(60.0, 78.0), runs_through=True)
+    assert p1.defer_lane_change(r1, 20.0, 0.0, start_ahead_m=25.0) == "deferred"
     # asked about a junction the old lane does NOT run through: the old wait stays
     r2 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0))
     p2 = planner(); p2.carla_map = _Lane(x_end=300.0, junction=(60.0, 76.0), runs_through=False)

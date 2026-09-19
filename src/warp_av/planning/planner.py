@@ -1115,8 +1115,16 @@ class RoutePlanner:
             def at(q):
                 return cmap.get_waypoint(carla.Location(x=float(q[0]), y=float(q[1]), z=0.3),
                                          project_to_road=True, lane_type=carla.LaneType.Driving)
-            want = at(old_line[j1 + 1])
-            if want is None or want.is_junction:
+            # the lane to come out on: the first old-line point past the route's junction waypoints
+            # that the map itself puts outside the junction (the route's flags and the map's edge
+            # disagree by a waypoint: first live run on b9faaad, 2026-09-18, refused at 675)
+            want = None
+            for q in old_line[j1 + 1:j1 + 8]:
+                w = at(q)
+                if w is not None and not w.is_junction:
+                    want = w
+                    break
+            if want is None:
                 return False
             want_key = (want.road_id, want.lane_id)
             frontier, steps = [(at(old_line[j0 - 1]), False)], 0
