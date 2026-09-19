@@ -722,16 +722,19 @@ class WarpAV:
         # own. The move is redrawn LANE_CHANGE_LOOK_M further on and the van drives its lane at
         # the speed the behaviour asked for (planner.defer_lane_change says when it may not).
         base = getattr(self, "_route_base", None)           # the road the parking spot is drawn on: moved with it
-        if self.planner.defer_lane_change(self._route, pose.x, pose.y, start_ahead_m=self.LANE_CHANGE_LOOK_M,
-                                          keep_in_step=[base] if base else ()):
-            if time.time() - getattr(self, "_gap_deferred_noted_at", 0.0) > 5.0:
+        how = self.planner.defer_lane_change(self._route, pose.x, pose.y, start_ahead_m=self.LANE_CHANGE_LOOK_M,
+                                             keep_in_step=[base] if base else ())
+        if how:
+            if how == "dropped" or time.time() - getattr(self, "_gap_deferred_noted_at", 0.0) > 5.0:
                 self._gap_deferred_noted_at = time.time()
                 self._note_move(LANE_CHANGE_DEFERRED,
                                 f"the route moves {'right' if side > 0 else 'left'} in {start_m:.0f} m, but "
-                                f"{why} — driving on in this lane, the move redrawn "
-                                f"{self.LANE_CHANGE_LOOK_M:.0f} m further on")
+                                f"{why} — driving on in this lane, "
+                                + (f"the move redrawn {self.LANE_CHANGE_LOOK_M:.0f} m further on" if how == "deferred"
+                                   else "and this lane runs on past where the route would have come back: "
+                                        "the move over and the move back are dropped"))
             self._gap_wait_since = None
-            behavior_output.reason += f" | lane change deferred: {why}"
+            behavior_output.reason += f" | lane change {how}: {why}"
             return
         if getattr(self, "_gap_wait_since", None) is None:
             self._gap_wait_since = time.time()

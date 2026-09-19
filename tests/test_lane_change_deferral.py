@@ -35,14 +35,17 @@ def planner():
     return RoutePlanner.__new__(RoutePlanner)
 
 
-def stepped_route(change_at=40.0, over=3.5, n=80, junction_from=None):
-    """Straight along +x, stepping `over` metres to the right at `change_at` (a map-style step)."""
+def stepped_route(change_at=40.0, over=3.5, n=80, junction_from=None, junction_to=None, back_at=None):
+    """Straight along +x, stepping `over` metres to the right at `change_at` (a map-style step) and, with
+    `back_at`, stepping back at that x; a junction from `junction_from` to `junction_to` (or the end)."""
     wps = []
     for i in range(n):
         x = i * 2.0
-        wps.append(Waypoint(x=x, y=(over if x >= change_at else 0.0), yaw=0.0,
-                            road_id=1, lane_id=(-2 if x >= change_at else -1),
-                            is_junction=(junction_from is not None and x >= junction_from)))
+        over_here = change_at <= x < (back_at if back_at is not None else 1e9)
+        in_j = junction_from is not None and x >= junction_from and (junction_to is None or x < junction_to)
+        wps.append(Waypoint(x=x, y=(over if over_here else 0.0), yaw=0.0,
+                            road_id=(7 if in_j else 1 if x < (junction_from or 1e9) else 2),
+                            lane_id=(-2 if over_here else -1), is_junction=in_j))
     return Route(waypoints=wps)
 
 
@@ -105,7 +108,7 @@ def test_a_change_under_way_is_not_asked_again():
 def test_case_b_a_deferred_change_keeps_the_van_in_its_lane_and_the_switch_moves_on():
     r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120))
     p = planner()
-    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) is True
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "deferred"
     lc = r.lane_changes[0]
     wanted = 20.0 + 25.0 + lc.over_m                     # the ramp's end, as asked: 25 m on, then the ramp
     # the switch is the first point past that: never sooner, and within two waypoint spacings
@@ -131,12 +134,14 @@ def test_case_e_no_deferral_when_the_switch_would_pass_the_next_junction():
 
 
 def test_case_e_no_deferral_into_the_next_lane_changes_ramp_or_across_a_junction_before_the_switch():
-    # right at 40 m, back left at 70 m: deferring the first by 25 m would run its ramp into the second's
+    # right at 40 m, back left at 70 m: deferring the first by 25 m runs its ramp into the second's -- the
+    # second is the move back, so the pair is dropped (the lane runs on); never redrawn into its ramp
     wps = [Waypoint(x=i * 2.0, y=(3.5 if 40.0 <= i * 2.0 < 70.0 else 0.0), yaw=0.0, road_id=1,
                     lane_id=(-2 if 40.0 <= i * 2.0 < 70.0 else -1)) for i in range(120)]
     r = Route(waypoints=wps)
     assert planner().smooth_lane_changes(r) == 2
-    assert planner().defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) is False
+    assert planner().defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "dropped"
+    assert r.lane_changes == [] and all(abs(w.y) < 1e-6 for w in r.waypoints)
     # a junction between the van and the switch (30-36 m): the redrawn ramp would cross it
     r2 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120))
     for i, w in enumerate(r2.waypoints):
@@ -153,15 +158,31 @@ def test_case_e_no_deferral_once_the_move_has_begun_or_past_the_route_end():
 
 
 class _Lane:
-    """A stand-in CARLA map: driving lanes at y = 0 and y = 3.5 only, up to x_end."""
-    def __init__(self, x_end):
-        self.x_end = x_end
+    """A stand-in CARLA map: driving lanes at y = 0 (lane -1) and y = 3.5 (lane -2) only, up to x_end; a junction
+    between x = junction[0] and junction[1] whose lane links carry lane -1 through it only if runs_through."""
+    def __init__(self, x_end, junction=None, runs_through=True):
+        self.x_end, self.junction, self.runs_through = x_end, junction, runs_through
+
+    def _wp(self, x, y):
+        import types
+        j0, j1 = self.junction or (1e9, 1e9)
+        in_j = j0 <= x < j1
+        road = 7 if in_j else 1 if x < j0 else 2
+        lane = -1 if y == 0.0 else -2
+
+        def nxt(d):
+            nx = x + d
+            if nx > self.x_end:
+                return []
+            if lane == -1 and not self.runs_through and j0 <= nx < j1:
+                return []                                     # lane -1 ends in the junction
+            return [self._wp(nx, y)]
+        return types.SimpleNamespace(road_id=road, lane_id=lane, is_junction=in_j, next=nxt,
+                                     transform=types.SimpleNamespace(location=types.SimpleNamespace(x=x, y=y)))
 
     def get_waypoint(self, loc, project_to_road=True, lane_type=None):
-        import types
         y = 0.0 if abs(loc.y) < abs(loc.y - 3.5) else 3.5
-        x = min(loc.x, self.x_end)
-        return types.SimpleNamespace(transform=types.SimpleNamespace(location=types.SimpleNamespace(x=x, y=y)))
+        return self._wp(min(loc.x, self.x_end), y)
 
 
 def test_case_e_no_deferral_where_the_old_lane_ends_on_the_map(monkeypatch):
@@ -171,7 +192,7 @@ def test_case_e_no_deferral_where_the_old_lane_ends_on_the_map(monkeypatch):
                                                           LaneType=types.SimpleNamespace(Driving="driving")), raising=False)
     r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120))
     p = planner(); p.carla_map = _Lane(x_end=200.0)
-    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) is True
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "deferred"
     r2 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120))
     p2 = planner(); p2.carla_map = _Lane(x_end=50.0)              # the old lane stops at x = 50
     assert p2.defer_lane_change(r2, 20.0, 0.0, start_ahead_m=25.0) is False
@@ -188,14 +209,78 @@ def test_a_deferral_holds_tick_after_tick_with_a_map_that_only_knows_lane_centre
                                                           LaneType=types.SimpleNamespace(Driving="driving")), raising=False)
     r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120))
     p = planner(); p.carla_map = _Lane(x_end=200.0)
-    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) is True
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "deferred"
     first_switch = r.lane_changes[0].index
     for x in (21.0, 22.0, 24.0, 27.0, 31.0):                      # the van drives on, the lane still busy
-        assert p.defer_lane_change(r, x, 0.0, start_ahead_m=25.0) is True, x
+        assert p.defer_lane_change(r, x, 0.0, start_ahead_m=25.0) == "deferred", x
         assert p.next_lane_change(r, x, 0.0, 0.0, within_m=25.0) is None, x
     assert r.lane_changes[0].index > first_switch                 # and the switch kept moving on
     for w in r.waypoints:                                         # every point still on one of the two lanes, or the ramp between
         assert -0.2 <= w.y <= 3.7
+
+
+def _fake_carla(monkeypatch):
+    import warp_av.planning.planner as PL
+    import types
+    monkeypatch.setattr(PL, "carla", types.SimpleNamespace(Location=lambda x, y, z: types.SimpleNamespace(x=x, y=y, z=z),
+                                                          LaneType=types.SimpleNamespace(Driving="driving")), raising=False)
+
+
+def test_a_deferral_crosses_a_junction_the_map_says_the_old_lane_runs_through(monkeypatch):
+    """Five live runs (2026-09-18): the move pushed up to junction 675 became a stop-and-wait 30 m before it, in a
+    live lane, with a car behind -- while lane -2 runs straight through 675 to the goal. With the map's lane links
+    saying so, the ramp lands after the junction; it is never drawn inside it."""
+    _fake_carla(monkeypatch)
+    r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0))
+    p = planner(); p.carla_map = _Lane(x_end=300.0, junction=(60.0, 76.0), runs_through=True)
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "deferred"      # 20 + 25 + 18 = 63: into the junction
+    lc = r.lane_changes[0]
+    assert r.waypoints[lc.index].x >= 76.0 + 2.0 + lc.over_m                        # the switch after the junction and a ramp
+    for w in r.waypoints:
+        if w.x < 78.0:
+            assert abs(w.y) < 1e-6 and w.lane_id == -1, (w.x, w.y)                   # the old lane, through the junction
+    # asked about a junction the old lane does NOT run through: the old wait stays
+    r2 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0))
+    p2 = planner(); p2.carla_map = _Lane(x_end=300.0, junction=(60.0, 76.0), runs_through=False)
+    assert p2.defer_lane_change(r2, 20.0, 0.0, start_ahead_m=25.0) is False
+    assert [w.y for w in r2.waypoints] == [w.y for w in smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0)).waypoints]
+
+
+def test_a_move_over_and_the_route_s_move_back_are_dropped_together(monkeypatch):
+    """The route steps right at 40 m and back left at 90 m: deferred as far as the move back, both go, and the van
+    stays in its lane -- the lane runs on past both. Two moves the SAME way are not a pair: the old wait stays."""
+    _fake_carla(monkeypatch)
+    r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, back_at=90.0))
+    assert [round(c.lateral_m, 1) for c in r.lane_changes] == [3.5, -3.5]
+    p = planner(); p.carla_map = _Lane(x_end=300.0)
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "deferred"      # 63 m: short of the move back's ramp (70)
+    assert len(r.lane_changes) == 2
+    assert p.defer_lane_change(r, 45.0, 0.0, start_ahead_m=25.0) == "dropped"       # 88 m: as far as the move back
+    assert r.lane_changes == []
+    assert all(abs(w.y) < 1e-6 and w.lane_id == -1 for w in r.waypoints), [(w.x, w.y) for w in r.waypoints if abs(w.y) > 1e-6][:5]
+    assert p.next_lane_change(r, 45.0, 0.0, 0.0, within_m=200.0) is None
+    # the same way twice (-1 -> -2 -> -3): not a pair
+    wps = [Waypoint(x=i * 2.0, y=(7.0 if i * 2.0 >= 90.0 else 3.5 if i * 2.0 >= 40.0 else 0.0), yaw=0.0, road_id=1,
+                    lane_id=(-3 if i * 2.0 >= 90.0 else -2 if i * 2.0 >= 40.0 else -1)) for i in range(120)]
+    r3 = Route(waypoints=wps); planner().smooth_lane_changes(r3)
+    p3 = planner(); p3.carla_map = _Lane(x_end=300.0)
+    assert p3.defer_lane_change(r3, 20.0, 0.0, start_ahead_m=25.0) == "deferred"     # 63 m: short of the next ramp (70)
+    assert p3.defer_lane_change(r3, 45.0, 0.0, start_ahead_m=25.0) is False          # 88 m: into it, and not a pair
+    assert len(r3.lane_changes) == 2
+
+
+def test_the_pair_is_dropped_across_a_junction_the_old_lane_runs_through_and_never_without_a_map(monkeypatch):
+    """The WAV-0148 shape: over before the junction, back after it."""
+    _fake_carla(monkeypatch)
+    r = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0, back_at=110.0))
+    p = planner(); p.carla_map = _Lane(x_end=300.0, junction=(60.0, 76.0), runs_through=True)
+    # from 20 m: 20 + 25 + 18 = 63 reaches the junction; through it the ramp would begin at 78 and end at 96,
+    # past the move back's ramp (90): the pair goes
+    assert p.defer_lane_change(r, 20.0, 0.0, start_ahead_m=25.0) == "dropped"
+    assert r.lane_changes == [] and all(abs(w.y) < 1e-6 for w in r.waypoints)
+    r2 = smoothed(stepped_route(change_at=40.0, over=3.5, n=120, junction_from=60.0, junction_to=76.0, back_at=110.0))
+    assert planner().defer_lane_change(r2, 20.0, 0.0, start_ahead_m=25.0) is False     # no map: a junction is a wall
+    assert len(r2.lane_changes) == 2
 
 
 def test_a_deferral_on_a_bend_keeps_the_lanes_parallel():
@@ -216,7 +301,7 @@ def test_a_deferral_on_a_bend_keeps_the_lanes_parallel():
     assert len(r.lane_changes) == 1 and r.lane_changes[0].lateral_m == pytest.approx(-3.5, abs=0.2)   # the outer lane is to the left
     p = planner()
     # from point 4 (8 m along) the ramp begins 20 m on; asked to begin 40 m on, it moves by 20 m
-    assert p.defer_lane_change(r, 2.0 * 4, r.waypoints[4].y, start_ahead_m=40.0) is True
+    assert p.defer_lane_change(r, 2.0 * 4, r.waypoints[4].y, start_ahead_m=40.0) == "deferred"
     lc = r.lane_changes[0]
     assert lc.index >= 33, lc.index                                   # 8 + 40 + 20 m of ramp = 68 m along, 2 m apart
     for k in range(6, lc.index - 10):                                # the deferred stretch, before the new ramp

@@ -158,7 +158,7 @@ def test_the_van_holds_its_lane_and_says_so():
     from pathlib import Path
     src = (Path(__file__).parents[1] / "src" / "warp_av" / "main.py").read_text(encoding="utf-8")
     i = src.index("def _wait_for_a_gap")
-    body = src[i:i + 4200]      # grew by the deferral block (gap wait, 2026-09-18): the same tokens, same function
+    body = src[i:i + 4800]      # grew by the deferral block and its note (gap wait, 2026-09-18): the same tokens, same function
     assert "lane_change_blocker(perception.objects, side, pose.yaw)" in body
     assert "LANE_CHANGE_GIVE_UP_S" in body, "it never waits for ever for something standing"
     assert "_gap_given_up_until" in body, "and having given up, it stays given up"

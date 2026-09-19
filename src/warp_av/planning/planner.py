@@ -1003,8 +1003,8 @@ class RoutePlanner:
         pending = self._pending_lane_change(route, ego_x, ego_y)
         if pending is not None:
             lc, start_m, _under_way = pending[0], pending[1], pending[2]
-            if _under_way or start_m > within_m:
-                return None
+            if _under_way or start_m >= within_m:
+                return None                     # a deferred move begins exactly at the look: not asked again
             return (start_m, 1 if lc.lateral_m > 0 else -1)
         if getattr(route, "lane_changes", None) is not None:
             return None                     # the smoother looked, and nothing is pending: no change
@@ -1036,18 +1036,10 @@ class RoutePlanner:
 
     @staticmethod
     def _right_normals(wps):
-        """The right-hand normal at every waypoint: from its map heading where the route carries
-        one, else from the direction of the route through it."""
-        use_yaw = any(abs(float(w.yaw)) > 1e-6 for w in wps)
-        out = []
-        for p_ in range(len(wps)):
-            if use_yaw:
-                h = float(wps[p_].yaw)
-            else:
-                a, b = wps[max(p_ - 1, 0)], wps[min(p_ + 1, len(wps) - 1)]
-                h = math.atan2(b.y - a.y, b.x - a.x)
-            out.append((-math.sin(h), math.cos(h)))
-        return out
+        """The right-hand normal at every waypoint, from its heading -- the same normal the
+        smoother slid the point along, so that subtracting a recorded shift lands exactly where
+        the point was."""
+        return [(-math.sin(float(w.yaw)), math.cos(float(w.yaw))) for w in wps]
 
     @staticmethod
     def _old_lane_line(wps, lc, normals):
@@ -1096,23 +1088,80 @@ class RoutePlanner:
             return (lc, max(0.0, start_arc - ego_arc), under_way, old_line, old_arcs, normals)
         return None
 
+    @staticmethod
+    def _junction_blocks(wps):
+        """Runs of consecutive junction waypoints, as (first index, last index)."""
+        blocks, start = [], None
+        for i, w in enumerate(wps):
+            if w.is_junction and start is None:
+                start = i
+            elif not w.is_junction and start is not None:
+                blocks.append((start, i - 1)); start = None
+        if start is not None:
+            blocks.append((start, len(wps) - 1))
+        return blocks
+
+    @staticmethod
+    def _old_lane_runs_through(cmap, old_line, block):
+        """Does the old lane run on through this junction the way the route goes? Asked of the
+        map's own lane links: from the old line's last point before the junction, the lane is
+        followed (Waypoint.next, every branch) until it leaves the junction, and the answer is
+        yes when one of the lanes it comes out on is the lane the old line's first point after
+        the junction lies in. A lane that ends there, or only turns off, says no."""
+        j0, j1 = block
+        if j0 < 1 or j1 + 1 >= len(old_line):
+            return False
+        try:
+            def at(q):
+                return cmap.get_waypoint(carla.Location(x=float(q[0]), y=float(q[1]), z=0.3),
+                                         project_to_road=True, lane_type=carla.LaneType.Driving)
+            want = at(old_line[j1 + 1])
+            if want is None or want.is_junction:
+                return False
+            want_key = (want.road_id, want.lane_id)
+            frontier, steps = [(at(old_line[j0 - 1]), False)], 0
+            if frontier[0][0] is None:
+                return False
+            while frontier and steps < 120:
+                steps += 1; nxt = []
+                for w, entered in frontier:
+                    for n in w.next(2.0):
+                        if n.is_junction:
+                            nxt.append((n, True))
+                        elif entered:
+                            if (n.road_id, n.lane_id) == want_key:
+                                return True
+                        elif steps < 30:
+                            nxt.append((n, False))          # still on the road before the junction
+                frontier = nxt
+        except Exception:
+            return False
+        return False
+
     def defer_lane_change(self, route: Route, ego_x, ego_y, start_ahead_m: float,
-                          keep_in_step=()) -> bool:
+                          keep_in_step=()):
         """Redraw the next recorded lane change so the sideways move begins `start_ahead_m`
         further on: the ramp already drawn, and the new-lane points up to the new switch, go
         back onto the OLD lane's line (each along its own normal, so a bend's lanes stay
-        parallel) and the ramp is drawn again before the new switch. Returns True when it did.
+        parallel) and the ramp is drawn again before the new switch. Returns "deferred" when it
+        did, "dropped" when the move and the route's move back were both taken out, False when
+        it may not (and the old stop-and-wait applies).
 
         The answer to "the lane the route moves into is busy" while there is road to wait in:
         the van keeps its own lane at its own speed instead of stopping in it (gap wait,
         2026-09-18 -- WAV-0148 stood 8.6 s at its spawn point in a live lane and was hit from
-        behind at 10 m/s). Refused, so that the old stop-and-wait applies, when the move has
-        already begun, when the switch would no longer complete before the next junction
-        waypoint ahead of the van (the lane change may be what the turn needs), when it would
-        run into the next lane change's ramp, when the route ends first, or -- where a map is
-        available -- when the redrawn stretch does not lie on a
-        driving lane (the old lane ends). A change that already begins that far on is left as it
-        is, and the answer is still True: the van has that road to drive on.
+        behind at 10 m/s). Refused when the move has already begun, when the route ends first,
+        or -- where a map is available -- when the old lane is not there: the redrawn stretch
+        must lie on a driving lane, and where the redrawn ramp would reach a junction the map's
+        own lane links must say the old lane runs on through it the way the route goes
+        (_old_lane_runs_through); without a map a junction is a wall, as before. The ramp is
+        never drawn inside a junction: it lands after the junction the old lane runs through.
+        A move deferred as far as the route's next change the OTHER way is not redrawn but
+        dropped together with it -- the lane the van is in runs on past both, so the route's
+        move over and back was never needed (five live runs, 2026-09-18: the move pushed up to
+        junction 675 became a stop-and-wait 30 m before it, in a live lane, with a car behind).
+        A change that already begins that far on is left as it is, and the answer is still
+        "deferred": the van has that road to drive on.
 
         `keep_in_step`: other waypoint lists that show the same road (the route as planned,
         before any pull-in was drawn on it) -- moved the same way where they still agree with
@@ -1124,17 +1173,38 @@ class RoutePlanner:
         lc, _start_m, under_way, old_line, old_arcs, normals = pending
         if under_way:
             return False
+        cmap = getattr(self, "carla_map", None)
         ego_arc, _ = _route_offset([Waypoint(x=q[0], y=q[1]) for q in old_line], ego_x, ego_y)
         end_arc = old_arcs[lc.index - 1]
         want_end_arc = ego_arc + float(start_ahead_m) + lc.over_m
-        j_next = next((i for i in range(1, len(wps)) if wps[i].is_junction and old_arcs[i] > ego_arc), None)
-        if j_next is not None and want_end_arc > old_arcs[j_next] - 2.0:
-            return False                                        # the turn may need the new lane
-        for later in route.lane_changes:
-            if later.index > lc.index and want_end_arc > old_arcs[later.index - 1] - later.over_m - 2.0:
-                return False                                    # the next lane change's ramp begins there
-        if want_end_arc <= end_arc + 0.5:
-            return True                                         # already that far on: nothing to redraw
+        blocks = [b for b in self._junction_blocks(wps) if old_arcs[b[1]] > ego_arc]
+        later = sorted((c_ for c_ in route.lane_changes if c_.index > lc.index), key=lambda c_: c_.index)
+        nxt = later[0] if later else None
+        next_ramp_arc = (old_arcs[nxt.index - 1] - nxt.over_m) if nxt else None
+        # the ramp must clear every junction between here and its end -- through each one the old
+        # lane must run on, by the map -- and lands after the last one it crosses
+        want_start_arc = want_end_arc - lc.over_m
+        crossed = False
+        for (j0, j1) in blocks:
+            j_in, j_out = old_arcs[j0], old_arcs[j1]
+            if want_end_arc <= j_in - 2.0:
+                break                                           # the ramp ends before this junction
+            if next_ramp_arc is not None and j_in > next_ramp_arc:
+                break                                           # the next change comes first (handled below)
+            if cmap is None or not self._old_lane_runs_through(cmap, old_line, (j0, j1)):
+                return False                                    # the turn may need the new lane
+            crossed = True
+            exit_arc = old_arcs[min(j1 + 1, len(wps) - 1)]
+            if want_start_arc < exit_arc + 2.0:
+                want_start_arc = exit_arc + 2.0                 # the ramp begins after the junction
+                want_end_arc = want_start_arc + lc.over_m
+        if nxt is not None and want_end_arc > next_ramp_arc - 2.0:
+            # as far as the next change: drop both when it is the move back, else the old wait
+            if abs(nxt.lateral_m + lc.lateral_m) > 0.1 * abs(lc.lateral_m):
+                return False
+            return self._drop_lane_change_pair(route, lc, nxt, old_line, old_arcs, normals, ego_arc, blocks, keep_in_step)
+        if want_end_arc <= end_arc + 0.5 and not crossed:
+            return "deferred"                                   # already that far on: nothing to redraw
         k_end = next((i for i in range(lc.index - 1, len(wps)) if old_arcs[i] >= want_end_arc), None)
         if k_end is None or k_end + 1 >= len(wps) - 1:
             return False                                        # the route ends first
@@ -1151,26 +1221,9 @@ class RoutePlanner:
             if abs(nx - wps[p_].x) > 1e-6 or abs(ny - wps[p_].y) > 1e-6:
                 moves.append((p_, nx, ny))
         if not moves:
-            return True                                         # nothing to redraw
-        cmap = getattr(self, "carla_map", None)
-        if cmap is not None:
-            # Is the old lane there all the way to where the van has moved over? Asked of the OLD
-            # LINE between the van and the ramp's end -- not of the points this redraw moves: a
-            # redraw that only slides the ramp on by a metre moves ramp points, and a ramp point
-            # sits between two lanes by design (first live run, 2026-09-18: the deferral held once
-            # at the spawn and was refused on every tick after).
-            ahead = [p_ for p_ in range(1, k_new) if ego_arc < old_arcs[p_] <= new_end_arc]
-            for p_ in sorted({ahead[0], ahead[len(ahead) // 2], ahead[-1]}) if ahead else ():
-                nx, ny = old_line[p_]
-                try:
-                    wp = cmap.get_waypoint(carla.Location(x=float(nx), y=float(ny), z=0.3),
-                                           project_to_road=True, lane_type=carla.LaneType.Driving)
-                    loc = wp.transform.location
-                    on_lane = math.hypot(float(loc.x) - nx, float(loc.y) - ny) <= 0.6
-                except Exception:
-                    on_lane = False
-                if not on_lane:
-                    return False                                # the old lane is not there
+            return "deferred"                                   # nothing to redraw
+        if cmap is not None and not self._old_line_on_lanes(cmap, old_line, old_arcs, wps, ego_arc, new_end_arc):
+            return False                                        # the old lane is not there
         old_lane = wps[max(lc.index - 1, 0)].lane_id
         for other in keep_in_step or ():
             for p_, nx, ny in moves:
@@ -1184,7 +1237,68 @@ class RoutePlanner:
             wps[p_] = replace(wps[p_], lane_id=old_lane)          # these points are in the old lane now
         lc.index = k_new
         lc.shifts = shifts
+        return "deferred"
+
+    @staticmethod
+    def _old_line_on_lanes(cmap, old_line, old_arcs, wps, from_arc, to_arc):
+        """Is the old lane there, on the map, between these arcs? Three points of the OLD LINE
+        outside junctions (a point inside a junction projects onto whichever crossing lane is
+        nearest) must each lie within 0.6 m of a driving lane's centre. Not the points a redraw
+        moves: a redraw that only slides the ramp on by a metre moves ramp points, and a ramp
+        point sits between two lanes by design (first live run, 2026-09-18: the deferral held
+        once at the spawn and was refused on every tick after)."""
+        ahead = [p_ for p_ in range(1, len(wps)) if from_arc < old_arcs[p_] <= to_arc and not wps[p_].is_junction]
+        for p_ in sorted({ahead[0], ahead[len(ahead) // 2], ahead[-1]}) if ahead else ():
+            nx, ny = old_line[p_]
+            try:
+                wp = cmap.get_waypoint(carla.Location(x=float(nx), y=float(ny), z=0.3),
+                                       project_to_road=True, lane_type=carla.LaneType.Driving)
+                loc = wp.transform.location
+                on_lane = math.hypot(float(loc.x) - nx, float(loc.y) - ny) <= 0.6
+            except Exception:
+                on_lane = False
+            if not on_lane:
+                return False
         return True
+
+    def _drop_lane_change_pair(self, route, lc, back, old_line, old_arcs, normals, ego_arc, blocks, keep_in_step):
+        """Take the move over (lc) and the move back (back) out of the route: every point up to
+        the move back's switch goes onto the old lane's line, the two records go, and the lane
+        ids in between are the old lane's again. Refused when the old lane is not there on the
+        map for the whole stretch, or does not run through a junction on it."""
+        wps = route.waypoints
+        cmap = getattr(self, "carla_map", None)
+        to_arc = old_arcs[back.index - 1]
+        # the old line already undoes lc; the move back's own ramp points carry its partial shift
+        # too, so the line the van will drive takes that out as well
+        line = []
+        for p_ in range(len(wps)):
+            extra = back.shifts.get(p_, 0.0) if back.shifts else 0.0
+            rc, rs = normals[p_]
+            line.append((old_line[p_][0] - rc * extra, old_line[p_][1] - rs * extra))
+        if cmap is not None:
+            for (j0, j1) in blocks:
+                if old_arcs[j0] < to_arc and not self._old_lane_runs_through(cmap, line, (j0, j1)):
+                    return False
+            if not self._old_line_on_lanes(cmap, line, old_arcs, wps, ego_arc, to_arc):
+                return False
+        elif any(old_arcs[j0] < to_arc for (j0, j1) in blocks):
+            return False                                        # no map: a junction is a wall
+        moves = [(p_, line[p_][0], line[p_][1]) for p_ in range(1, back.index)
+                 if abs(line[p_][0] - wps[p_].x) > 1e-6 or abs(line[p_][1] - wps[p_].y) > 1e-6]
+        old_lane = wps[max(lc.index - 1, 0)].lane_id
+        for other in keep_in_step or ():
+            for p_, nx, ny in moves:
+                if p_ < len(other) and abs(other[p_].x - wps[p_].x) < 1e-6 and abs(other[p_].y - wps[p_].y) < 1e-6:
+                    other[p_] = replace(other[p_], x=nx, y=ny)
+            for p_ in range(lc.index, min(back.index, len(other))):
+                other[p_] = replace(other[p_], lane_id=old_lane)
+        for p_, nx, ny in moves:
+            wps[p_] = replace(wps[p_], x=nx, y=ny)
+        for p_ in range(lc.index, back.index):
+            wps[p_] = replace(wps[p_], lane_id=old_lane)
+        route.lane_changes = [c_ for c_ in route.lane_changes if c_ is not lc and c_ is not back]
+        return "dropped"
 
     def smooth_lane_changes(self, route: Route, over_m: Optional[float] = None) -> int:
         """Spread every sideways STEP in the route over a length of road. Returns how many.
