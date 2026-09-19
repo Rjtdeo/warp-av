@@ -14,7 +14,7 @@ import carla
 import math
 import time
 from dataclasses import dataclass, field, replace
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .footprint import VehicleFootprint, ObstacleBox, sweep_conflict, _polyline
 from .instrumentation import (PlannerDecision, debug_planning_enabled,
@@ -840,10 +840,68 @@ class Waypoint:
 
 
 @dataclass
+class LaneChange:
+    """One sideways step of the map's route, as smooth_lane_changes found it before spreading it:
+    the index of the first waypoint in the new lane, how far sideways (+ = to the right, the
+    smoother's own sign), and the length of road the move was spread over before that point.
+
+    The record a lane change is READ from (next_lane_change, defer_lane_change). Until
+    2026-09-18 the van guessed a lane change from where the route sat beside its own nose,
+    and a bend or five degrees of heading error looked exactly like one: 77 % of every
+    "waiting for a gap" in the broad sweep was for a lane change that did not exist, and the
+    van stopped in its live lane for each of them (WAV-0148: rear-ended six times in three
+    runs, five of them in such a wait)."""
+    index: int
+    lateral_m: float
+    over_m: float
+    #: the sideways shift the smoother gave each ramp point (waypoint index -> metres, + right):
+    #: subtracting it along the point's own normal gives the old lane's line back exactly
+    shifts: Dict[int, float] = field(default_factory=dict)
+
+
+@dataclass
 class Route:
     waypoints: List[Waypoint]
     total_distance: float = 0.0
     timestamp: float = field(default_factory=time.time)
+    #: the lane changes smooth_lane_changes found and spread, in route order. None until the
+    #: smoother has looked (a route built by hand, an old recording); [] when it looked and the
+    #: route changes lane nowhere.
+    lane_changes: Optional[List[LaneChange]] = None
+
+
+def _smoothstep(t: float) -> float:
+    t = max(0.0, min(1.0, float(t)))
+    return t * t * (3.0 - 2.0 * t)
+
+
+def _route_arcs(wps) -> List[float]:
+    """Cumulative arc length at every waypoint."""
+    arcs = [0.0]
+    for a, b in zip(wps, wps[1:]):
+        arcs.append(arcs[-1] + math.hypot(b.x - a.x, b.y - a.y))
+    return arcs
+
+
+def _route_offset(wps, x: float, y: float):
+    """(arc of the foot point on the route, offset of (x, y) to the RIGHT of the route line) --
+    the same right-hand normal the smoother slides points along, so the two can be added."""
+    best_d2, best_arc, best_off = float("inf"), 0.0, 0.0
+    arc = 0.0
+    for a, b in zip(wps, wps[1:]):
+        dx, dy = b.x - a.x, b.y - a.y
+        L2 = dx * dx + dy * dy
+        seg = math.sqrt(L2) if L2 > 1e-9 else 0.0
+        if seg > 0.0:
+            t = max(0.0, min(1.0, ((x - a.x) * dx + (y - a.y) * dy) / L2))
+            fx, fy = a.x + t * dx, a.y + t * dy
+            d2 = (x - fx) ** 2 + (y - fy) ** 2
+            if d2 < best_d2:
+                c, s_ = dx / seg, dy / seg
+                best_d2, best_arc = d2, arc + t * seg
+                best_off = -(x - fx) * s_ + (y - fy) * c
+        arc += seg
+    return best_arc, best_off
 
 
 class RoutePlanner:
@@ -942,8 +1000,25 @@ class RoutePlanner:
         wps = route.waypoints if route else None
         if not wps or len(wps) < 4:
             return None
+        pending = self._pending_lane_change(route, ego_x, ego_y)
+        if pending is not None:
+            lc, start_m, _under_way = pending[0], pending[1], pending[2]
+            if _under_way or start_m > within_m:
+                return None
+            return (start_m, 1 if lc.lateral_m > 0 else -1)
+        if getattr(route, "lane_changes", None) is not None:
+            return None                     # the smoother looked, and nothing is pending: no change
+        # No record (a route that never went through the smoother, e.g. hand-made): read the
+        # route's own shape -- against the ROUTE's tangent where the van is, not the van's
+        # heading. Against the heading, five degrees of yaw error put a straight route 2.2 m
+        # to the side within 25 m and every bend looked like a lane change (2026-09-18).
         ci = min(range(len(wps)), key=lambda i: math.hypot(wps[i].x - ego_x, wps[i].y - ego_y))
-        c, s_ = math.cos(ego_yaw), math.sin(ego_yaw)
+        a, b = (wps[ci], wps[ci + 1]) if ci + 1 < len(wps) else (wps[ci - 1], wps[ci])
+        seg = math.hypot(b.x - a.x, b.y - a.y)
+        if seg < 1e-6:
+            c, s_ = math.cos(ego_yaw), math.sin(ego_yaw)
+        else:
+            c, s_ = (b.x - a.x) / seg, (b.y - a.y) / seg
         here = wps[ci]
         along, started, moved = 0.0, None, 0.0
         for i in range(ci + 1, len(wps)):
@@ -959,6 +1034,151 @@ class RoutePlanner:
                     return (started, 1 if moved > 0 else -1)
         return None
 
+    @staticmethod
+    def _right_normals(wps):
+        """The right-hand normal at every waypoint: from its map heading where the route carries
+        one, else from the direction of the route through it."""
+        use_yaw = any(abs(float(w.yaw)) > 1e-6 for w in wps)
+        out = []
+        for p_ in range(len(wps)):
+            if use_yaw:
+                h = float(wps[p_].yaw)
+            else:
+                a, b = wps[max(p_ - 1, 0)], wps[min(p_ + 1, len(wps) - 1)]
+                h = math.atan2(b.y - a.y, b.x - a.x)
+            out.append((-math.sin(h), math.cos(h)))
+        return out
+
+    @staticmethod
+    def _old_lane_line(wps, lc, normals):
+        """The route as it ran before this lane change was drawn: every ramp point moved back by
+        the shift the smoother gave it, every point past the switch moved back by the whole step.
+        A record without shifts (an old recording) gets the smoother's own formula on the route's
+        arcs -- close, not exact, because the slid points are a little further apart."""
+        if not lc.shifts:
+            arcs = _route_arcs(wps)
+            start = arcs[lc.index - 1] - lc.over_m
+            shifts = {p_: lc.lateral_m * _smoothstep((arcs[p_] - start) / lc.over_m)
+                      for p_ in range(1, lc.index) if arcs[p_] > start}
+        else:
+            shifts = lc.shifts
+        out = []
+        for p_, w in enumerate(wps):
+            sh = shifts.get(p_, lc.lateral_m if p_ >= lc.index else 0.0)
+            rc, rs = normals[p_]
+            out.append((w.x - rc * sh, w.y - rs * sh))
+        return out
+
+    def _pending_lane_change(self, route: Route, ego_x, ego_y):
+        """The next recorded lane change the van has not finished, as (record, metres to where
+        the move begins, under way?, the old lane's line, its arcs, the normals) -- or None.
+        Under way: the van's own body is already more than half a step off the OLD lane's line
+        toward the new one; a move that has begun is not asked about again (stopping half-way
+        across is the worst place to stop)."""
+        wps = route.waypoints if route else None
+        changes = sorted(getattr(route, "lane_changes", None) or [], key=lambda c_: c_.index)
+        if not wps or not changes:
+            return None
+        normals = None
+        for lc in changes:
+            if lc.index >= len(wps) or lc.index < 1 or lc.over_m <= 0.0:
+                continue
+            if normals is None:
+                normals = self._right_normals(wps)
+            old_line = self._old_lane_line(wps, lc, normals)
+            old_arcs = _route_arcs([Waypoint(x=q[0], y=q[1]) for q in old_line])
+            end_arc = old_arcs[lc.index - 1]                    # the ramp ends at the last point the smoother slid
+            ego_arc, off_old = _route_offset([Waypoint(x=q[0], y=q[1]) for q in old_line], ego_x, ego_y)
+            if end_arc < ego_arc - 1.0:
+                continue                                        # behind the van: done
+            start_arc = end_arc - lc.over_m
+            under_way = off_old * (1.0 if lc.lateral_m > 0 else -1.0) > 0.5 * self.LANE_CHANGE_STEP_M
+            return (lc, max(0.0, start_arc - ego_arc), under_way, old_line, old_arcs, normals)
+        return None
+
+    def defer_lane_change(self, route: Route, ego_x, ego_y, start_ahead_m: float,
+                          keep_in_step=()) -> bool:
+        """Redraw the next recorded lane change so the sideways move begins `start_ahead_m`
+        further on: the ramp already drawn, and the new-lane points up to the new switch, go
+        back onto the OLD lane's line (each along its own normal, so a bend's lanes stay
+        parallel) and the ramp is drawn again before the new switch. Returns True when it did.
+
+        The answer to "the lane the route moves into is busy" while there is road to wait in:
+        the van keeps its own lane at its own speed instead of stopping in it (gap wait,
+        2026-09-18 -- WAV-0148 stood 8.6 s at its spawn point in a live lane and was hit from
+        behind at 10 m/s). Refused, so that the old stop-and-wait applies, when the move has
+        already begun, when the switch would no longer complete before the next junction
+        waypoint ahead of the van (the lane change may be what the turn needs), when it would
+        run into the next lane change's ramp, when the route ends first, or -- where a map is
+        available -- when the redrawn stretch does not lie on a
+        driving lane (the old lane ends). A change that already begins that far on is left as it
+        is, and the answer is still True: the van has that road to drive on.
+
+        `keep_in_step`: other waypoint lists that show the same road (the route as planned,
+        before any pull-in was drawn on it) -- moved the same way where they still agree with
+        the route, so a spot drawn on them afterwards is drawn on the deferred road."""
+        wps = route.waypoints if route else None
+        pending = self._pending_lane_change(route, ego_x, ego_y)
+        if not wps or pending is None:
+            return False
+        lc, _start_m, under_way, old_line, old_arcs, normals = pending
+        if under_way:
+            return False
+        ego_arc, _ = _route_offset([Waypoint(x=q[0], y=q[1]) for q in old_line], ego_x, ego_y)
+        end_arc = old_arcs[lc.index - 1]
+        want_end_arc = ego_arc + float(start_ahead_m) + lc.over_m
+        j_next = next((i for i in range(1, len(wps)) if wps[i].is_junction and old_arcs[i] > ego_arc), None)
+        if j_next is not None and want_end_arc > old_arcs[j_next] - 2.0:
+            return False                                        # the turn may need the new lane
+        for later in route.lane_changes:
+            if later.index > lc.index and want_end_arc > old_arcs[later.index - 1] - later.over_m - 2.0:
+                return False                                    # the next lane change's ramp begins there
+        if want_end_arc <= end_arc + 0.5:
+            return True                                         # already that far on: nothing to redraw
+        k_end = next((i for i in range(lc.index - 1, len(wps)) if old_arcs[i] >= want_end_arc), None)
+        if k_end is None or k_end + 1 >= len(wps) - 1:
+            return False                                        # the route ends first
+        k_new = k_end + 1                                       # the switch: the point after the ramp's last
+        new_end_arc = old_arcs[k_end]
+        new_start_arc = new_end_arc - lc.over_m
+        moves, shifts = [], {}
+        for p_ in range(1, k_new):
+            want = lc.lateral_m * _smoothstep((old_arcs[p_] - new_start_arc) / lc.over_m)
+            if abs(want) > 1e-6:
+                shifts[p_] = float(want)
+            rc, rs = normals[p_]
+            nx, ny = old_line[p_][0] + rc * want, old_line[p_][1] + rs * want
+            if abs(nx - wps[p_].x) > 1e-6 or abs(ny - wps[p_].y) > 1e-6:
+                moves.append((p_, nx, ny))
+        if not moves:
+            return True                                         # nothing to redraw
+        cmap = getattr(self, "carla_map", None)
+        if cmap is not None:
+            for (_p, nx, ny) in (moves[0], moves[len(moves) // 2], moves[-1]):
+                try:
+                    wp = cmap.get_waypoint(carla.Location(x=float(nx), y=float(ny), z=0.3),
+                                           project_to_road=True, lane_type=carla.LaneType.Driving)
+                    loc = wp.transform.location
+                    on_lane = math.hypot(float(loc.x) - nx, float(loc.y) - ny) <= 0.6
+                except Exception:
+                    on_lane = False
+                if not on_lane:
+                    return False                                # the old lane is not there
+        old_lane = wps[max(lc.index - 1, 0)].lane_id
+        for other in keep_in_step or ():
+            for p_, nx, ny in moves:
+                if p_ < len(other) and abs(other[p_].x - wps[p_].x) < 1e-6 and abs(other[p_].y - wps[p_].y) < 1e-6:
+                    other[p_] = replace(other[p_], x=nx, y=ny)
+            for p_ in range(lc.index, min(k_new, len(other))):
+                other[p_] = replace(other[p_], lane_id=old_lane)
+        for p_, nx, ny in moves:
+            wps[p_] = replace(wps[p_], x=nx, y=ny)
+        for p_ in range(lc.index, k_new):
+            wps[p_] = replace(wps[p_], lane_id=old_lane)          # these points are in the old lane now
+        lc.index = k_new
+        lc.shifts = shifts
+        return True
+
     def smooth_lane_changes(self, route: Route, over_m: Optional[float] = None) -> int:
         """Spread every sideways STEP in the route over a length of road. Returns how many.
 
@@ -971,6 +1191,11 @@ class RoutePlanner:
         wps = route.waypoints if route else None
         if not wps or len(wps) < 4:
             return 0
+        try:
+            if route.lane_changes is None:
+                route.lane_changes = []                         # looked: what follows is the whole list
+        except AttributeError:
+            pass                                                # a Route without the field
         changed = 0
         for i in range(1, len(wps)):
             a, b = wps[i - 1], wps[i]
@@ -987,13 +1212,20 @@ class RoutePlanner:
             if arc <= 0.1:
                 continue
             run = 0.0
+            shifts = {}
             for k in range(j + 1, i):
                 run += math.hypot(wps[k].x - wps[k - 1].x, wps[k].y - wps[k - 1].y)
                 t = max(0.0, min(1.0, run / arc))
                 shift = lateral * (t * t * (3 - 2 * t))            # smoothstep, no jerk
                 rc, rs = -math.sin(wps[k].yaw), math.cos(wps[k].yaw)
                 wps[k] = replace(wps[k], x=wps[k].x + rc * shift, y=wps[k].y + rs * shift)
+                shifts[k] = float(shift)
             changed += 1
+            # on the record: this is what the van reads a lane change from (next_lane_change)
+            try:
+                route.lane_changes.append(LaneChange(index=i, lateral_m=float(lateral), over_m=float(arc), shifts=shifts))
+            except AttributeError:
+                pass                                            # a Route without the field
         return changed
 
     #: What a blocked stretch of road costs the route search: further than any detour on a

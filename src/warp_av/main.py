@@ -58,7 +58,7 @@ from .behavior.transitions import (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DO
                                    BACKED_OUT, REVERSING,
                                    VEHICLE_IN_PATH, OBSTACLE_IN_PATH, ROUTE_BLOCKED_TOO_LONG,
                                    JUNCTION_KEEP_CLEAR, LANE_CHANGE_WAIT, LANE_CHANGE_WAITING,
-                                   LANE_CHANGE_GO)
+                                   LANE_CHANGE_GO, LANE_CHANGE_DEFERRED)
 from .planning.prediction import predict_route_conflict
 from .control.controller import VehicleController
 from .safety.safety_supervisor import SafetySupervisor, SafetyState
@@ -716,6 +716,22 @@ class WarpAV:
             if getattr(self, "_gap_wait_since", None) is not None:
                 self._note_move(LANE_CHANGE_GO, f"the lane is clear now — moving over")
                 self._gap_wait_since = None
+            return
+        # Gap wait (2026-09-18, WAV-0148: six rear-end hits in three runs, five of them stood in
+        # this wait): while there is road to wait IN, a busy lane is not a reason to stop in our
+        # own. The move is redrawn LANE_CHANGE_LOOK_M further on and the van drives its lane at
+        # the speed the behaviour asked for (planner.defer_lane_change says when it may not).
+        base = getattr(self, "_route_base", None)           # the road the parking spot is drawn on: moved with it
+        if self.planner.defer_lane_change(self._route, pose.x, pose.y, start_ahead_m=self.LANE_CHANGE_LOOK_M,
+                                          keep_in_step=[base] if base else ()):
+            if time.time() - getattr(self, "_gap_deferred_noted_at", 0.0) > 5.0:
+                self._gap_deferred_noted_at = time.time()
+                self._note_move(LANE_CHANGE_DEFERRED,
+                                f"the route moves {'right' if side > 0 else 'left'} in {start_m:.0f} m, but "
+                                f"{why} — driving on in this lane, the move redrawn "
+                                f"{self.LANE_CHANGE_LOOK_M:.0f} m further on")
+            self._gap_wait_since = None
+            behavior_output.reason += f" | lane change deferred: {why}"
             return
         if getattr(self, "_gap_wait_since", None) is None:
             self._gap_wait_since = time.time()

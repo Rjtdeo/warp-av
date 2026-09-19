@@ -81,13 +81,14 @@ GROUND_SEEN_FREE = "ground_seen_free"       # a body the corridor check drew on 
 GROUND_BLOCKED = "ground_blocked"           # ...and solid ground nothing was tracked on
 LANE_CHANGE_WAITING = "lane_change_waiting"  # holding our lane until the next one has a gap
 LANE_CHANGE_GO = "lane_change_go"            # ...and taking it
+LANE_CHANGE_DEFERRED = "lane_change_deferred"  # ...or driving on in our own lane and moving over further on (gap wait, 2026-09-18)
 BACKED_OUT = "backed_out"                    # ...and what came of it
 REROUTED = "rerouted"                       # another way to the same destination, round a block
 NO_WAY_ROUND = "no_way_round"               # ...and when the map says there is not one
 
 ALL_MOVES = (GO_AROUND_START, GO_AROUND_WAIT, GO_AROUND_DONE,
              SPOT_CHOSEN, SPOT_CONFIRMED, SPOT_RECHOSEN, SPOT_GIVEN_UP, GROUND_SEEN_FREE,
-             GROUND_BLOCKED, REROUTED, NO_WAY_ROUND, LANE_CHANGE_WAITING, LANE_CHANGE_GO,
+             GROUND_BLOCKED, REROUTED, NO_WAY_ROUND, LANE_CHANGE_WAITING, LANE_CHANGE_GO, LANE_CHANGE_DEFERRED,
              BACKED_OUT)
 
 ALL_WHY = (
