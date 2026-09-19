@@ -367,9 +367,20 @@ class ScenarioRunner:
                 meta["mission_records"] = [h for h in hist if h.get("mission_id") in meta["mission_ids"]]
             except Exception as e_h:
                 meta["warnings"].append(f"mission history not read: {e_h}")
+
+        try:
+            result = self._result(sid, scenario, trace, meta, err, t_start)
+            self._persist(sid, result, trace)
+            self.log(f"  => {result['verdict']}: {result['reason']}")
+        finally:
+            # The world is torn down only once the result is on disk: destroying twenty
+            # traffic-manager cars is where the client process died once (gapwait_1,
+            # 2026-09-18, exit 0xC0000409), and it took the run's whole record with it.
             if wh is not None:
                 wh.cleanup()
+        return result
 
+    def _result(self, sid, scenario, trace, meta, err, t_start):
         meta["elapsed_s"] = time.time() - t_start
         metrics = compute_metrics(trace, meta)
         verdict = evaluate(scenario, metrics, runner_error=err)
@@ -385,8 +396,6 @@ class ScenarioRunner:
                                               "start_check", "ego_reset", "mission_ids", "mission_records",
                                               "phase_times", "route")},
         }
-        self._persist(sid, result, trace)
-        self.log(f"  => {result['verdict']}: {result['reason']}")
         return result
 
     # ------------------------------------------------------------------ V1 evidence: persistence
