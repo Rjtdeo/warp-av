@@ -43,6 +43,7 @@ from .camera_model import (CameraModel, camera_models, box_contains, box_edges, 
                            cluster_point, ground_point)
 from .occupancy import OccupancyGrid
 from .road_edges import RoadEdges, find_road_edges
+from .sighting_log import SightingLog
 from .motion_class import (NOT_A_VEHICLE_MIN_HEIGHT_M, NOT_A_VEHICLE_MIN_LENGTH_M,
                            vehicle_name_implausible,
                            carla_road_gap, high_share, sample_for_gap, shape_rules,
@@ -783,6 +784,8 @@ class CameraLidarPerception:
 
         # v2: multi-object tracking in world frame (ids + speeds).
         self.tracker = ObjectTracker()
+        # evidence only, off unless logs/track_obs.on exists (perception/sighting_log.py)
+        self._sighting_log = SightingLog.open_if_enabled(Path(__file__).resolve().parents[3] / "logs")
         self.last_track_count = 0
         # Planning V2: static or dynamic. Needs the map for "how far from the nearest lane",
         # read once on the first sweep. WARP_STATIC_DYNAMIC=0 labels everything dynamic.
@@ -1101,7 +1104,13 @@ class CameraLidarPerception:
                     "box_len": c.get("box_len", 0.0), "box_wid": c.get("box_wid", 0.0),
                     "box_yaw_world_deg": float(c.get("box_yaw_deg", c.get("yaw_deg", 0.0)) or 0.0) + eyaw_deg,
                 })
+            if self._sighting_log is not None:
+                for o in observations:
+                    self._sighting_log.watch(o)
             tracks = self.tracker.update(observations, now)
+            if self._sighting_log is not None:
+                self._sighting_log.write(now, (ex0, ey0, yaw, getattr(ego, "speed", None)),
+                                         observations, self.tracker._tracks)
             self.last_static_candidates = candidates
             self.last_vehicle_names_dropped = names_dropped
 
