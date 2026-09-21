@@ -473,6 +473,27 @@ STILL_WINDOW_PER_M = 0.0            # (a longer look at far things was measured 
 STILL_WINDOW_MAX_S = 4.0
 STILL_TRAVEL_MAX_M = 2.0            # ... but never ask for more than a walking person covers in
                                     #   the window, or a pedestrian at 25 m would never count
+# ---- ...and it must have gone there on more than one sighting (track-hop phase, 2026-09-21) ----
+# The three tests above -- speed, travel, straightness -- are all met by ONE displacement: the
+# travel is the jump, the path is the jump, and the filter turns the jump into a speed that
+# takes a second to die away. And one displacement is what a track gets when it takes a blob
+# that is not its own: the next parked car as the van passes the first (still for 45-71
+# sightings, then one step of 2.7-3.3 m), the next pole, or -- 20 of the 36 false yields of
+# the broad sweep -- a track two to five sightings old stitched from different kerbside
+# slivers. Replayed exactly from a live run: a track took a blob 2.44 m away, sat within
+# 0.7 m of that place for six sightings, and was "moving" at 2.7 -> 1.2 m/s for 1.1 s; the
+# van braked for it. 27 of 40 yields in 13 live runs were for nothing, from up to 6.9 m/s.
+#
+# A thing that moves covers ground on EVERY sighting. So, along the way it has travelled,
+# each of the last two steps between the sightings themselves (not the filter's positions,
+# which smear one jump over several frames) must carry at least this part of an even share
+# of the window's travel. A quarter: enough that a standing blob's wobble does not pass for
+# the second step of a journey; little enough that a walker's uneven steps do. Measured on
+# the logged sightings of those 13 runs (the real tracker replayed frame for frame): false
+# crossing warnings 23 -> 12, hard ones 16 -> 6, all 10 true ones kept; and a car pulling
+# out, a cyclist setting off, a walker stepping off and a car first seen at 8 m/s are called
+# moving exactly as soon as before at the live rate (at a half, the walker is 0.3 s later).
+PROGRESS_SHARE = 0.25
 MAX_ROAD_SPEED_MPS = 30.0           # nothing in a town does 108 km/h: above this it is a
                                     #   mis-association, not a measurement
 MAX_ROAD_USER_LENGTH_M = 8.0        # longer than a bus: scenery, and scenery does not move
@@ -555,7 +576,7 @@ class Track:
                  "_history", "_still", "range_m", "_sizes", "size_uncertain",
                  "cls_source", "_unnamed", "motion", "yaw_world_deg", "box_off",
                  "box_len", "box_wid", "box_yaw_world_deg", "best_box", "_box_views",
-                 "_box_history")
+                 "_box_history", "_seen")
 
     def __init__(self, tid, wx, wy, t):
         self.tid = tid
@@ -583,6 +604,8 @@ class Track:
         self.height_m = 0.0
         self.yaw_deg = 0.0         # heading of the long side, degrees, van frame at the sighting
         self._history = [(t, float(wx), float(wy))]        # where it has been lately
+        self._seen = [(t, float(wx), float(wy))]           # ...and where it was SEEN (the sightings
+        #                                                    themselves, as far back as the history)
         self._still = True         # a thing is taken to be parked until it shows otherwise
         self.range_m = 0.0         # how far away it was last seen, for judging its wobble
         self._sizes = []           # the recent size sightings, to take a middle value from
@@ -730,7 +753,29 @@ class Track:
         self._history.append((t, self.x[0], self.x[1]))
         while len(self._history) > 2 and t - self._history[0][0] > self.window_s:
             self._history.pop(0)
+        self._seen.append((t, float(zx), float(zy)))
+        while len(self._seen) > 2 and t - self._seen[0][0] > self.window_s:
+            self._seen.pop(0)
         self._update_still()
+
+    def covered_ground_twice(self) -> bool:
+        """Did it cover ground on each of its last two sightings? (see PROGRESS_SHARE)
+
+        Along the direction it has travelled over the window, each of the last two steps
+        between the sightings themselves must carry at least PROGRESS_SHARE of an even share
+        of that travel. One jump to somewhere else, however far, is one step."""
+        s = self._seen
+        if len(s) < 3 or len(self._history) < 2:
+            return False
+        _, x0, y0 = self._history[0]
+        _, x1, y1 = self._history[-1]
+        gone = math.hypot(x1 - x0, y1 - y0)
+        if gone < 1e-6:
+            return False
+        ux, uy = (x1 - x0) / gone, (y1 - y0) / gone
+        share = PROGRESS_SHARE * gone / (len(self._history) - 1)
+        return all((b[1] - a[1]) * ux + (b[2] - a[2]) * uy >= share
+                   for a, b in zip(s[-3:], s[-2:]))
 
     def _update_still(self) -> None:
         """Parked or moving, decided over time and with a gap, so it cannot flicker."""
@@ -744,7 +789,8 @@ class Track:
             if self.length_m > MAX_ROAD_USER_LENGTH_M:
                 return                     # a 20 m blob is a wall or a hedge, not a road user
             if (speed > MOVING_SPEED_MPS and travelled > need
-                    and self.straightness > STILL_STRAIGHTNESS):
+                    and self.straightness > STILL_STRAIGHTNESS
+                    and self.covered_ground_twice()):
                 self._still = False
         else:
             if speed < STILL_SPEED_MPS and travelled < need:
